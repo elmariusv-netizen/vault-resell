@@ -13,13 +13,13 @@ const ChartTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null
   return (
     <div style={{
-      background: 'linear-gradient(145deg,#141414,#1e1e1e)',
-      border: '1px solid rgba(255,255,255,0.1)',
+      background: 'var(--surface)',
+      border: '1px solid var(--border)',
       borderRadius: 12,
       padding: '10px 16px',
-      boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
+      boxShadow: 'var(--shadow-md)',
     }}>
-      <div style={{ fontSize: 11, color: '#555', marginBottom: 5 }}>{label}</div>
+      <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 5 }}>{label}</div>
       {payload.map((p, i) => (
         <div key={i} style={{ color: p.color, fontWeight: 700, fontSize: 15 }}>
           {formatCurrency(p.value)}
@@ -33,13 +33,13 @@ const DonutTooltip = ({ active, payload }) => {
   if (!active || !payload?.length) return null
   return (
     <div style={{
-      background: 'linear-gradient(145deg,#141414,#1e1e1e)',
-      border: '1px solid rgba(255,255,255,0.1)',
+      background: 'var(--surface)',
+      border: '1px solid var(--border)',
       borderRadius: 10,
       padding: '8px 14px',
-      boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
+      boxShadow: 'var(--shadow-md)',
     }}>
-      <div style={{ fontSize: 12, color: '#888', marginBottom: 2 }}>{payload[0].name}</div>
+      <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 2 }}>{payload[0].name}</div>
       <div style={{ color: payload[0].payload.color, fontWeight: 700 }}>
         {payload[0].value} stuks
       </div>
@@ -47,7 +47,11 @@ const DonutTooltip = ({ active, payload }) => {
   )
 }
 
-export default function Home({ data, updateData, onNavigate }) {
+export default function Home({ data, updateData, onNavigate, theme }) {
+  const isDark = theme === 'dark'
+  const tickColor = isDark ? '#636366' : '#9e9e9e'
+  const gridStroke = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'
+  const lineColor = isDark ? '#30d158' : '#16a34a'
   const { batches, sales, suppliers } = data
   const [showSale, setShowSale] = useState(false)
 
@@ -178,34 +182,34 @@ export default function Home({ data, updateData, onNavigate }) {
               <LineChart data={profitChartData} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
                 <defs>
                   <linearGradient id="greenGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#00ff88" stopOpacity={0.15} />
-                    <stop offset="95%" stopColor="#00ff88" stopOpacity={0} />
+                    <stop offset="5%" stopColor={lineColor} stopOpacity={0.14} />
+                    <stop offset="95%" stopColor={lineColor} stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
+                <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} vertical={false} />
                 <XAxis
                   dataKey="name"
                   stroke="transparent"
-                  tick={{ fill: '#444', fontSize: 11, fontFamily: 'inherit' }}
+                  tick={{ fill: tickColor, fontSize: 11, fontFamily: 'inherit' }}
                   axisLine={false}
                   tickLine={false}
                 />
                 <YAxis
                   stroke="transparent"
-                  tick={{ fill: '#444', fontSize: 11, fontFamily: 'inherit' }}
+                  tick={{ fill: tickColor, fontSize: 11, fontFamily: 'inherit' }}
                   tickFormatter={(v) => `€${v}`}
                   axisLine={false}
                   tickLine={false}
                   width={48}
                 />
-                <Tooltip content={<ChartTooltip />} cursor={{ stroke: 'rgba(255,255,255,0.06)', strokeWidth: 1 }} />
+                <Tooltip content={<ChartTooltip />} cursor={{ stroke: gridStroke, strokeWidth: 1 }} />
                 <Line
                   type="monotone"
                   dataKey="cumulative"
-                  stroke="#00ff88"
+                  stroke={lineColor}
                   strokeWidth={2.5}
                   dot={false}
-                  activeDot={{ r: 5, fill: '#00ff88', strokeWidth: 0, filter: 'drop-shadow(0 0 6px #00ff88)' }}
+                  activeDot={{ r: 5, fill: lineColor, strokeWidth: 0 }}
                 />
               </LineChart>
             </ResponsiveContainer>
@@ -310,7 +314,7 @@ export default function Home({ data, updateData, onNavigate }) {
                     <span
                       style={{
                         marginLeft: 8, fontSize: 10, fontWeight: 600,
-                        background: 'rgba(255,255,255,0.05)',
+                        background: 'var(--bg-2)',
                         padding: '2px 7px', borderRadius: 6, color: 'var(--text-3)',
                       }}
                     >

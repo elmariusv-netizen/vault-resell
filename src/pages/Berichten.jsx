@@ -274,7 +274,7 @@ export default function Berichten({ data, updateData }) {
                     <td style={{ fontWeight: 500 }}>{m.koper || '—'}</td>
                     <td>
                       {m.sku
-                        ? <span className="sku-tag" style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-2)' }}>{m.sku}</span>
+                        ? <span className="sku-tag" style={{ background: 'var(--bg-2)', color: 'var(--text-2)' }}>{m.sku}</span>
                         : '—'}
                     </td>
                     <td>

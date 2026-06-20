@@ -82,7 +82,7 @@ function ConfirmModal({ title, message, onCancel, onConfirm, danger }) {
   )
 }
 
-export default function Settings({ data, updateData, onExport }) {
+export default function Settings({ data, updateData, onExport, activeUserId }) {
   const { suppliers, batches, sales } = data
   const [editSupplier, setEditSupplier] = useState(null)
   const [addOpen, setAddOpen] = useState(false)
@@ -157,7 +157,7 @@ export default function Settings({ data, updateData, onExport }) {
                     display: 'flex',
                     alignItems: 'center',
                     gap: 12,
-                    background: 'rgba(255,255,255,0.025)',
+                    background: 'var(--bg-2)',
                     border: '1px solid var(--border)',
                     borderRadius: 'var(--r-lg)',
                     padding: '12px 16px',
@@ -276,7 +276,7 @@ export default function Settings({ data, updateData, onExport }) {
           title="Alles resetten?"
           message="Alle batches, verkopen en leveranciers worden verwijderd en teruggezet naar de begindata. Dit kan niet ongedaan worden gemaakt."
           onCancel={() => setConfirmReset(false)}
-          onConfirm={() => { clearData(); window.location.reload() }}
+          onConfirm={() => { clearData(activeUserId); window.location.reload() }}
           danger
         />
       )}

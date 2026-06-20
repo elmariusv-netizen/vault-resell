@@ -204,7 +204,7 @@ export default function NewSKU({ data, updateData, onNavigate }) {
             {totalCost > 0 && (
               <div style={{
                 marginTop: 16,
-                background: 'rgba(255,255,255,0.03)',
+                background: 'var(--bg-input)',
                 border: '1px solid var(--border)',
                 borderRadius: 'var(--r-md)',
                 padding: '12px 16px',

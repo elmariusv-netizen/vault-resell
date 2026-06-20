@@ -12,15 +12,15 @@ const ChartTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null
   return (
     <div style={{
-      background: 'linear-gradient(145deg,#141414,#1e1e1e)',
-      border: '1px solid rgba(255,255,255,0.1)',
+      background: 'var(--surface)',
+      border: '1px solid var(--border)',
       borderRadius: 12,
       padding: '10px 16px',
-      boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
+      boxShadow: 'var(--shadow-md)',
     }}>
-      <div style={{ fontSize: 11, color: '#555', marginBottom: 5 }}>{label}</div>
+      <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 5 }}>{label}</div>
       {payload.map((p, i) => (
-        <div key={i} style={{ color: p.fill || p.color || '#00ff88', fontWeight: 700, fontSize: 14 }}>
+        <div key={i} style={{ color: p.fill || p.color || 'var(--green)', fontWeight: 700, fontSize: 14 }}>
           {formatCurrency(p.value)}
         </div>
       ))}
@@ -28,7 +28,11 @@ const ChartTooltip = ({ active, payload, label }) => {
   )
 }
 
-export default function Stats({ data }) {
+export default function Stats({ data, theme }) {
+  const isDark = theme === 'dark'
+  const tickColor = isDark ? '#636366' : '#9e9e9e'
+  const gridStroke = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'
+  const cursorFill = isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.04)'
   const { batches, sales, suppliers } = data
   const [tab, setTab] = useState('overview')
 
@@ -155,23 +159,23 @@ export default function Stats({ data }) {
           ) : (
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={supplierChartData} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
+                <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} vertical={false} />
                 <XAxis
                   dataKey="name"
                   stroke="transparent"
-                  tick={{ fill: '#555', fontSize: 12, fontFamily: 'inherit' }}
+                  tick={{ fill: tickColor, fontSize: 12, fontFamily: 'inherit' }}
                   axisLine={false}
                   tickLine={false}
                 />
                 <YAxis
                   stroke="transparent"
-                  tick={{ fill: '#444', fontSize: 11, fontFamily: 'inherit' }}
+                  tick={{ fill: tickColor, fontSize: 11, fontFamily: 'inherit' }}
                   tickFormatter={(v) => `€${v}`}
                   axisLine={false}
                   tickLine={false}
                   width={52}
                 />
-                <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(255,255,255,0.025)' }} />
+                <Tooltip content={<ChartTooltip />} cursor={{ fill: cursorFill }} />
                 <Bar dataKey="profit" radius={[6, 6, 0, 0]}>
                   {supplierChartData.map((entry, i) => (
                     <Cell key={i} fill={entry.color} />

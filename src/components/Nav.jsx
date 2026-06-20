@@ -1,51 +1,71 @@
-import { useState } from 'react'
-
-const LINKS = [
-  { id: 'home', label: 'Home' },
-  { id: 'inventory', label: 'Voorraad' },
-  { id: 'new', label: '+ Nieuw' },
-  { id: 'stats', label: 'Stats' },
-  { id: 'labels', label: 'Labels' },
-  { id: 'berichten', label: 'Berichten' },
-  { id: 'settings', label: 'Instellingen' },
+const NAV_LINKS = [
+  { id: 'home',       label: 'Home',        icon: '⌂' },
+  { id: 'inventory',  label: 'Voorraad',    icon: '📦' },
+  { id: 'new',        label: 'Nieuw',       icon: '+' },
+  { id: 'stats',      label: 'Stats',       icon: '📊' },
+  { id: 'labels',     label: 'Labels',      icon: '🏷' },
+  { id: 'berichten',  label: 'Berichten',   icon: '💬' },
+  { id: 'settings',   label: 'Instellingen',icon: '⚙' },
 ]
 
-export default function Nav({ currentPage, onNavigate }) {
-  const [menuOpen, setMenuOpen] = useState(false)
+const BOTTOM_TABS = ['home', 'inventory', 'new', 'berichten', 'settings']
 
-  const handleNav = (id) => {
-    onNavigate(id)
-    setMenuOpen(false)
-  }
-
+export default function Nav({ currentPage, onNavigate, theme, onToggleTheme, userName }) {
   return (
-    <nav className="nav">
-      <div className="nav-inner">
-        <span className="nav-brand">VAULT</span>
-        <div className={`nav-links${menuOpen ? ' open' : ''}`}>
-          {LINKS.map((l) => (
+    <>
+      {/* Desktop Sidebar */}
+      <aside className="sidebar">
+        <div className="sidebar-top">
+          <div className="sidebar-brand">
+            <span className="brand-mark" />
+            VAULT
+          </div>
+          {userName && <div className="sidebar-user">{userName}</div>}
+        </div>
+
+        <nav className="sidebar-nav">
+          {NAV_LINKS.map((l) => (
             <button
               key={l.id}
-              className={`nav-link${currentPage === l.id ? ' active' : ''}`}
-              onClick={() => handleNav(l.id)}
+              className={`sidebar-link${currentPage === l.id ? ' active' : ''}`}
+              onClick={() => onNavigate(l.id)}
             >
+              <span className="sidebar-link-icon">{l.icon}</span>
               {l.label}
             </button>
           ))}
+        </nav>
+
+        <div className="sidebar-footer">
+          <button className="theme-toggle" onClick={onToggleTheme}>
+            <span>{theme === 'light' ? '🌙' : '☀️'}</span>
+            {theme === 'light' ? 'Dark mode' : 'Light mode'}
+          </button>
         </div>
-        <button
-          className="nav-hamburger"
-          onClick={() => setMenuOpen((o) => !o)}
-          aria-label="Menu"
-          aria-expanded={menuOpen}
-        >
-          <span className={`hamburger-icon${menuOpen ? ' open' : ''}`}>
-            <span />
-            <span />
-            <span />
-          </span>
+      </aside>
+
+      {/* Mobile Header */}
+      <header className="mobile-header">
+        <div className="nav-brand">VAULT</div>
+        {userName && <span className="mobile-user">{userName}</span>}
+        <button className="theme-toggle-icon" onClick={onToggleTheme} title="Thema wisselen">
+          {theme === 'light' ? '🌙' : '☀️'}
         </button>
-      </div>
-    </nav>
+      </header>
+
+      {/* Mobile Bottom Nav */}
+      <nav className="bottom-nav">
+        {NAV_LINKS.filter((l) => BOTTOM_TABS.includes(l.id)).map((l) => (
+          <button
+            key={l.id}
+            className={`bottom-tab${currentPage === l.id ? ' active' : ''}`}
+            onClick={() => onNavigate(l.id)}
+          >
+            <span className="bottom-tab-icon">{l.icon}</span>
+            <span className="bottom-tab-label">{l.label}</span>
+          </button>
+        ))}
+      </nav>
+    </>
   )
 }
