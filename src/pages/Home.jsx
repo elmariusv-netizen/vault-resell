@@ -300,10 +300,12 @@ export default function Home({ data, updateData, onNavigate, theme }) {
                     background: (sup?.color || '#333') + '18',
                     border: `1px solid ${(sup?.color || '#333')}30`,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    flexShrink: 0, fontSize: 14,
+                    flexShrink: 0, fontSize: 14, overflow: 'hidden',
                   }}
                 >
-                  {s.platform === 'Vinted' ? '🏷' : s.platform === 'B2B' ? '🤝' : '👤'}
+                  {s.photo
+                    ? <img src={s.photo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    : (s.platform === 'Vinted' ? '🏷' : s.platform === 'B2B' ? '🤝' : '👤')}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
@@ -324,6 +326,18 @@ export default function Home({ data, updateData, onNavigate, theme }) {
                   <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
                     {formatDate(s.date)}{s.buyer ? ` · ${s.buyer}` : ''}
                   </div>
+                  {s.links?.length > 0 && (
+                    <div style={{ marginTop: 3, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      {s.links.map((url, i) => (
+                        <a key={i} href={url} target="_blank" rel="noopener noreferrer"
+                          style={{ fontSize: 10, color: 'var(--blue)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 2 }}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          🔗 {(() => { try { return new URL(url).hostname.replace('www.', '') } catch { return url.slice(0, 20) } })()}
+                        </a>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <div style={{ textAlign: 'right', flexShrink: 0 }}>
                   <div style={{ fontSize: 14, fontWeight: 700 }}>

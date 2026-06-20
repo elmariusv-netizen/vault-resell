@@ -1,11 +1,54 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import Modal from './Modal'
 import { genId, formatSkuRange, calcSaleProfit, formatCurrency, getRemainingQty } from '../utils/skuUtils'
 
 const PLATFORMS = ['Vinted', 'Privé', 'B2B']
 
+async function compressPhoto(file) {
+  return new Promise((resolve) => {
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      const img = new Image()
+      img.onload = () => {
+        const maxDim = 480
+        const ratio = Math.min(maxDim / img.width, maxDim / img.height, 1)
+        const canvas = document.createElement('canvas')
+        canvas.width = Math.round(img.width * ratio)
+        canvas.height = Math.round(img.height * ratio)
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height)
+        resolve(canvas.toDataURL('image/jpeg', 0.78))
+      }
+      img.src = e.target.result
+    }
+    reader.readAsDataURL(file)
+  })
+}
+
+function LinkRow({ value, onChange, onRemove }) {
+  return (
+    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+      <input
+        type="url"
+        placeholder="https://www.vinted.be/items/…"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{ flex: 1 }}
+      />
+      <button
+        type="button"
+        className="btn btn-ghost btn-sm btn-icon"
+        onClick={onRemove}
+        style={{ flexShrink: 0, fontSize: 16, padding: '5px 9px' }}
+      >
+        ×
+      </button>
+    </div>
+  )
+}
+
 export default function SaleModal({ data, onClose, onSave, defaultBatchId }) {
   const { batches, sales, suppliers } = data
+  const photoRef = useRef()
 
   const [batchId, setBatchId] = useState(defaultBatchId || (batches[0]?.id ?? ''))
   const [type, setType] = useState('individual')
@@ -16,6 +59,9 @@ export default function SaleModal({ data, onClose, onSave, defaultBatchId }) {
   const [fees, setFees] = useState('')
   const [date, setDate] = useState(new Date().toISOString().split('T')[0])
   const [fromLive, setFromLive] = useState(false)
+  const [photo, setPhoto] = useState(null)
+  const [links, setLinks] = useState([])
+  const [photoLoading, setPhotoLoading] = useState(false)
 
   const batch = batches.find((b) => b.id === batchId)
   const remaining = batch ? getRemainingQty(batch, sales) : 0
@@ -37,6 +83,23 @@ export default function SaleModal({ data, onClose, onSave, defaultBatchId }) {
 
   const liveExceeded = fromLive && effectiveQty > liveCount
 
+  const handlePhoto = async (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+    setPhotoLoading(true)
+    try {
+      const dataUrl = await compressPhoto(file)
+      setPhoto(dataUrl)
+    } finally {
+      setPhotoLoading(false)
+      e.target.value = ''
+    }
+  }
+
+  const addLink = () => setLinks((l) => [...l, ''])
+  const updateLink = (i, val) => setLinks((l) => l.map((x, idx) => idx === i ? val : x))
+  const removeLink = (i) => setLinks((l) => l.filter((_, idx) => idx !== i))
+
   const handleSave = () => {
     if (!batch || !price) return
     const sale = {
@@ -50,6 +113,8 @@ export default function SaleModal({ data, onClose, onSave, defaultBatchId }) {
       fees: effectiveFees,
       date,
       fromLive,
+      photo: photo || null,
+      links: links.filter((l) => l.trim()),
     }
     onSave(sale)
     onClose()
@@ -169,6 +234,76 @@ export default function SaleModal({ data, onClose, onSave, defaultBatchId }) {
               </button>
             ))}
           </div>
+        </div>
+
+        {/* ── Photo ───────────────────────────────────── */}
+        <div className="form-group">
+          <label>Foto (optioneel)</label>
+          {photo ? (
+            <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+              <img
+                src={photo}
+                alt="item"
+                style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 10, border: '1px solid var(--border)', flexShrink: 0 }}
+              />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => { photoRef.current.value = ''; photoRef.current.click() }}
+                  disabled={photoLoading}
+                >
+                  🔄 Vervang
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => setPhoto(null)}
+                  disabled={photoLoading}
+                >
+                  × Verwijder
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => { photoRef.current.value = ''; photoRef.current.click() }}
+              disabled={photoLoading}
+              style={{ alignSelf: 'flex-start' }}
+            >
+              {photoLoading ? 'Laden…' : '📷 Foto toevoegen'}
+            </button>
+          )}
+          <input ref={photoRef} type="file" accept="image/*" onChange={handlePhoto} style={{ display: 'none' }} />
+        </div>
+
+        {/* ── Links ───────────────────────────────────── */}
+        <div className="form-group">
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
+            <label style={{ margin: 0 }}>Links (optioneel)</label>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={addLink}
+              style={{ fontSize: 12 }}
+            >
+              + Link toevoegen
+            </button>
+          </div>
+          {links.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {links.map((url, i) => (
+                <LinkRow key={i} value={url} onChange={(v) => updateLink(i, v)} onRemove={() => removeLink(i)} />
+              ))}
+            </div>
+          )}
+          {links.length === 0 && (
+            <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
+              Voeg een Vinted link of andere URL toe
+            </div>
+          )}
         </div>
 
         <div className="form-row">
