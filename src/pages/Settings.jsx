@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { genId } from '../utils/skuUtils'
+import { genId, getNextSkuLabel, formatSku } from '../utils/skuUtils'
 import { clearData } from '../utils/storage'
 
 const COLORS = ['#00ff88', '#4fc3f7', '#ce93d8', '#ffb74d', '#80cbc4', '#ff7043', '#f06292', '#aed581', '#ffd60a', '#3ecfff']
@@ -149,7 +149,11 @@ export default function Settings({ data, updateData, onExport, activeUserId }) {
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {suppliers.map((s) => {
-              const bCount = batches.filter((b) => b.supplierPrefix === s.prefix).length
+              const sBatches = batches.filter((b) => b.supplierPrefix === s.prefix)
+              const bCount = sBatches.length
+              const maxEnd = sBatches.reduce((m, b) => Math.max(m, b.endNum || 0), 0)
+              const lastSku = maxEnd > 0 ? formatSku(s.prefix, maxEnd) : null
+              const nextSku = getNextSkuLabel(batches, s.prefix)
               return (
                 <div
                   key={s.id}
@@ -174,16 +178,32 @@ export default function Settings({ data, updateData, onExport, activeUserId }) {
                   >
                     <span style={{ width: 10, height: 10, borderRadius: '50%', background: s.color, display: 'block' }} />
                   </div>
-                  <div style={{ flex: 1 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
                       <span style={{ fontFamily: 'monospace', fontWeight: 800, color: s.color, fontSize: 14 }}>{s.prefix}</span>
                       <span style={{ fontWeight: 500, fontSize: 14 }}>{s.name}</span>
                     </div>
-                    <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
-                      {bCount} batch{bCount !== 1 ? 'es' : ''}
+                    <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 3, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+                      <span>{bCount} batch{bCount !== 1 ? 'es' : ''}</span>
+                      {lastSku && (
+                        <>
+                          <span>·</span>
+                          <span>Laatste: <span style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--text-2)' }}>{lastSku}</span></span>
+                          <span>·</span>
+                          <span style={{ color: s.color, fontWeight: 600 }}>
+                            Volgende bestelling begint bij{' '}
+                            <span style={{ fontFamily: 'monospace', fontWeight: 800 }}>{nextSku}</span>
+                          </span>
+                        </>
+                      )}
+                      {!lastSku && (
+                        <span style={{ color: s.color, fontWeight: 600 }}>
+                          Eerste SKU: <span style={{ fontFamily: 'monospace', fontWeight: 800 }}>{nextSku}</span>
+                        </span>
+                      )}
                     </div>
                   </div>
-                  <div style={{ display: 'flex', gap: 6 }}>
+                  <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
                     <button className="btn btn-ghost btn-sm" onClick={() => setEditSupplier(s)}>Bewerk</button>
                     <button className="btn btn-danger btn-sm" onClick={() => setConfirmDeleteSup(s.id)}>Verwijder</button>
                   </div>

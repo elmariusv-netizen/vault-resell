@@ -112,4 +112,5 @@ export const SEED_DATA = {
   sales: [],
   messages: [],
   priceResearch: [],
+  skuPhotos: {},
 }

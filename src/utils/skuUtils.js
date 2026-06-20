@@ -3,6 +3,21 @@ export const genId = () =>
 
 export const pad = (n) => String(n).padStart(3, '0')
 
+export function formatSku(prefix, num) {
+  return `${prefix}${pad(num)}`
+}
+
+export function getNextSkuNum(batches, prefix) {
+  const maxEnd = batches
+    .filter((b) => b.supplierPrefix === prefix)
+    .reduce((m, b) => Math.max(m, b.endNum || 0), 0)
+  return maxEnd + 1
+}
+
+export function getNextSkuLabel(batches, prefix) {
+  return formatSku(prefix, getNextSkuNum(batches, prefix))
+}
+
 export function formatSkuRange(prefix, startNum, endNum) {
   if (startNum === endNum) return `${prefix}${pad(startNum)}`
   return `${prefix}${pad(startNum)}-${pad(endNum)}`

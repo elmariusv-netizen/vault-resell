@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef } from 'react'
-import { genId, getNextRange, formatSkuRange, formatCurrency } from '../utils/skuUtils'
+import { genId, getNextRange, formatSkuRange, formatCurrency, getNextSkuLabel } from '../utils/skuUtils'
 
 export default function NewSKU({ data, updateData, onNavigate }) {
   const { batches, suppliers } = data
@@ -79,6 +79,45 @@ export default function NewSKU({ data, updateData, onNavigate }) {
 
       <div style={{ maxWidth: 720 }}>
         <form className="form" onSubmit={handleSubmit}>
+
+          {/* SKU Continuity overview */}
+          {suppliers.length > 0 && (
+            <div style={{
+              display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 4,
+            }}>
+              {suppliers.map((s) => {
+                const next = getNextSkuLabel(batches, s.prefix)
+                const isActive = supplier?.prefix === s.prefix
+                return (
+                  <div
+                    key={s.id}
+                    onClick={() => setSupplierId(s.id)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 8,
+                      background: isActive ? s.color + '14' : 'var(--surface)',
+                      border: `1px solid ${isActive ? s.color + '40' : 'var(--border)'}`,
+                      borderRadius: 'var(--r-lg)',
+                      padding: '8px 14px',
+                      cursor: 'pointer',
+                      transition: 'all 0.14s',
+                      flex: '1 1 auto',
+                      minWidth: 0,
+                    }}
+                  >
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: s.color, flexShrink: 0 }} />
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 11, color: 'var(--text-3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.06em' }}>
+                        {s.name.length > 16 ? s.prefix : s.name}
+                      </div>
+                      <div style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 800, color: isActive ? s.color : 'var(--text-2)' }}>
+                        Volgende: {next}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
 
           {/* Supplier + quantity */}
           <div className="glass-card">

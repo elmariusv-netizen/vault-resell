@@ -37,13 +37,13 @@ export function loadData(userId) {
     const raw = localStorage.getItem(dataKey(userId))
     if (raw) {
       const data = JSON.parse(raw)
-      return { messages: [], priceResearch: [], ...data }
+      return { messages: [], priceResearch: [], skuPhotos: {}, ...data }
     }
     // Migrate existing data from legacy key on first use
     const legacyRaw = localStorage.getItem(LEGACY_KEY)
     if (legacyRaw) {
       const legacy = JSON.parse(legacyRaw)
-      const migrated = { messages: [], priceResearch: [], ...legacy }
+      const migrated = { messages: [], priceResearch: [], skuPhotos: {}, ...legacy }
       saveData(migrated, userId)
       return migrated
     }
