@@ -82,7 +82,7 @@ function ConfirmModal({ title, message, onCancel, onConfirm, danger }) {
   )
 }
 
-export default function Settings({ data, updateData }) {
+export default function Settings({ data, updateData, onExport }) {
   const { suppliers, batches, sales } = data
   const [editSupplier, setEditSupplier] = useState(null)
   const [addOpen, setAddOpen] = useState(false)
@@ -110,16 +110,6 @@ export default function Settings({ data, updateData }) {
       }),
     })
     setConfirmDeleteSup(null)
-  }
-
-  const exportData = () => {
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `vault-resell-${new Date().toISOString().split('T')[0]}.json`
-    a.click()
-    URL.revokeObjectURL(url)
   }
 
   const importData = (e) => {
@@ -210,7 +200,7 @@ export default function Settings({ data, updateData }) {
             {
               title: 'Exporteer data',
               desc: 'Download alle data als JSON bestand',
-              action: <button className="btn btn-secondary btn-sm" onClick={exportData}>Exporteer</button>,
+              action: <button className="btn btn-secondary btn-sm" onClick={onExport}>Exporteer</button>,
             },
             {
               title: 'Importeer data',

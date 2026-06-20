@@ -114,7 +114,17 @@ export default function Home({ data, updateData, onNavigate }) {
     [sales]
   )
 
-  const handleSaveSale = (sale) => updateData({ sales: [...sales, sale] })
+  const handleSaveSale = (sale) => {
+    const updates = { sales: [...sales, sale] }
+    if (sale.fromLive) {
+      updates.batches = batches.map((b) =>
+        b.id === sale.batchId
+          ? { ...b, liveCount: Math.max(0, (b.liveCount || 0) - (sale.quantity || 1)) }
+          : b
+      )
+    }
+    updateData(updates)
+  }
 
   const STAT_CARDS = [
     { label: 'In voorraad', value: stats.totalItems, suffix: ' stuks', color: '#3ecfff' },
@@ -152,7 +162,7 @@ export default function Home({ data, updateData, onNavigate }) {
       </div>
 
       {/* Charts row */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 14, marginBottom: 14 }}>
+      <div className="charts-grid">
         {/* Line chart */}
         <div className="glass-card">
           <div className="chart-section-label">Cumulatieve winst</div>

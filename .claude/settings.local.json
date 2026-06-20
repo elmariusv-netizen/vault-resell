@@ -4,7 +4,11 @@
       "PowerShell(cd \"C:\\\\Users\\\\Marius\\\\vault-resell\"; $env:PATH = \"C:\\\\Users\\\\Marius\\\\AppData\\\\Roaming\\\\npm;C:\\\\Program Files\\\\nodejs;\" + $env:PATH; node -e \"const p=require\\('pdfjs-dist/package.json'\\); console.log\\(p.version, p.main, JSON.stringify\\(Object.keys\\(p.exports||{}\\).slice\\(0,5\\)\\)\\)\")",
       "PowerShell(npm install *)",
       "PowerShell(cd \"C:\\\\Users\\\\Marius\\\\vault-resell\"; $env:PATH = \"C:\\\\Users\\\\Marius\\\\AppData\\\\Roaming\\\\npm;C:\\\\Program Files\\\\nodejs;\" + $env:PATH; node -e \"const p=require\\('pdfjs-dist/package.json'\\); console.log\\('version:', p.version\\); const fs=require\\('fs'\\); const files=fs.readdirSync\\('node_modules/pdfjs-dist/build'\\).filter\\(f=>f.includes\\('worker'\\)\\); console.log\\('worker files:', files.join\\(', '\\)\\)\")",
-      "PowerShell(Stop-Job *)"
+      "PowerShell(Stop-Job *)",
+      "Bash(npm run *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)"
     ]
   }
 }

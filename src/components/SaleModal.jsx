@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import Modal from './Modal'
 import { genId, formatSkuRange, calcSaleProfit, formatCurrency, getRemainingQty } from '../utils/skuUtils'
 
@@ -15,9 +15,13 @@ export default function SaleModal({ data, onClose, onSave, defaultBatchId }) {
   const [buyer, setBuyer] = useState('')
   const [fees, setFees] = useState('')
   const [date, setDate] = useState(new Date().toISOString().split('T')[0])
+  const [fromLive, setFromLive] = useState(false)
 
   const batch = batches.find((b) => b.id === batchId)
   const remaining = batch ? getRemainingQty(batch, sales) : 0
+  const liveCount = batch?.liveCount || 0
+
+  useEffect(() => { setFromLive(false) }, [batchId])
 
   const vintedFee = useMemo(() => {
     if (platform !== 'Vinted' || !price) return 0
@@ -31,6 +35,8 @@ export default function SaleModal({ data, onClose, onSave, defaultBatchId }) {
     batch
   ) : null
 
+  const liveExceeded = fromLive && effectiveQty > liveCount
+
   const handleSave = () => {
     if (!batch || !price) return
     const sale = {
@@ -43,6 +49,7 @@ export default function SaleModal({ data, onClose, onSave, defaultBatchId }) {
       buyer,
       fees: effectiveFees,
       date,
+      fromLive,
     }
     onSave(sale)
     onClose()
@@ -64,7 +71,7 @@ export default function SaleModal({ data, onClose, onSave, defaultBatchId }) {
           <button
             className="btn btn-primary"
             onClick={handleSave}
-            disabled={!price || !batchId || effectiveQty > remaining}
+            disabled={!price || !batchId || effectiveQty > remaining || liveExceeded}
           >
             Opslaan
           </button>
@@ -81,10 +88,27 @@ export default function SaleModal({ data, onClose, onSave, defaultBatchId }) {
           </select>
           {batch && (
             <span style={{ fontSize: 12, color: 'var(--text-2)' }}>
-              Resterend: {remaining} stuks
+              Resterend: {remaining} stuks{liveCount > 0 && <span style={{ color: 'var(--blue)' }}> · {liveCount} live</span>}
             </span>
           )}
         </div>
+
+        {liveCount > 0 && (
+          <div className="form-group">
+            <label>Herkomst</label>
+            <div className="toggle-group">
+              <button className={`toggle-btn${!fromLive ? ' active' : ''}`} onClick={() => setFromLive(false)}>
+                Directe voorraad
+              </button>
+              <button className={`toggle-btn${fromLive ? ' active' : ''}`} onClick={() => setFromLive(true)}>
+                Van Vinted live ({liveCount})
+              </button>
+            </div>
+            {liveExceeded && (
+              <span style={{ fontSize: 12, color: 'var(--red)' }}>Meer dan live items!</span>
+            )}
+          </div>
+        )}
 
         <div className="form-group">
           <label>Type</label>
@@ -139,10 +163,7 @@ export default function SaleModal({ data, onClose, onSave, defaultBatchId }) {
               <button
                 key={p}
                 className={`platform-btn${platform === p ? ' active' : ''}`}
-                onClick={() => {
-                  setPlatform(p)
-                  setFees('')
-                }}
+                onClick={() => { setPlatform(p); setFees('') }}
               >
                 {p}
               </button>
