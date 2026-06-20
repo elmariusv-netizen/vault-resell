@@ -712,15 +712,13 @@ hr.divider { border: none; border-top: 1px solid var(--border); margin: 20px 0; 
 .row-actions { display: flex; gap: 4px; }
 
 /* ── Responsive ──────────────────────────── */
+
+/* Hamburger at 900px: 7 nav links need ~593px; at 900px there's ~720px available */
 @media (max-width: 900px) {
   .charts-grid { grid-template-columns: 1fr; }
-}
-
-@media (max-width: 768px) {
-  .page { padding: 16px 14px; }
-  .nav-inner { padding: 0 14px; height: 52px; }
-  .nav-brand { margin-right: 0; font-size: 0.95rem; }
   .nav-hamburger { display: flex; align-items: center; }
+  .nav-inner { padding: 0 14px; }
+  .nav-brand { margin-right: 0; }
 
   .nav-links {
     display: none;
@@ -746,6 +744,11 @@ hr.divider { border: none; border-top: 1px solid var(--border); margin: 20px 0; 
     border-radius: var(--r-md);
     font-size: 14px;
   }
+}
+
+@media (max-width: 768px) {
+  .page { padding: 16px 14px; }
+  .nav-inner { height: 52px; font-size: 0.95rem; }
 
   .stats-grid { grid-template-columns: 1fr 1fr; }
   .form-row { grid-template-columns: 1fr; }
