@@ -158,7 +158,7 @@ function SalesHeatmap({ sales, isDark }) {
   )
 }
 
-export default function Home({ data, updateData, onNavigate, theme }) {
+export default function Home({ data, updateData, onNavigate, theme, onDeleteSale }) {
   const isDark = theme === 'dark'
   const tickColor = isDark ? '#636366' : '#9e9e9e'
   const gridStroke = isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)'
@@ -167,6 +167,7 @@ export default function Home({ data, updateData, onNavigate, theme }) {
 
   const { batches, sales, suppliers } = data
   const [showSale, setShowSale] = useState(false)
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null)
 
   const stats = useMemo(() => {
     const totalItems = batches.reduce((s, b) => s + getRemainingQty(b, sales), 0)
@@ -396,7 +397,7 @@ export default function Home({ data, updateData, onNavigate, theme }) {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
           <div className="chart-section-label" style={{ margin: 0 }}>Recente verkopen</div>
           {sales.length > 0 && (
-            <button className="btn btn-ghost btn-sm" onClick={() => onNavigate('stats')}>
+            <button className="btn btn-ghost btn-sm" onClick={() => onNavigate('verkopen')}>
               Bekijk alles →
             </button>
           )}
@@ -459,18 +460,30 @@ export default function Home({ data, updateData, onNavigate, theme }) {
                     {formatDate(s.date)}{s.buyer ? ` · ${s.buyer}` : ''}
                   </div>
                 </div>
-                <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                  {s.isFree ? (
-                    <div style={{ fontSize: 12, color: 'var(--text-3)', fontWeight: 600 }}>Gratis</div>
-                  ) : (
-                    <div style={{ fontSize: 14, fontWeight: 700 }}>
-                      {formatCurrency((s.salePrice || 0) * (s.quantity || 1))}
-                    </div>
-                  )}
-                  {p && !s.isFree && (
-                    <div style={{ fontSize: 11, color: p.profit >= 0 ? 'var(--green)' : 'var(--red)', fontWeight: 600, marginTop: 1 }}>
-                      {p.profit >= 0 ? '+' : ''}{formatCurrency(p.profit)}
-                    </div>
+                <div style={{ textAlign: 'right', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div>
+                    {s.isFree ? (
+                      <div style={{ fontSize: 12, color: 'var(--text-3)', fontWeight: 600 }}>Gratis</div>
+                    ) : (
+                      <div style={{ fontSize: 14, fontWeight: 700 }}>
+                        {formatCurrency((s.salePrice || 0) * (s.quantity || 1))}
+                      </div>
+                    )}
+                    {p && !s.isFree && (
+                      <div style={{ fontSize: 11, color: p.profit >= 0 ? 'var(--green)' : 'var(--red)', fontWeight: 600, marginTop: 1 }}>
+                        {p.profit >= 0 ? '+' : ''}{formatCurrency(p.profit)}
+                      </div>
+                    )}
+                  </div>
+                  {onDeleteSale && (
+                    <button
+                      className="btn btn-danger btn-icon btn-sm"
+                      onClick={() => setConfirmDeleteId(s.id)}
+                      title="Verwijder verkoop"
+                      style={{ fontSize: 12, opacity: 0.7 }}
+                    >
+                      🗑
+                    </button>
                   )}
                 </div>
               </div>
@@ -494,6 +507,29 @@ export default function Home({ data, updateData, onNavigate, theme }) {
 
       {showSale && (
         <SaleModal data={data} onClose={() => setShowSale(false)} onSave={handleSaveSale} />
+      )}
+
+      {confirmDeleteId && (
+        <div className="modal-overlay" onMouseDown={(e) => e.target === e.currentTarget && setConfirmDeleteId(null)}>
+          <div className="modal" style={{ maxWidth: 400 }}>
+            <div className="modal-header">
+              <h2>Verkoop verwijderen?</h2>
+              <button className="modal-close" onClick={() => setConfirmDeleteId(null)}>×</button>
+            </div>
+            <p style={{ color: 'var(--text-2)', fontSize: 14, lineHeight: 1.7 }}>
+              De verkoop wordt permanent verwijderd en het item gaat terug naar voorraad.
+            </p>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setConfirmDeleteId(null)}>Annuleer</button>
+              <button
+                className="btn btn-danger"
+                onClick={() => { onDeleteSale(confirmDeleteId); setConfirmDeleteId(null) }}
+              >
+                Definitief verwijderen
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

@@ -6,11 +6,27 @@ import NewSKU from './pages/NewSKU'
 import Stats from './pages/Stats'
 import Settings from './pages/Settings'
 import Labels from './pages/Labels'
+import Verkopen from './pages/Verkopen'
 import Onboarding from './pages/Onboarding'
 import {
   loadData, saveData, getBackupMeta, saveBackupMeta,
   getUsers, saveUsers, getActiveUserId, setActiveUserId, hasLegacyData,
 } from './utils/storage'
+import { getRemainingQty } from './utils/skuUtils'
+
+function validateData(loaded) {
+  if (!loaded?.batches || !loaded?.sales) return loaded
+  let changed = false
+  const batches = loaded.batches.map((b) => {
+    const remaining = getRemainingQty(b, loaded.sales)
+    if ((b.liveCount || 0) > remaining) {
+      changed = true
+      return { ...b, liveCount: remaining }
+    }
+    return b
+  })
+  return changed ? { ...loaded, batches } : loaded
+}
 
 export default function App() {
   const [page, setPage] = useState('home')
@@ -41,7 +57,10 @@ export default function App() {
 
   useEffect(() => {
     if (activeUserId) {
-      setData(loadData(activeUserId))
+      const raw = loadData(activeUserId)
+      const validated = validateData(raw)
+      if (validated !== raw) saveData(validated, activeUserId)
+      setData(validated)
     }
   }, [activeUserId])
 
@@ -57,6 +76,26 @@ export default function App() {
   const updateData = useCallback((updates) => {
     setData((prev) => {
       const next = { ...prev, ...updates }
+      saveData(next, activeUserId)
+      return next
+    })
+  }, [activeUserId])
+
+  const handleDeleteSale = useCallback((saleId) => {
+    setData((prev) => {
+      if (!prev) return prev
+      const sale = prev.sales.find((s) => s.id === saleId)
+      if (!sale) return prev
+      const nextSales = prev.sales.filter((s) => s.id !== saleId)
+      let nextBatches = prev.batches
+      if (sale.fromLive) {
+        nextBatches = prev.batches.map((b) =>
+          b.id === sale.batchId
+            ? { ...b, liveCount: Math.min((b.liveCount || 0) + (sale.quantity || 1), b.quantity) }
+            : b
+        )
+      }
+      const next = { ...prev, sales: nextSales, batches: nextBatches }
       saveData(next, activeUserId)
       return next
     })
@@ -123,7 +162,7 @@ export default function App() {
   }
 
   const activeUser = users.find((u) => u.id === activeUserId)
-  const props = { data, updateData, onNavigate: setPage }
+  const props = { data, updateData, onNavigate: setPage, onDeleteSale: handleDeleteSale }
 
   return (
     <div className="app-shell">
@@ -154,6 +193,7 @@ export default function App() {
           {page === 'home'      && <Home {...props} theme={theme} />}
           {page === 'inventory' && <Inventory {...props} />}
           {page === 'new'       && <NewSKU {...props} />}
+          {page === 'verkopen'  && <Verkopen data={data} onDeleteSale={handleDeleteSale} />}
           {page === 'stats'     && <Stats data={data} theme={theme} />}
           {page === 'settings'  && <Settings {...props} onExport={handleExport} activeUserId={activeUserId} />}
           {page === 'labels'    && <Labels data={data} />}

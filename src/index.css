@@ -551,6 +551,27 @@ input::placeholder, textarea::placeholder { color: var(--text-3); }
 .badge-blue   { background: var(--blue-dim);   color: var(--blue); }
 .badge-gray   { background: var(--bg-2);       color: var(--text-2); border: 1px solid var(--border-strong); }
 
+/* ── Sales history responsive ───────────────── */
+.sales-table-wrap { display: block; }
+.sales-cards-mobile { display: none; }
+
+.sale-card-mobile {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  transition: border-color 0.14s;
+}
+
+.sale-card-mobile:hover { border-color: var(--border-strong); }
+
+@media (max-width: 640px) {
+  .sales-table-wrap { display: none; }
+  .sales-cards-mobile { display: flex; flex-direction: column; gap: 10px; }
+}
+
 /* ── Table ──────────────────────────────────── */
 .table-wrap { overflow-x: auto; border-radius: var(--r-xl); border: 1px solid var(--border); background: var(--surface); }
 

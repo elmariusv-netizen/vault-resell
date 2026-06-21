@@ -34,7 +34,7 @@ export function getNextRange(batches, supplierPrefix, quantity) {
 export function getRemainingQty(batch, sales) {
   const sold = sales
     .filter((s) => s.batchId === batch.id)
-    .reduce((sum, s) => sum + (s.quantity || 0), 0)
+    .reduce((sum, s) => sum + (s.quantity || 1), 0)
   return Math.max(0, batch.quantity - sold)
 }
 
