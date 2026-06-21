@@ -1,514 +1,570 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import {
-  ResponsiveContainer, AreaChart, Area, XAxis, YAxis,
-  Tooltip, CartesianGrid, PieChart, Pie, Cell,
+  ResponsiveContainer, AreaChart, Area, BarChart, Bar,
+  XAxis, YAxis, Tooltip, CartesianGrid, LineChart, Line,
 } from 'recharts'
 import SaleModal from '../components/SaleModal'
+import DateRangeFilter, { getDateBounds, filterByRange } from '../components/DateRangeFilter'
 import {
   formatCurrency, formatDate, formatSkuRange,
   getRemainingQty, calcSaleProfit, normalizePlatform,
 } from '../utils/skuUtils'
 
-const ChartTooltip = ({ active, payload, label }) => {
+// Always-dark palette for the dashboard
+const D = {
+  bg:      '#0f1117',
+  card:    '#161b2e',
+  card2:   '#1e2437',
+  border:  'rgba(255,255,255,0.07)',
+  text:    '#f0f2f8',
+  text2:   'rgba(240,242,248,0.55)',
+  text3:   'rgba(240,242,248,0.28)',
+  blue:    '#3b82f6',
+  blueDim: 'rgba(59,130,246,0.15)',
+  green:   '#22c55e',
+  red:     '#ef4444',
+  yellow:  '#f59e0b',
+  purple:  '#8b5cf6',
+  grid:    'rgba(255,255,255,0.04)',
+}
+
+// ── Chart data builders ───────────────────────
+function buildChartData(sales, range, bounds) {
+  if (range === 'all') {
+    const byMonth = {}
+    sales.forEach((s) => {
+      if (!s.date) return
+      const m = s.date.substring(0, 7)
+      if (!byMonth[m]) byMonth[m] = { revenue: 0, count: 0 }
+      byMonth[m].revenue += (s.salePrice || 0) * (s.quantity || 1)
+      byMonth[m].count += s.quantity || 1
+    })
+    return Object.entries(byMonth).sort().map(([m, d]) => ({
+      label: new Date(m + '-01').toLocaleString('nl-BE', { month: 'short', year: '2-digit' }),
+      revenue: Math.round(d.revenue * 100) / 100,
+      count: d.count,
+    }))
+  }
+
+  const byDay = {}
+  sales.forEach((s) => {
+    if (!s.date) return
+    if (!byDay[s.date]) byDay[s.date] = { revenue: 0, count: 0 }
+    byDay[s.date].revenue += (s.salePrice || 0) * (s.quantity || 1)
+    byDay[s.date].count += s.quantity || 1
+  })
+
+  const result = []
+  const cursor = new Date(bounds.from); cursor.setHours(0, 0, 0, 0)
+  const end = new Date(bounds.to); end.setHours(23, 59, 59, 0)
+  while (cursor <= end) {
+    const ds = cursor.toISOString().split('T')[0]
+    result.push({
+      label: cursor.toLocaleDateString('nl-BE', { day: 'numeric', month: 'short' }),
+      revenue: Math.round((byDay[ds]?.revenue || 0) * 100) / 100,
+      count: byDay[ds]?.count || 0,
+    })
+    cursor.setDate(cursor.getDate() + 1)
+  }
+  return result
+}
+
+function buildHeatmapData(sales) {
+  const DAY_NAMES = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo']
+  const grid = Array.from({ length: 7 }, () => Array(24).fill(0))
+  sales.forEach((s) => {
+    if (!s.date || !s.saleTime) return
+    const dow = (new Date(s.date).getDay() + 6) % 7
+    const hour = parseInt(s.saleTime.split(':')[0])
+    if (!isNaN(hour) && hour >= 0 && hour < 24) grid[dow][hour] += s.quantity || 1
+  })
+  return { grid, dayNames: DAY_NAMES }
+}
+
+// ── Sub-components ────────────────────────────
+const DashTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null
   return (
-    <div style={{
-      background: 'var(--surface)',
-      border: '1px solid var(--border)',
-      borderRadius: 10,
-      padding: '10px 14px',
-      boxShadow: 'var(--shadow-md)',
-      minWidth: 120,
-    }}>
-      <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 6, fontWeight: 600 }}>{label}</div>
+    <div style={{ background: D.card2, border: `1px solid ${D.border}`, borderRadius: 10, padding: '10px 14px', boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
+      <div style={{ fontSize: 11, color: D.text2, marginBottom: 5 }}>{label}</div>
       {payload.map((p, i) => (
-        <div key={i} style={{ fontSize: 14, fontWeight: 700, color: p.color }}>
-          {formatCurrency(p.value)}
+        <div key={i} style={{ color: p.color || D.blue, fontWeight: 700, fontSize: 13 }}>
+          {p.dataKey === 'revenue' ? formatCurrency(p.value) : `${p.value} verkopen`}
         </div>
       ))}
     </div>
   )
 }
 
-function SalesHeatmap({ sales, isDark }) {
-  const salesByDay = useMemo(() => {
-    const byDay = {}
-    sales.forEach((s) => {
-      if (s.date) byDay[s.date] = (byDay[s.date] || 0) + (s.quantity || 1)
-    })
-    return byDay
-  }, [sales])
-
-  const numWeeks = 16
-  const today = new Date()
-  const start = new Date(today.getTime() - numWeeks * 7 * 86400000)
-  const dow = start.getDay()
-  start.setDate(start.getDate() + (dow === 0 ? -6 : 1 - dow))
-
-  const weeks = []
-  const monthLabels = []
-  const cursor = new Date(start)
-  let currentMonth = -1
-
-  for (let w = 0; w <= numWeeks; w++) {
-    const week = []
-    for (let d = 0; d < 7; d++) {
-      const dateStr = cursor.toISOString().split('T')[0]
-      const month = cursor.getMonth()
-      if (d === 0 && month !== currentMonth) {
-        currentMonth = month
-        monthLabels.push({
-          weekIndex: w,
-          label: cursor.toLocaleString('nl-BE', { month: 'short' }),
-        })
-      }
-      week.push({ date: dateStr, count: salesByDay[dateStr] || 0 })
-      cursor.setDate(cursor.getDate() + 1)
-    }
-    weeks.push(week)
-  }
-
-  const maxCount = Math.max(1, ...Object.values(salesByDay))
-
-  const getColor = (count) => {
-    if (count === 0) return isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.07)'
-    const pct = count / maxCount
-    if (pct < 0.25) return isDark ? 'rgba(10,132,255,0.28)' : 'rgba(37,99,235,0.22)'
-    if (pct < 0.5)  return isDark ? 'rgba(10,132,255,0.52)' : 'rgba(37,99,235,0.48)'
-    if (pct < 0.75) return isDark ? 'rgba(10,132,255,0.76)' : 'rgba(37,99,235,0.72)'
-    return isDark ? '#0a84ff' : '#2563eb'
-  }
-
-  const dayLabels = ['Ma', '', 'Wo', '', 'Vr', '', 'Zo']
-  const cellSize = 12
-  const cellGap = 3
-
-  const totalSales = Object.values(salesByDay).reduce((s, n) => s + n, 0)
-
+function DashCard({ label, value, sub, accent, small }) {
   return (
-    <div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-        <div className="chart-section-label" style={{ margin: 0 }}>Verkoopactiviteit</div>
-        {totalSales > 0 && (
-          <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{totalSales} verkopen (16 weken)</span>
-        )}
+    <div style={{
+      background: D.card, border: `1px solid ${D.border}`,
+      borderRadius: 14, padding: small ? '14px 16px' : '18px 20px',
+      position: 'relative', overflow: 'hidden',
+    }}>
+      {accent && <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: accent }} />}
+      <div style={{ fontSize: 10, color: D.text3, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', marginBottom: 9 }}>
+        {label}
       </div>
-      <div style={{ overflowX: 'auto', paddingBottom: 4 }}>
-        <div style={{ display: 'inline-block', minWidth: 'max-content' }}>
-          {/* Month labels */}
-          <div style={{ display: 'flex', marginLeft: 26, marginBottom: 5 }}>
-            {weeks.map((_, wi) => {
-              const ml = monthLabels.find((m) => m.weekIndex === wi)
-              return (
-                <div key={wi} style={{ width: cellSize + cellGap, flexShrink: 0, fontSize: 9, color: 'var(--text-3)', fontWeight: 600, letterSpacing: '.04em', textTransform: 'uppercase' }}>
-                  {ml?.label || ''}
-                </div>
-              )
-            })}
-          </div>
-          {/* Grid */}
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 0 }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: cellGap, marginRight: 6, width: 20 }}>
-              {dayLabels.map((l, i) => (
-                <div key={i} style={{ height: cellSize, lineHeight: `${cellSize}px`, fontSize: 9, color: 'var(--text-3)', textAlign: 'right', fontWeight: 500 }}>
-                  {l}
-                </div>
-              ))}
-            </div>
-            <div style={{ display: 'flex', gap: cellGap }}>
-              {weeks.map((week, wi) => (
-                <div key={wi} style={{ display: 'flex', flexDirection: 'column', gap: cellGap }}>
-                  {week.map((day, di) => (
-                    <div
-                      key={di}
-                      title={`${day.date}: ${day.count} ${day.count === 1 ? 'verkoop' : 'verkopen'}`}
-                      style={{
-                        width: cellSize,
-                        height: cellSize,
-                        borderRadius: 2,
-                        background: getColor(day.count),
-                        transition: 'opacity 0.1s',
-                        cursor: day.count > 0 ? 'default' : 'default',
-                      }}
-                    />
-                  ))}
-                </div>
-              ))}
-            </div>
-          </div>
-          {/* Legend */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 8, justifyContent: 'flex-end' }}>
-            <span style={{ fontSize: 9, color: 'var(--text-3)' }}>Minder</span>
-            {[0, 0.3, 0.6, 1].map((pct, i) => (
-              <div
-                key={i}
-                style={{
-                  width: cellSize, height: cellSize, borderRadius: 2,
-                  background: pct === 0
-                    ? (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.07)')
-                    : (isDark ? `rgba(10,132,255,${0.28 + pct * 0.72})` : `rgba(37,99,235,${0.22 + pct * 0.78})`),
-                }}
-              />
-            ))}
-            <span style={{ fontSize: 9, color: 'var(--text-3)' }}>Meer</span>
-          </div>
-        </div>
+      <div style={{ fontSize: small ? '1.5rem' : '1.7rem', fontWeight: 800, color: D.text, letterSpacing: '-0.03em', lineHeight: 1 }}>
+        {value}
       </div>
+      {sub && <div style={{ fontSize: 11, color: D.text3, marginTop: 6 }}>{sub}</div>}
     </div>
   )
 }
 
-export default function Home({ data, updateData, onNavigate, theme, onDeleteSale }) {
-  const isDark = theme === 'dark'
-  const tickColor = isDark ? '#636366' : '#9e9e9e'
-  const gridStroke = isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)'
-  const lineColor = isDark ? '#30d158' : '#16a34a'
-  const areaColor = isDark ? 'rgba(48,209,88,0.12)' : 'rgba(22,163,74,0.1)'
+function HeatmapGrid({ sales }) {
+  const { grid, dayNames } = useMemo(() => buildHeatmapData(sales), [sales])
+  const maxVal = Math.max(1, ...grid.flat())
+  const hasData = sales.some((s) => s.saleTime)
 
+  const getColor = (val) => {
+    if (val === 0) return 'rgba(255,255,255,0.05)'
+    const a = 0.2 + (val / maxVal) * 0.8
+    return `rgba(59,130,246,${a.toFixed(2)})`
+  }
+
+  return (
+    <div>
+      <div style={{ overflowX: 'auto', paddingBottom: 4 }}>
+        <div style={{ minWidth: 640, display: 'inline-block' }}>
+          <div style={{ display: 'flex', marginLeft: 36, marginBottom: 4, gap: 2 }}>
+            {Array.from({ length: 24 }, (_, h) => (
+              <div key={h} style={{ width: 24, textAlign: 'center', fontSize: 9, color: D.text3 }}>
+                {h % 6 === 0 ? h : ''}
+              </div>
+            ))}
+          </div>
+          {grid.map((row, di) => (
+            <div key={di} style={{ display: 'flex', alignItems: 'center', marginBottom: 2 }}>
+              <div style={{ width: 30, fontSize: 10, color: D.text2, textAlign: 'right', paddingRight: 6, flexShrink: 0 }}>
+                {dayNames[di]}
+              </div>
+              <div style={{ display: 'flex', gap: 2 }}>
+                {row.map((val, h) => (
+                  <div
+                    key={h}
+                    title={`${dayNames[di]} ${h}:00 — ${val} verkopen`}
+                    style={{ width: 24, height: 16, borderRadius: 3, background: getColor(val) }}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 8, justifyContent: 'flex-end' }}>
+            <span style={{ fontSize: 9, color: D.text3 }}>Minder</span>
+            {[0, 0.3, 0.6, 1].map((p, i) => (
+              <div key={i} style={{ width: 12, height: 12, borderRadius: 2, background: p === 0 ? 'rgba(255,255,255,0.05)' : `rgba(59,130,246,${(0.2 + p * 0.8).toFixed(2)})` }} />
+            ))}
+            <span style={{ fontSize: 9, color: D.text3 }}>Meer</span>
+          </div>
+        </div>
+      </div>
+      {!hasData && (
+        <div style={{ fontSize: 12, color: D.text3, textAlign: 'center', marginTop: 6 }}>
+          Voeg een tijdstip toe bij verkopen om dit heatmap te vullen
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Main component ────────────────────────────
+export default function Home({ data, updateData, onNavigate, onDeleteSale }) {
   const { batches, sales, suppliers } = data
+
+  const [range, setRange] = useState('week')
+  const [customFrom, setCustomFrom] = useState('')
+  const [customTo, setCustomTo] = useState('')
   const [showSale, setShowSale] = useState(false)
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
 
-  const stats = useMemo(() => {
-    const totalItems = batches.reduce((s, b) => s + getRemainingQty(b, sales), 0)
-    const totalInvested = batches.reduce(
-      (s, b) => s + ((b.costPrice || 0) + (b.importTax || 0)) * b.quantity, 0
-    )
-    const totalRevenue = sales.reduce((s, x) => s + (x.salePrice || 0) * (x.quantity || 1), 0)
-    const totalProfit = sales.reduce((s, sale) => {
-      const b = batches.find((x) => x.id === sale.batchId)
-      return b ? s + calcSaleProfit(sale, b).profit : s
+  useEffect(() => {
+    const el = document.querySelector('.content-area')
+    if (el) { el.style.background = D.bg; return () => { el.style.background = '' } }
+  }, [])
+
+  const bounds = useMemo(() => getDateBounds(range, customFrom, customTo), [range, customFrom, customTo])
+  const filteredSales = useMemo(() => filterByRange(sales, range, bounds), [sales, range, bounds])
+
+  const todayStr = new Date().toISOString().split('T')[0]
+  const todayProfit = useMemo(() =>
+    sales.filter((s) => s.date === todayStr).reduce((sum, s) => {
+      const b = batches.find((x) => x.id === s.batchId)
+      return sum + (b ? calcSaleProfit(s, b).profit : 0)
     }, 0)
-    const margin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0
-    return { totalItems, totalInvested, totalRevenue, totalProfit, margin }
-  }, [batches, sales])
+  , [sales, batches, todayStr])
 
-  const profitChartData = useMemo(() => {
-    const byMonth = {}
-    const sorted = [...sales].sort((a, b) => new Date(a.date) - new Date(b.date))
-    sorted.forEach((sale) => {
-      if (!sale.date) return
-      const month = sale.date.substring(0, 7)
-      const batch = batches.find((b) => b.id === sale.batchId)
-      if (!batch) return
-      byMonth[month] = (byMonth[month] || 0) + calcSaleProfit(sale, batch).profit
-    })
-    let cumulative = 0
-    return Object.entries(byMonth)
-      .sort()
-      .map(([month, profit]) => {
-        cumulative += profit
-        const [y, m] = month.split('-')
-        const label = new Date(parseInt(y), parseInt(m) - 1).toLocaleString('nl-BE', {
-          month: 'short', year: '2-digit',
-        })
-        return {
-          name: label,
-          profit: Math.round(profit * 100) / 100,
-          cumulative: Math.round(cumulative * 100) / 100,
-        }
-      })
-  }, [sales, batches])
+  const stats = useMemo(() => {
+    const paid = filteredSales.filter((s) => !s.isFree)
+    const totalRevenue = paid.reduce((s, x) => s + (x.salePrice || 0) * (x.quantity || 1), 0)
+    const totalOrders = paid.length
+    const avgOrder = totalOrders > 0 ? totalRevenue / totalOrders : 0
+    const toShip = sales.filter((s) => !s.shipped && !s.isFree).length
+    const onTheWay = filteredSales.filter((s) => s.shipped).length
+    const totalItems = batches.reduce((s, b) => s + getRemainingQty(b, sales), 0)
+    return { totalRevenue, totalOrders, avgOrder, toShip, onTheWay, totalItems }
+  }, [filteredSales, sales, batches])
 
-  const inventoryData = useMemo(
-    () =>
-      suppliers
-        .map((s) => ({
-          name: s.prefix,
-          fullName: s.name,
-          value: batches
-            .filter((b) => b.supplierPrefix === s.prefix)
-            .reduce((sum, b) => sum + getRemainingQty(b, sales), 0),
-          color: s.color,
-        }))
-        .filter((d) => d.value > 0),
-    [suppliers, batches, sales]
-  )
-
-  const totalStock = inventoryData.reduce((s, d) => s + d.value, 0)
+  const chartData = useMemo(() => buildChartData(filteredSales, range, bounds), [filteredSales, range, bounds])
 
   const recentSales = useMemo(
     () => [...sales].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 6),
     [sales]
   )
 
+  const sparkData = useMemo(() => {
+    const today = new Date()
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(today); d.setDate(d.getDate() - (6 - i))
+      const ds = d.toISOString().split('T')[0]
+      const rev = sales.filter((s) => s.date === ds).reduce((sum, s) => sum + (s.salePrice || 0) * (s.quantity || 1), 0)
+      return { i, rev }
+    })
+  }, [sales])
+
   const handleSaveSale = (sale) => {
     const updates = { sales: [...sales, sale] }
     if (sale.fromLive) {
       updates.batches = batches.map((b) =>
-        b.id === sale.batchId
-          ? { ...b, liveCount: Math.max(0, (b.liveCount || 0) - (sale.quantity || 1)) }
-          : b
+        b.id === sale.batchId ? { ...b, liveCount: Math.max(0, (b.liveCount || 0) - (sale.quantity || 1)) } : b
       )
     }
     updateData(updates)
   }
 
-  const STAT_CARDS = [
-    { label: 'In voorraad', value: `${stats.totalItems} stuks`, color: '#3ecfff' },
-    { label: 'Geïnvesteerd', value: formatCurrency(stats.totalInvested), color: '#888' },
-    { label: 'Totale omzet', value: formatCurrency(stats.totalRevenue), color: '#ffd60a' },
-    {
-      label: 'Netto winst',
-      value: formatCurrency(stats.totalProfit),
-      color: stats.totalProfit >= 0 ? 'var(--green)' : 'var(--red)',
-      sub: `Marge ${stats.margin.toFixed(1)}%`,
-    },
-  ]
+  const rangeLabel = { today: 'Vandaag', week: 'Afgelopen 7 dagen', month: 'Afgelopen 30 dagen', all: 'Alle tijd', custom: 'Periode' }
+
+  const cardStyle = { background: D.card, border: `1px solid ${D.border}`, borderRadius: 16, padding: '20px 22px' }
+  const labelStyle = { fontSize: 10, color: D.text3, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', marginBottom: 12 }
 
   return (
-    <div className="page">
-      <div className="page-header">
-        <div>
-          <h1>Dashboard</h1>
-          <div className="page-subtitle">
+    <div style={{ background: D.bg, minHeight: '100vh' }}>
+
+      {/* ════════ DESKTOP ════════ */}
+      <div className="dash-desktop" style={{ padding: '28px 32px', maxWidth: 1380, margin: '0 auto' }}>
+
+        {/* Top bar */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
+          <div>
+            <h1 style={{ fontSize: '1.4rem', fontWeight: 800, color: D.text, letterSpacing: '-0.03em', margin: 0 }}>Dashboard</h1>
+            <div style={{ fontSize: 12, color: D.text3, marginTop: 3 }}>
+              {new Date().toLocaleDateString('nl-BE', { weekday: 'long', day: 'numeric', month: 'long' })}
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <DateRangeFilter
+              value={range} onChange={setRange}
+              customFrom={customFrom} customTo={customTo}
+              onCustom={(k, v) => k === 'from' ? setCustomFrom(v) : setCustomTo(v)}
+              dark
+            />
+            <button
+              onClick={() => setShowSale(true)}
+              style={{ background: D.blue, color: '#fff', border: 'none', borderRadius: 8, padding: '7px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0 }}
+            >
+              + Verkoop
+            </button>
+          </div>
+        </div>
+
+        {/* Stat row 1 — 3 cards */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 12 }}>
+          <DashCard
+            label="Totale omzet"
+            value={formatCurrency(stats.totalRevenue)}
+            sub={rangeLabel[range] || 'Periode'}
+            accent={D.yellow}
+          />
+          <DashCard
+            label="Bestellingen"
+            value={stats.totalOrders}
+            sub={`Gem. ${formatCurrency(stats.avgOrder)}/bestelling`}
+            accent={D.blue}
+          />
+          <DashCard
+            label="Gemiddelde bestelling"
+            value={formatCurrency(stats.avgOrder)}
+            sub={stats.totalOrders > 0 ? `${stats.totalOrders} bestellingen` : 'Geen bestellingen'}
+            accent={D.purple}
+          />
+        </div>
+
+        {/* Stat row 2 — 2 cards */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
+          <DashCard
+            label="Te verzenden"
+            value={stats.toShip}
+            sub="Wachten op verzending"
+            accent={D.red}
+          />
+          <DashCard
+            label="Onderweg"
+            value={stats.onTheWay}
+            sub={`${rangeLabel[range] || 'Periode'} verzonden`}
+            accent={D.green}
+          />
+        </div>
+
+        {/* Charts row */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+          {/* Revenue area chart */}
+          <div style={cardStyle}>
+            <div style={labelStyle}>Omzet over tijd</div>
+            {chartData.length === 0 ? (
+              <div style={{ height: 190, display: 'flex', alignItems: 'center', justifyContent: 'center', color: D.text3, fontSize: 13 }}>
+                Geen data voor deze periode
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={190}>
+                <AreaChart data={chartData} margin={{ top: 4, right: 2, bottom: 0, left: 0 }}>
+                  <defs>
+                    <linearGradient id="revGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={D.blue} stopOpacity={0.3} />
+                      <stop offset="100%" stopColor={D.blue} stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="0" stroke={D.grid} vertical={false} />
+                  <XAxis
+                    dataKey="label" stroke="transparent"
+                    tick={{ fill: D.text3, fontSize: 10, fontFamily: 'inherit' }}
+                    axisLine={false} tickLine={false} interval="preserveStartEnd"
+                  />
+                  <YAxis
+                    stroke="transparent"
+                    tick={{ fill: D.text3, fontSize: 10, fontFamily: 'inherit' }}
+                    tickFormatter={(v) => `€${v}`}
+                    axisLine={false} tickLine={false} width={44}
+                  />
+                  <Tooltip content={<DashTooltip />} cursor={{ stroke: D.border, strokeWidth: 1 }} />
+                  <Area
+                    type="monotone" dataKey="revenue"
+                    stroke={D.blue} strokeWidth={2.5}
+                    fill="url(#revGrad)" dot={false}
+                    activeDot={{ r: 4, fill: D.blue, strokeWidth: 0 }}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+
+          {/* Sales count bar chart */}
+          <div style={cardStyle}>
+            <div style={labelStyle}>Aantal verkopen per dag</div>
+            {chartData.length === 0 ? (
+              <div style={{ height: 190, display: 'flex', alignItems: 'center', justifyContent: 'center', color: D.text3, fontSize: 13 }}>
+                Geen data voor deze periode
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={190}>
+                <BarChart data={chartData} margin={{ top: 4, right: 2, bottom: 0, left: 0 }}>
+                  <CartesianGrid strokeDasharray="0" stroke={D.grid} vertical={false} />
+                  <XAxis
+                    dataKey="label" stroke="transparent"
+                    tick={{ fill: D.text3, fontSize: 10, fontFamily: 'inherit' }}
+                    axisLine={false} tickLine={false} interval="preserveStartEnd"
+                  />
+                  <YAxis
+                    stroke="transparent"
+                    tick={{ fill: D.text3, fontSize: 10, fontFamily: 'inherit' }}
+                    axisLine={false} tickLine={false} width={28} allowDecimals={false}
+                  />
+                  <Tooltip content={<DashTooltip />} cursor={{ fill: 'rgba(255,255,255,0.03)' }} />
+                  <Bar dataKey="count" fill={D.blue} radius={[4, 4, 0, 0]} maxBarSize={40} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </div>
+
+        {/* Heatmap */}
+        <div style={{ ...cardStyle, marginBottom: 12 }}>
+          <div style={labelStyle}>Beste verkoopuren</div>
+          <HeatmapGrid sales={sales} />
+        </div>
+
+        {/* Recent sales */}
+        <div style={cardStyle}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+            <div style={labelStyle}>Recente verkopen</div>
+            {sales.length > 0 && (
+              <button onClick={() => onNavigate('verkopen')} style={{ background: 'transparent', border: 'none', color: D.blue, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', padding: 0 }}>
+                Bekijk alles →
+              </button>
+            )}
+          </div>
+
+          {recentSales.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '28px 0', color: D.text3, fontSize: 13 }}>
+              Nog geen verkopen.{' '}
+              <button onClick={() => setShowSale(true)} style={{ background: 'none', border: 'none', color: D.blue, cursor: 'pointer', fontFamily: 'inherit', fontSize: 13 }}>
+                Registreer je eerste →
+              </button>
+            </div>
+          ) : (
+            <div>
+              {recentSales.map((s) => {
+                const b = batches.find((x) => x.id === s.batchId)
+                const p = b ? calcSaleProfit(s, b) : null
+                const sup = suppliers.find((x) => b && x.prefix === b.supplierPrefix)
+                const pd = normalizePlatform(s.platform)
+                const sp = pd === 'Medeverkoper/Groothandel' ? 'B2B' : pd === 'Privé persoon' ? 'Privé' : pd
+                return (
+                  <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: `1px solid ${D.border}` }}>
+                    <div style={{
+                      width: 36, height: 36, borderRadius: 9,
+                      background: (sup?.color || D.blue) + '22',
+                      border: `1px solid ${(sup?.color || D.blue)}33`,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      flexShrink: 0, overflow: 'hidden', fontSize: 14,
+                    }}>
+                      {s.photo ? <img src={s.photo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : '🏷'}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: D.text }}>
+                        {b ? formatSkuRange(b.supplierPrefix, b.startNum, b.endNum) : '?'}
+                        {s.quantity > 1 && <span style={{ color: D.text3 }}> ×{s.quantity}</span>}
+                        <span style={{ marginLeft: 7, fontSize: 10, fontWeight: 600, background: 'rgba(255,255,255,0.07)', padding: '2px 6px', borderRadius: 4, color: D.text2 }}>
+                          {sp}
+                        </span>
+                        {s.isFree && <span style={{ marginLeft: 4, fontSize: 10, color: D.green, fontWeight: 700 }}>GRATIS</span>}
+                        {s.shipped && <span style={{ marginLeft: 4, fontSize: 10, color: D.blue, fontWeight: 700 }}>VERZONDEN</span>}
+                      </div>
+                      <div style={{ fontSize: 11, color: D.text3, marginTop: 2 }}>
+                        {formatDate(s.date)}{s.buyer ? ` · ${s.buyer}` : ''}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div>
+                        {s.isFree
+                          ? <div style={{ fontSize: 12, color: D.text3 }}>Gratis</div>
+                          : <div style={{ fontSize: 14, fontWeight: 700, color: D.text }}>{formatCurrency((s.salePrice || 0) * (s.quantity || 1))}</div>}
+                        {p && !s.isFree && (
+                          <div style={{ fontSize: 11, fontWeight: 600, color: p.profit >= 0 ? D.green : D.red, marginTop: 1 }}>
+                            {p.profit >= 0 ? '+' : ''}{formatCurrency(p.profit)}
+                          </div>
+                        )}
+                      </div>
+                      {onDeleteSale && (
+                        <button
+                          onClick={() => setConfirmDeleteId(s.id)}
+                          style={{ background: 'none', border: 'none', color: D.text3, cursor: 'pointer', fontSize: 14, padding: 4, lineHeight: 1, opacity: 0.6 }}
+                          title="Verwijder verkoop"
+                        >
+                          🗑
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ════════ MOBILE ════════ */}
+      <div className="dash-mobile" style={{ paddingBottom: 80 }}>
+        {/* Hero */}
+        <div style={{ background: 'linear-gradient(180deg, #1a1f38 0%, #0f1117 100%)', padding: '28px 20px 24px' }}>
+          <div style={{ fontSize: 10, color: D.text3, fontWeight: 700, letterSpacing: '.12em', textTransform: 'uppercase', marginBottom: 10 }}>
+            Vandaag verdiend
+          </div>
+          <div style={{ fontSize: '3rem', fontWeight: 800, color: D.green, letterSpacing: '-0.04em', lineHeight: 1 }}>
+            {formatCurrency(todayProfit)}
+          </div>
+          <div style={{ fontSize: 12, color: D.text3, marginTop: 8 }}>
             {new Date().toLocaleDateString('nl-BE', { weekday: 'long', day: 'numeric', month: 'long' })}
           </div>
         </div>
-        <button className="btn btn-primary" onClick={() => setShowSale(true)}>
-          + Verkoop registreren
-        </button>
-      </div>
 
-      {/* Stat cards */}
-      <div className="stats-grid">
-        {STAT_CARDS.map((c, i) => (
-          <div className="stat-card" key={i}>
-            <div className="s-accent" style={{ background: c.color }} />
-            <div className="s-label">{c.label}</div>
-            <div className="s-value" style={{ color: c.color, fontSize: '1.35rem' }}>{c.value}</div>
-            {c.sub && <div className="s-sub">{c.sub}</div>}
-          </div>
-        ))}
-      </div>
-
-      {/* Charts row */}
-      <div className="charts-grid">
-        {/* Premium area chart */}
-        <div className="glass-card">
-          <div className="chart-section-label">Cumulatieve winst</div>
-          {profitChartData.length === 0 ? (
-            <div style={{ height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <div style={{ textAlign: 'center', color: 'var(--text-3)' }}>
-                <div style={{ fontSize: 28, marginBottom: 8, opacity: 0.4 }}>📈</div>
-                <div style={{ fontSize: 13 }}>Nog geen verkopen</div>
-              </div>
+        {/* Stat pills */}
+        <div style={{ padding: '14px 20px', display: 'flex', gap: 8, overflowX: 'auto', scrollbarWidth: 'none' }}>
+          {[
+            { label: 'Bestellingen', value: stats.totalOrders, color: D.blue },
+            { label: 'Te verzenden', value: stats.toShip, color: D.yellow },
+            { label: 'Onderweg', value: stats.onTheWay, color: D.text2 },
+            { label: 'In voorraad', value: stats.totalItems, color: D.text3 },
+          ].map((p) => (
+            <div key={p.label} style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 12, padding: '10px 14px', flexShrink: 0 }}>
+              <div style={{ fontSize: 20, fontWeight: 800, color: p.color }}>{p.value}</div>
+              <div style={{ fontSize: 10, color: D.text3, marginTop: 2, whiteSpace: 'nowrap' }}>{p.label}</div>
             </div>
-          ) : (
-            <ResponsiveContainer width="100%" height={200}>
-              <AreaChart data={profitChartData} margin={{ top: 8, right: 4, bottom: 0, left: 0 }}>
-                <defs>
-                  <linearGradient id="profitGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={lineColor} stopOpacity={0.2} />
-                    <stop offset="100%" stopColor={lineColor} stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="0" stroke={gridStroke} vertical={false} />
-                <XAxis
-                  dataKey="name"
-                  stroke="transparent"
-                  tick={{ fill: tickColor, fontSize: 10, fontFamily: 'inherit', fontWeight: 500 }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <YAxis
-                  stroke="transparent"
-                  tick={{ fill: tickColor, fontSize: 10, fontFamily: 'inherit' }}
-                  tickFormatter={(v) => `€${v}`}
-                  axisLine={false}
-                  tickLine={false}
-                  width={44}
-                />
-                <Tooltip content={<ChartTooltip />} cursor={{ stroke: gridStroke, strokeWidth: 1.5 }} />
-                <Area
-                  type="monotone"
-                  dataKey="cumulative"
-                  stroke={lineColor}
-                  strokeWidth={2}
-                  fill="url(#profitGrad)"
-                  dot={false}
-                  activeDot={{ r: 4, fill: lineColor, strokeWidth: 0 }}
-                />
-              </AreaChart>
+          ))}
+        </div>
+
+        {/* Sparkline */}
+        <div style={{ padding: '0 20px 4px' }}>
+          <div style={{ fontSize: 10, color: D.text3, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', marginBottom: 6 }}>
+            Afgelopen 7 dagen
+          </div>
+          <div style={{ height: 56 }}>
+            <ResponsiveContainer width="100%" height={56}>
+              <LineChart data={sparkData}>
+                <Line type="monotone" dataKey="rev" stroke={D.blue} strokeWidth={2.5} dot={false} />
+              </LineChart>
             </ResponsiveContainer>
-          )}
-        </div>
-
-        {/* Inventory donut */}
-        <div className="glass-card" style={{ display: 'flex', flexDirection: 'column' }}>
-          <div className="chart-section-label">Voorraad per leverancier</div>
-          {inventoryData.length === 0 ? (
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-3)', fontSize: 13 }}>
-              Geen voorraad
-            </div>
-          ) : (
-            <>
-              <div style={{ position: 'relative', height: 150 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={inventoryData}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={44}
-                      outerRadius={64}
-                      paddingAngle={3}
-                      dataKey="value"
-                      strokeWidth={0}
-                    >
-                      {inventoryData.map((e, i) => (
-                        <Cell key={i} fill={e.color} />
-                      ))}
-                    </Pie>
-                  </PieChart>
-                </ResponsiveContainer>
-                <div style={{
-                  position: 'absolute', top: '50%', left: '50%',
-                  transform: 'translate(-50%,-50%)',
-                  textAlign: 'center', pointerEvents: 'none',
-                }}>
-                  <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--text)' }}>{totalStock}</div>
-                  <div style={{ fontSize: 9, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '.07em' }}>stuks</div>
-                </div>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 6 }}>
-                {inventoryData.map((d, i) => (
-                  <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span style={{ width: 7, height: 7, borderRadius: '50%', background: d.color, display: 'inline-block' }} />
-                      <span style={{ color: 'var(--text-2)' }}>{d.name}</span>
-                    </div>
-                    <span style={{ color: d.color, fontWeight: 600 }}>{d.value}</span>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Sales heatmap */}
-      <div className="glass-card">
-        <SalesHeatmap sales={sales} isDark={isDark} />
-      </div>
-
-      {/* Recent sales */}
-      <div className="glass-card">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-          <div className="chart-section-label" style={{ margin: 0 }}>Recente verkopen</div>
-          {sales.length > 0 && (
-            <button className="btn btn-ghost btn-sm" onClick={() => onNavigate('verkopen')}>
-              Bekijk alles →
-            </button>
-          )}
-        </div>
-
-        {recentSales.length === 0 ? (
-          <div style={{ padding: '28px 0', textAlign: 'center' }}>
-            <div style={{ color: 'var(--text-3)', fontSize: 13 }}>
-              Nog geen verkopen.{' '}
-              <button className="btn btn-ghost btn-sm" style={{ display: 'inline' }} onClick={() => setShowSale(true)}>
-                Registreer je eerste verkoop →
-              </button>
-            </div>
           </div>
-        ) : (
-          recentSales.map((s) => {
-            const b = batches.find((x) => x.id === s.batchId)
-            const p = b ? calcSaleProfit(s, b) : null
-            const sup = suppliers.find((x) => b && x.prefix === b.supplierPrefix)
-            const platformDisplay = normalizePlatform(s.platform)
-            const shortPlatform = platformDisplay === 'Medeverkoper/Groothandel' ? 'B2B' : platformDisplay === 'Privé persoon' ? 'Privé' : platformDisplay
-            return (
-              <div className="activity-item" key={s.id}>
-                <div
-                  style={{
-                    width: 36, height: 36, borderRadius: 10,
-                    background: (sup?.color || '#333') + '18',
-                    border: `1px solid ${(sup?.color || '#333')}30`,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    flexShrink: 0, fontSize: 14, overflow: 'hidden',
-                  }}
-                >
-                  {s.photo
-                    ? <img src={s.photo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                    : (s.platform === 'Vinted' ? '🏷' : (s.platform === 'B2B' || s.platform === 'Medeverkoper/Groothandel') ? '🤝' : '👤')}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
-                    {b ? formatSkuRange(b.supplierPrefix, b.startNum, b.endNum) : '?'}
-                    {s.quantity > 1 && (
-                      <span style={{ color: 'var(--text-3)', fontWeight: 400 }}> ×{s.quantity}</span>
-                    )}
-                    <span
-                      style={{
-                        marginLeft: 8, fontSize: 10, fontWeight: 600,
-                        background: 'var(--bg-2)',
-                        padding: '2px 6px', borderRadius: 5, color: 'var(--text-3)',
-                      }}
-                    >
-                      {shortPlatform}
-                    </span>
-                    {s.isFree && (
-                      <span style={{ marginLeft: 4, fontSize: 10, color: 'var(--green)', fontWeight: 600 }}>GRATIS</span>
-                    )}
-                    {s.shipped && (
-                      <span style={{ marginLeft: 4, fontSize: 10, color: 'var(--blue)', fontWeight: 600 }}>VERZONDEN</span>
-                    )}
+        </div>
+
+        {/* Quick action */}
+        <div style={{ padding: '12px 20px 16px' }}>
+          <button
+            onClick={() => setShowSale(true)}
+            style={{ width: '100%', background: D.blue, color: '#fff', border: 'none', borderRadius: 12, padding: '13px', fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}
+          >
+            + Verkoop registreren
+          </button>
+        </div>
+
+        {/* Recent sales */}
+        <div style={{ padding: '0 20px' }}>
+          <div style={{ fontSize: 10, color: D.text3, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', marginBottom: 10 }}>
+            Recente verkopen
+          </div>
+          {recentSales.length === 0 ? (
+            <div style={{ color: D.text3, fontSize: 13, textAlign: 'center', padding: '20px 0' }}>Nog geen verkopen</div>
+          ) : (
+            recentSales.map((s) => {
+              const b = batches.find((x) => x.id === s.batchId)
+              const p = b ? calcSaleProfit(s, b) : null
+              const sup = suppliers.find((x) => b && x.prefix === b.supplierPrefix)
+              return (
+                <div key={s.id} style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 14, padding: '13px 14px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <div style={{ width: 38, height: 38, borderRadius: 9, background: (sup?.color || D.blue) + '20', border: `1px solid ${(sup?.color || D.blue)}30`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden', fontSize: 14 }}>
+                    {s.photo ? <img src={s.photo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 8 }} /> : '🏷'}
                   </div>
-                  <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
-                    {formatDate(s.date)}{s.buyer ? ` · ${s.buyer}` : ''}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: D.text }}>
+                      {b ? formatSkuRange(b.supplierPrefix, b.startNum, b.endNum) : '?'}
+                    </div>
+                    <div style={{ fontSize: 11, color: D.text3 }}>
+                      {normalizePlatform(s.platform)} · {formatDate(s.date)}
+                    </div>
                   </div>
-                </div>
-                <div style={{ textAlign: 'right', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <div>
-                    {s.isFree ? (
-                      <div style={{ fontSize: 12, color: 'var(--text-3)', fontWeight: 600 }}>Gratis</div>
-                    ) : (
-                      <div style={{ fontSize: 14, fontWeight: 700 }}>
-                        {formatCurrency((s.salePrice || 0) * (s.quantity || 1))}
-                      </div>
-                    )}
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: D.text }}>
+                      {s.isFree ? 'Gratis' : formatCurrency((s.salePrice || 0) * (s.quantity || 1))}
+                    </div>
                     {p && !s.isFree && (
-                      <div style={{ fontSize: 11, color: p.profit >= 0 ? 'var(--green)' : 'var(--red)', fontWeight: 600, marginTop: 1 }}>
+                      <div style={{ fontSize: 11, color: p.profit >= 0 ? D.green : D.red, fontWeight: 600 }}>
                         {p.profit >= 0 ? '+' : ''}{formatCurrency(p.profit)}
                       </div>
                     )}
                   </div>
-                  {onDeleteSale && (
-                    <button
-                      className="btn btn-danger btn-icon btn-sm"
-                      onClick={() => setConfirmDeleteId(s.id)}
-                      title="Verwijder verkoop"
-                      style={{ fontSize: 12, opacity: 0.7 }}
-                    >
-                      🗑
-                    </button>
-                  )}
                 </div>
-              </div>
-            )
-          })
-        )}
+              )
+            })
+          )}
+        </div>
       </div>
 
-      {/* Quick nav */}
-      <div style={{ display: 'flex', gap: 10, marginTop: 14, flexWrap: 'wrap' }}>
-        {[
-          { label: 'Bekijk voorraad', page: 'inventory' },
-          { label: 'Statistieken', page: 'stats' },
-          { label: 'Nieuwe aankoop', page: 'new' },
-        ].map((l) => (
-          <button key={l.page} className="btn btn-secondary" onClick={() => onNavigate(l.page)}>
-            {l.label} →
-          </button>
-        ))}
-      </div>
+      {/* ── SaleModal ── */}
+      {showSale && <SaleModal data={data} onClose={() => setShowSale(false)} onSave={handleSaveSale} />}
 
-      {showSale && (
-        <SaleModal data={data} onClose={() => setShowSale(false)} onSave={handleSaveSale} />
-      )}
-
+      {/* ── Confirm delete ── */}
       {confirmDeleteId && (
         <div className="modal-overlay" onMouseDown={(e) => e.target === e.currentTarget && setConfirmDeleteId(null)}>
           <div className="modal" style={{ maxWidth: 400 }}>
@@ -521,10 +577,7 @@ export default function Home({ data, updateData, onNavigate, theme, onDeleteSale
             </p>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setConfirmDeleteId(null)}>Annuleer</button>
-              <button
-                className="btn btn-danger"
-                onClick={() => { onDeleteSale(confirmDeleteId); setConfirmDeleteId(null) }}
-              >
+              <button className="btn btn-danger" onClick={() => { onDeleteSale(confirmDeleteId); setConfirmDeleteId(null) }}>
                 Definitief verwijderen
               </button>
             </div>

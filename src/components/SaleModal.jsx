@@ -78,6 +78,7 @@ export default function SaleModal({ data, onClose, onSave, defaultBatchId }) {
   const [shipped, setShipped] = useState(false)
   const [shippedDate, setShippedDate] = useState(new Date().toISOString().split('T')[0])
   const [isFree, setIsFree] = useState(false)
+  const [saleTime, setSaleTime] = useState('')
 
   const batch = batches.find((b) => b.id === batchId)
   const remaining = batch ? getRemainingQty(batch, sales) : 0
@@ -133,6 +134,7 @@ export default function SaleModal({ data, onClose, onSave, defaultBatchId }) {
       shipped,
       shippedDate: shipped ? shippedDate : null,
       isFree,
+      saleTime: saleTime || null,
     }
     onSave(sale)
     onClose()
@@ -253,6 +255,17 @@ export default function SaleModal({ data, onClose, onSave, defaultBatchId }) {
             <label>Datum</label>
             <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
           </div>
+        </div>
+
+        <div className="form-group">
+          <label>Tijdstip (optioneel)</label>
+          <input
+            type="time"
+            value={saleTime}
+            onChange={(e) => setSaleTime(e.target.value)}
+            style={{ maxWidth: 160 }}
+          />
+          <span style={{ fontSize: 11, color: 'var(--text-3)' }}>Gebruikt voor het heatmap in het dashboard</span>
         </div>
 
         <div className="form-group">

@@ -1160,3 +1160,12 @@ hr.divider { border: none; border-top: 1px solid var(--border); margin: 18px 0; 
   .bottom-tab { padding: 10px 2px; }
   .bottom-tab-icon { font-size: 21px; }
 }
+
+/* ── Dashboard responsive visibility ──────── */
+.dash-desktop { display: block; }
+.dash-mobile  { display: none; }
+
+@media (max-width: 768px) {
+  .dash-desktop { display: none; }
+  .dash-mobile  { display: block; }
+}
