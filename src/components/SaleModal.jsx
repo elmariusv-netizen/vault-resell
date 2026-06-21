@@ -84,14 +84,24 @@ export default function SaleModal({ data, onClose, onSave, defaultBatchId }) {
   const remaining = batch ? getRemainingQty(batch, sales) : 0
   const liveCount = batch?.liveCount || 0
 
+  const unitCostPrice = batch ? (parseFloat(batch.costPrice) || 0) : 0
+  const unitImportTax = batch ? (parseFloat(batch.importTax) || 0) : 0
+  const unitCost = unitCostPrice + unitImportTax
+
   useEffect(() => { setFromLive(false) }, [batchId])
   useEffect(() => { if (isFree) setPrice('0') }, [isFree])
 
   const effectiveQty = type === 'bulk' ? parseInt(qty) || 1 : 1
   const effectiveShipping = parseFloat(shippingCost) || 0
+  const salePrice = parseFloat(price) || 0
+
+  const profitPerUnit = salePrice - unitCost - (effectiveQty > 0 ? effectiveShipping / effectiveQty : 0)
+  const totalRevenue = salePrice * effectiveQty
+  const totalCost = unitCost * effectiveQty
+  const totalProfit = totalRevenue - totalCost - effectiveShipping
 
   const profit = batch && !isFree ? calcSaleProfit(
-    { quantity: effectiveQty, salePrice: parseFloat(price) || 0, shippingCost: effectiveShipping, fees: 0 },
+    { quantity: effectiveQty, salePrice, shippingCost: effectiveShipping, fees: 0 },
     batch
   ) : null
 
@@ -186,9 +196,27 @@ export default function SaleModal({ data, onClose, onSave, defaultBatchId }) {
             ))}
           </select>
           {batch && (
-            <span style={{ fontSize: 12, color: 'var(--text-2)' }}>
-              Resterend: {remaining} stuks{liveCount > 0 && <span style={{ color: 'var(--blue)' }}> · {liveCount} live</span>}
-            </span>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 16px', marginTop: 4 }}>
+              <span style={{ fontSize: 12, color: 'var(--text-2)' }}>
+                Resterend: <strong>{remaining}</strong> stuks
+                {liveCount > 0 && <span style={{ color: 'var(--blue)' }}> · {liveCount} live</span>}
+              </span>
+              {unitCost > 0 ? (
+                <span style={{ fontSize: 12, color: 'var(--text-2)' }}>
+                  Inkoop/stuk:{' '}
+                  <strong style={{ color: 'var(--text)' }}>{formatCurrency(unitCostPrice)}</strong>
+                  {unitImportTax > 0 && (
+                    <> + <strong style={{ color: 'var(--text)' }}>{formatCurrency(unitImportTax)}</strong> tax</>
+                  )}
+                  {' = '}
+                  <strong style={{ color: 'var(--text)' }}>{formatCurrency(unitCost)}</strong>
+                </span>
+              ) : (
+                <span style={{ fontSize: 12, color: 'var(--yellow)' }}>
+                  ⚠ Geen inkoopprijs ingesteld
+                </span>
+              )}
+            </div>
           )}
         </div>
 
@@ -407,15 +435,25 @@ export default function SaleModal({ data, onClose, onSave, defaultBatchId }) {
               Gratis weggegeven — geen winstberekening
             </div>
           </div>
-        ) : profit && price && (
+        ) : price && batch && (
           <div className="profit-preview">
             <div className="profit-row">
-              <span>Omzet ({effectiveQty}×)</span>
-              <span>{formatCurrency(profit.totalRevenue)}</span>
+              <span>Verkoopprijs{effectiveQty > 1 ? ` (${effectiveQty}×)` : ''}</span>
+              <span>{formatCurrency(totalRevenue)}</span>
             </div>
             <div className="profit-row">
-              <span>Inkoopprijs</span>
-              <span className="val-red">-{formatCurrency(profit.totalCost)}</span>
+              <span>
+                Inkoopprijs/stuk{effectiveQty > 1 ? ` × ${effectiveQty}` : ''}
+                {unitCostPrice > 0 && unitImportTax > 0 && (
+                  <span style={{ fontSize: 11, color: 'var(--text-3)', marginLeft: 4 }}>
+                    ({formatCurrency(unitCostPrice)} + {formatCurrency(unitImportTax)} tax)
+                  </span>
+                )}
+                {unitCost === 0 && (
+                  <span style={{ fontSize: 11, color: 'var(--yellow)', marginLeft: 4 }}>niet ingesteld</span>
+                )}
+              </span>
+              <span className="val-red">-{formatCurrency(totalCost)}</span>
             </div>
             {effectiveShipping > 0 && (
               <div className="profit-row">
@@ -424,11 +462,19 @@ export default function SaleModal({ data, onClose, onSave, defaultBatchId }) {
               </div>
             )}
             <div className="profit-row total">
-              <span>Netto winst</span>
-              <span className={profit.profit >= 0 ? 'val-green' : 'val-red'}>
-                {formatCurrency(profit.profit)}
+              <span>Netto winst{effectiveQty > 1 ? ` (${effectiveQty} stuks)` : ''}</span>
+              <span className={totalProfit >= 0 ? 'val-green' : 'val-red'}>
+                {formatCurrency(totalProfit)}
               </span>
             </div>
+            {effectiveQty > 1 && (
+              <div className="profit-row" style={{ opacity: 0.7 }}>
+                <span>Winst per stuk</span>
+                <span className={profitPerUnit >= 0 ? 'val-green' : 'val-red'}>
+                  {formatCurrency(profitPerUnit)}
+                </span>
+              </div>
+            )}
           </div>
         )}
       </div>
