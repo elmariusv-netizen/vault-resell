@@ -39,10 +39,15 @@ export function getRemainingQty(batch, sales) {
 }
 
 export function calcSaleProfit(sale, batch) {
+  if (sale.isFree) {
+    const unitCost = (batch.costPrice || 0) + (batch.importTax || 0)
+    const totalCost = unitCost * (sale.quantity || 1)
+    return { totalCost, totalRevenue: 0, fees: 0, profit: 0 }
+  }
   const unitCost = (batch.costPrice || 0) + (batch.importTax || 0)
   const totalCost = unitCost * (sale.quantity || 1)
   const totalRevenue = (sale.salePrice || 0) * (sale.quantity || 1)
-  const fees = sale.fees || 0
+  const fees = (sale.fees || 0) + (sale.shippingCost || 0)
   const profit = totalRevenue - totalCost - fees
   return { totalCost, totalRevenue, fees, profit }
 }
@@ -65,4 +70,10 @@ export function formatDate(dateStr) {
 export function getSupplierColor(suppliers, prefix) {
   const s = suppliers.find((s) => s.prefix === prefix)
   return s?.color || '#666'
+}
+
+export function normalizePlatform(p) {
+  if (p === 'Privé') return 'Privé persoon'
+  if (p === 'B2B') return 'Medeverkoper/Groothandel'
+  return p || p
 }

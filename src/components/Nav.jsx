@@ -1,14 +1,13 @@
 const NAV_LINKS = [
-  { id: 'home',       label: 'Home',        icon: '⌂' },
-  { id: 'inventory',  label: 'Voorraad',    icon: '📦' },
-  { id: 'new',        label: 'Nieuw',       icon: '+' },
-  { id: 'stats',      label: 'Stats',       icon: '📊' },
-  { id: 'labels',     label: 'Labels',      icon: '🏷' },
-  { id: 'berichten',  label: 'Berichten',   icon: '💬' },
-  { id: 'settings',   label: 'Instellingen',icon: '⚙' },
+  { id: 'home',      label: 'Home',         icon: '⌂' },
+  { id: 'inventory', label: 'Voorraad',     icon: '📦' },
+  { id: 'new',       label: 'Nieuw',        icon: '+' },
+  { id: 'stats',     label: 'Stats',        icon: '📊' },
+  { id: 'labels',    label: 'Labels',       icon: '🏷' },
+  { id: 'settings',  label: 'Instellingen', icon: '⚙' },
 ]
 
-const BOTTOM_TABS = ['home', 'inventory', 'new', 'berichten', 'settings']
+const BOTTOM_TABS = ['home', 'inventory', 'new', 'stats', 'settings']
 
 export default function Nav({ currentPage, onNavigate, theme, onToggleTheme, userName }) {
   return (

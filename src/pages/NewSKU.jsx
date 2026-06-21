@@ -1,6 +1,8 @@
 import { useState, useMemo, useRef } from 'react'
 import { genId, getNextRange, formatSkuRange, formatCurrency, getNextSkuLabel } from '../utils/skuUtils'
 
+const COLORS = ['#00ff88', '#4fc3f7', '#ce93d8', '#ffb74d', '#80cbc4', '#ff7043', '#f06292', '#aed581', '#ffd60a', '#3ecfff']
+
 export default function NewSKU({ data, updateData, onNavigate }) {
   const { batches, suppliers } = data
 
@@ -8,14 +10,19 @@ export default function NewSKU({ data, updateData, onNavigate }) {
   const [name, setName] = useState('')
   const [brand, setBrand] = useState('')
   const [category, setCategory] = useState('')
-  const [condition, setCondition] = useState('A')
-  const [photo, setPhoto] = useState(null)
+  const [photos, setPhotos] = useState([])
   const [costPrice, setCostPrice] = useState('')
   const [importTax, setImportTax] = useState('')
   const [quantity, setQuantity] = useState('')
   const [purchaseDate, setPurchaseDate] = useState(new Date().toISOString().split('T')[0])
   const [note, setNote] = useState('')
-  const fileRef = useRef()
+
+  const [showNewSupplier, setShowNewSupplier] = useState(false)
+  const [newSupPrefix, setNewSupPrefix] = useState('')
+  const [newSupName, setNewSupName] = useState('')
+  const [newSupColor, setNewSupColor] = useState(COLORS[0])
+
+  const photoRef = useRef()
 
   const supplier = suppliers.find((s) => s.id === supplierId)
 
@@ -32,12 +39,30 @@ export default function NewSKU({ data, updateData, onNavigate }) {
     return q * (c + t)
   }, [quantity, costPrice, importTax])
 
-  const handlePhoto = (e) => {
-    const file = e.target.files[0]
-    if (!file) return
-    const reader = new FileReader()
-    reader.onload = (ev) => setPhoto(ev.target.result)
-    reader.readAsDataURL(file)
+  const handlePhotos = (e) => {
+    const files = Array.from(e.target.files)
+    files.forEach((file) => {
+      const reader = new FileReader()
+      reader.onload = (ev) => setPhotos((prev) => [...prev, ev.target.result])
+      reader.readAsDataURL(file)
+    })
+    e.target.value = ''
+  }
+
+  const removePhoto = (i) => setPhotos((prev) => prev.filter((_, idx) => idx !== i))
+
+  const handleCreateSupplier = () => {
+    if (!newSupPrefix.trim() || !newSupName.trim()) return
+    const prefix = newSupPrefix.toUpperCase().slice(0, 4)
+    if (suppliers.some((s) => s.prefix === prefix)) {
+      alert(`Prefix "${prefix}" bestaat al.`); return
+    }
+    const newSup = { id: genId(), prefix, name: newSupName.trim(), color: newSupColor }
+    updateData({ suppliers: [...suppliers, newSup] })
+    setSupplierId(newSup.id)
+    setShowNewSupplier(false)
+    setNewSupPrefix('')
+    setNewSupName('')
   }
 
   const handleSubmit = (e) => {
@@ -54,8 +79,8 @@ export default function NewSKU({ data, updateData, onNavigate }) {
       name,
       brand,
       category,
-      condition,
-      photo,
+      photo: photos[0] || null,
+      photos,
       costPrice: parseFloat(costPrice) || 0,
       importTax: parseFloat(importTax) || 0,
       quantity: q,
@@ -65,8 +90,6 @@ export default function NewSKU({ data, updateData, onNavigate }) {
     updateData({ batches: [...batches, batch] })
     onNavigate('inventory')
   }
-
-  const CONDITION_DESC = { A: 'Als nieuw', B: 'Goede staat', C: 'Acceptabel' }
 
   return (
     <div className="page">
@@ -80,11 +103,9 @@ export default function NewSKU({ data, updateData, onNavigate }) {
       <div style={{ maxWidth: 720 }}>
         <form className="form" onSubmit={handleSubmit}>
 
-          {/* SKU Continuity overview */}
+          {/* SKU continuity overview */}
           {suppliers.length > 0 && (
-            <div style={{
-              display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 4,
-            }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
               {suppliers.map((s) => {
                 const next = getNextSkuLabel(batches, s.prefix)
                 const isActive = supplier?.prefix === s.prefix
@@ -143,6 +164,67 @@ export default function NewSKU({ data, updateData, onNavigate }) {
               </div>
             </div>
 
+            {/* Inline new supplier */}
+            {!showNewSupplier ? (
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => setShowNewSupplier(true)}
+                style={{ marginTop: 8, alignSelf: 'flex-start' }}
+              >
+                + Nieuwe leverancier aanmaken
+              </button>
+            ) : (
+              <div style={{ marginTop: 12, background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 'var(--r-lg)', padding: 16 }}>
+                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 12, color: 'var(--text-2)' }}>Nieuwe leverancier</div>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label>Prefix (max 4 tekens)</label>
+                    <input
+                      value={newSupPrefix}
+                      onChange={(e) => setNewSupPrefix(e.target.value.slice(0, 4).toUpperCase())}
+                      placeholder="ABC"
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>Naam</label>
+                    <input
+                      value={newSupName}
+                      onChange={(e) => setNewSupName(e.target.value)}
+                      placeholder="Leverancier naam"
+                    />
+                  </div>
+                </div>
+                <div className="form-group" style={{ marginTop: 0 }}>
+                  <label>Kleur</label>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {COLORS.map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        className={`color-dot${newSupColor === c ? ' selected' : ''}`}
+                        style={{ background: c }}
+                        onClick={() => setNewSupColor(c)}
+                      />
+                    ))}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={handleCreateSupplier}
+                    disabled={!newSupPrefix || !newSupName}
+                  >
+                    Aanmaken
+                  </button>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowNewSupplier(false)}>
+                    Annuleer
+                  </button>
+                </div>
+              </div>
+            )}
+
             {skuPreview && (
               <div style={{
                 marginTop: 14,
@@ -185,37 +267,61 @@ export default function NewSKU({ data, updateData, onNavigate }) {
                 <label>Categorie</label>
                 <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="bv. Truien, Hemdjes…" />
               </div>
-              <div className="form-group">
-                <label>Conditie</label>
-                <div className="seg-group">
-                  {['A', 'B', 'C'].map((c) => (
-                    <button
-                      type="button" key={c}
-                      className={`seg-btn${condition === c ? ' active' : ''}`}
-                      onClick={() => setCondition(c)}
-                      title={CONDITION_DESC[c]}
-                    >
-                      {c}
-                    </button>
-                  ))}
-                </div>
-                <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4 }}>{CONDITION_DESC[condition]}</div>
-              </div>
             </div>
 
+            {/* Multi-photo upload */}
             <div className="form-group" style={{ marginTop: 0 }}>
-              <label>Foto (optioneel)</label>
-              <div className="photo-upload" onClick={() => fileRef.current.click()}>
-                {photo
-                  ? <img src={photo} alt="preview" />
-                  : <div><div style={{ fontSize: 24, marginBottom: 6 }}>📷</div><div>Klik om foto te uploaden</div></div>
-                }
-              </div>
-              <input ref={fileRef} type="file" accept="image/*" onChange={handlePhoto} style={{ display: 'none' }} />
-              {photo && (
-                <button type="button" className="btn btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => setPhoto(null)}>
-                  Foto verwijderen
+              <label>Foto's</label>
+              <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4, alignItems: 'center' }}>
+                {photos.map((p, i) => (
+                  <div key={i} style={{ position: 'relative', flexShrink: 0 }}>
+                    <img
+                      src={p}
+                      alt={`foto ${i + 1}`}
+                      style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 10, border: '1px solid var(--border)', display: 'block' }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removePhoto(i)}
+                      style={{
+                        position: 'absolute', top: -6, right: -6,
+                        width: 20, height: 20, borderRadius: '50%',
+                        background: 'var(--red)', color: '#fff',
+                        border: 'none', cursor: 'pointer',
+                        fontSize: 12, lineHeight: '20px', textAlign: 'center',
+                        padding: 0,
+                      }}
+                    >
+                      ×
+                    </button>
+                    {i === 0 && (
+                      <div style={{ position: 'absolute', bottom: 4, left: 4, fontSize: 9, background: 'rgba(0,0,0,0.55)', color: '#fff', borderRadius: 3, padding: '1px 4px' }}>
+                        hoofd
+                      </div>
+                    )}
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => { photoRef.current.value = ''; photoRef.current.click() }}
+                  style={{
+                    width: 80, height: 80, borderRadius: 10,
+                    border: '2px dashed var(--border-strong)',
+                    background: 'var(--bg-2)',
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                    cursor: 'pointer', flexShrink: 0,
+                    color: 'var(--text-3)', fontSize: 22, gap: 4,
+                  }}
+                >
+                  <span>+</span>
+                  <span style={{ fontSize: 9, letterSpacing: '.04em' }}>FOTO</span>
                 </button>
+              </div>
+              <input ref={photoRef} type="file" accept="image/*" multiple onChange={handlePhotos} style={{ display: 'none' }} />
+              {photos.length === 0 && (
+                <div style={{ fontSize: 11, color: 'var(--text-3)' }}>
+                  Eerste foto wordt gebruikt als thumbnail
+                </div>
               )}
             </div>
           </div>

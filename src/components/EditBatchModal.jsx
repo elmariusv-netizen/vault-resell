@@ -7,32 +7,36 @@ export default function EditBatchModal({ batch, suppliers, onClose, onSave }) {
     name: batch.name || '',
     brand: batch.brand || '',
     category: batch.category || '',
-    condition: batch.condition || 'A',
     costPrice: batch.costPrice ?? '',
     importTax: batch.importTax ?? '',
     quantity: batch.quantity ?? '',
     purchaseDate: batch.purchaseDate || '',
     note: batch.note || '',
     supplierPrefix: batch.supplierPrefix || '',
-    photo: batch.photo || null,
+    photos: batch.photos || (batch.photo ? [batch.photo] : []),
   })
 
-  const fileRef = useRef()
+  const photoRef = useRef()
   const skuDisplay = formatSkuRange(batch.supplierPrefix, batch.startNum, batch.endNum)
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
 
-  const handlePhoto = (e) => {
-    const file = e.target.files[0]
-    if (!file) return
-    const reader = new FileReader()
-    reader.onload = (ev) => set('photo', ev.target.result)
-    reader.readAsDataURL(file)
+  const handlePhotos = (e) => {
+    const files = Array.from(e.target.files)
+    files.forEach((file) => {
+      const reader = new FileReader()
+      reader.onload = (ev) => set('photos', [...form.photos, ev.target.result])
+      reader.readAsDataURL(file)
+    })
+    e.target.value = ''
   }
+
+  const removePhoto = (i) => set('photos', form.photos.filter((_, idx) => idx !== i))
 
   const handleSave = () => {
     onSave({
       ...form,
+      photo: form.photos[0] || null,
       costPrice: parseFloat(form.costPrice) || 0,
       importTax: parseFloat(form.importTax) || 0,
       quantity: parseInt(form.quantity) || batch.quantity,
@@ -74,31 +78,57 @@ export default function EditBatchModal({ batch, suppliers, onClose, onSave }) {
             <label>Categorie</label>
             <input value={form.category} onChange={(e) => set('category', e.target.value)} placeholder="bv. Truien, Hemdjes..." />
           </div>
-          <div className="form-group">
-            <label>Conditie</label>
-            <div className="seg-group">
-              {['A', 'B', 'C'].map((c) => (
-                <button key={c} className={`seg-btn${form.condition === c ? ' active' : ''}`} onClick={() => set('condition', c)}>
-                  {c}
-                </button>
-              ))}
-            </div>
-          </div>
         </div>
 
+        {/* Multi-photo upload */}
         <div className="form-group">
-          <label>Foto</label>
-          <div className="photo-upload" onClick={() => fileRef.current.click()}>
-            {form.photo
-              ? <img src={form.photo} alt="preview" />
-              : <span>Klik om foto te uploaden</span>}
-          </div>
-          <input ref={fileRef} type="file" accept="image/*" onChange={handlePhoto} style={{ display: 'none' }} />
-          {form.photo && (
-            <button className="btn btn-ghost btn-sm" style={{ marginTop: 4 }} onClick={() => set('photo', null)}>
-              Foto verwijderen
+          <label>Foto's</label>
+          <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4, alignItems: 'center' }}>
+            {form.photos.map((p, i) => (
+              <div key={i} style={{ position: 'relative', flexShrink: 0 }}>
+                <img
+                  src={p}
+                  alt={`foto ${i + 1}`}
+                  style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 10, border: '1px solid var(--border)', display: 'block' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => removePhoto(i)}
+                  style={{
+                    position: 'absolute', top: -6, right: -6,
+                    width: 20, height: 20, borderRadius: '50%',
+                    background: 'var(--red)', color: '#fff',
+                    border: 'none', cursor: 'pointer',
+                    fontSize: 12, lineHeight: '20px', textAlign: 'center',
+                    padding: 0,
+                  }}
+                >
+                  ×
+                </button>
+                {i === 0 && (
+                  <div style={{ position: 'absolute', bottom: 4, left: 4, fontSize: 9, background: 'rgba(0,0,0,0.55)', color: '#fff', borderRadius: 3, padding: '1px 4px' }}>
+                    hoofd
+                  </div>
+                )}
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={() => { photoRef.current.value = ''; photoRef.current.click() }}
+              style={{
+                width: 80, height: 80, borderRadius: 10,
+                border: '2px dashed var(--border-strong)',
+                background: 'var(--bg-2)',
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                cursor: 'pointer', flexShrink: 0,
+                color: 'var(--text-3)', fontSize: 22, gap: 4,
+              }}
+            >
+              <span>+</span>
+              <span style={{ fontSize: 9, letterSpacing: '.04em' }}>FOTO</span>
             </button>
-          )}
+          </div>
+          <input ref={photoRef} type="file" accept="image/*" multiple onChange={handlePhotos} style={{ display: 'none' }} />
         </div>
 
         <div className="form-section">

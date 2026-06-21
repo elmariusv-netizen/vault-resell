@@ -7,7 +7,6 @@ import {
   getRemainingQty, getSupplierColor,
 } from '../utils/skuUtils'
 
-// ── Live modal (unchanged) ────────────────────────────────────────
 function LiveModal({ batch, remaining, onClose, onSave }) {
   const liveCount = batch.liveCount || 0
   const maxAdd = remaining - liveCount
@@ -57,7 +56,6 @@ function LiveModal({ batch, remaining, onClose, onSave }) {
   )
 }
 
-// ── SKU photo upload helper (for SKU table inline) ────────────────
 async function compressPhoto(file) {
   return new Promise((resolve) => {
     const reader = new FileReader()
@@ -80,40 +78,30 @@ async function compressPhoto(file) {
 
 const STATUS_LABEL = { voorraad: 'In voorraad', live: 'Live', verkocht: 'Verkocht' }
 const STATUS_CLASS = { voorraad: 'badge-green', live: 'badge-blue', verkocht: 'badge-gray' }
-const COND_COLOR   = { A: 'var(--green)', B: 'var(--yellow)', C: 'var(--red)' }
 
-// ── Main component ────────────────────────────────────────────────
 export default function Inventory({ data, updateData }) {
   const { batches, sales, suppliers } = data
   const skuPhotos = data.skuPhotos || {}
 
-  // Tabs
   const [tab, setTab] = useState('batches')
-
-  // Session-only videos: { [batchId]: [{ id, url, name }] }
   const [batchVideos, setBatchVideos] = useState({})
   const [mediaBatch, setMediaBatch] = useState(null)
 
-  // Batch-tab filters
   const [search, setSearch] = useState('')
   const [filterSupplier, setFilterSupplier] = useState('all')
   const [filterCategory, setFilterCategory] = useState('all')
-  const [filterCondition, setFilterCondition] = useState('all')
 
-  // Batch-tab modals
   const [editBatch, setEditBatch] = useState(null)
   const [saleBatch, setSaleBatch] = useState(null)
   const [liveBatch, setLiveBatch] = useState(null)
   const [confirmDelete, setConfirmDelete] = useState(null)
 
-  // SKU-tab filters
   const [skuSearch, setSkuSearch] = useState('')
   const [skuStatus, setSkuStatus] = useState('all')
   const [skuSupplier, setSkuSupplier] = useState('all')
   const [pendingSkuCode, setPendingSkuCode] = useState(null)
   const skuPhotoRef = useRef()
 
-  // ── Photo helpers ──────────────────────────────────────────────
   const updateSkuPhoto = (code, dataUrl) =>
     updateData({ skuPhotos: { ...skuPhotos, [code]: dataUrl } })
 
@@ -123,7 +111,6 @@ export default function Inventory({ data, updateData }) {
     updateData({ skuPhotos: updated })
   }
 
-  // ── Video helpers (session) ────────────────────────────────────
   const addBatchVideo = (batchId, url, name) =>
     setBatchVideos((prev) => ({
       ...prev,
@@ -137,7 +124,6 @@ export default function Inventory({ data, updateData }) {
       return { ...prev, [batchId]: (prev[batchId] || []).filter((v) => v.id !== videoId) }
     })
 
-  // ── Batch tab handlers ─────────────────────────────────────────
   const categories = useMemo(() => {
     const cats = [...new Set(batches.map((b) => b.category).filter(Boolean))]
     return ['all', ...cats]
@@ -147,7 +133,6 @@ export default function Inventory({ data, updateData }) {
     return batches.filter((b) => {
       if (filterSupplier !== 'all' && b.supplierPrefix !== filterSupplier) return false
       if (filterCategory !== 'all' && b.category !== filterCategory) return false
-      if (filterCondition !== 'all' && b.condition !== filterCondition) return false
       if (search) {
         const q = search.toLowerCase()
         const sku = formatSkuRange(b.supplierPrefix, b.startNum, b.endNum).toLowerCase()
@@ -155,7 +140,7 @@ export default function Inventory({ data, updateData }) {
       }
       return true
     })
-  }, [batches, filterSupplier, filterCategory, filterCondition, search])
+  }, [batches, filterSupplier, filterCategory, search])
 
   const handleEditSave = (id, updates) =>
     updateData({ batches: batches.map((b) => (b.id === id ? { ...b, ...updates } : b)) })
@@ -188,7 +173,6 @@ export default function Inventory({ data, updateData }) {
     setLiveBatch(null)
   }
 
-  // ── SKU overview data ─────────────────────────────────────────
   const allSkuItems = useMemo(() => {
     return batches.flatMap((b) => {
       const bSales = sales.filter((s) => s.batchId === b.id)
@@ -207,7 +191,6 @@ export default function Inventory({ data, updateData }) {
           supColor: sup?.color || '#666',
           brand: b.brand || '',
           name: b.name || '',
-          condition: b.condition || '',
           costPrice: (b.costPrice || 0) + (b.importTax || 0),
           status,
           photo: skuPhotos[code] || null,
@@ -233,7 +216,6 @@ export default function Inventory({ data, updateData }) {
     })
   }, [allSkuItems, skuSearch, skuStatus, skuSupplier])
 
-  // ── SKU table photo upload ─────────────────────────────────────
   const handleSkuPhotoClick = (code) => {
     setPendingSkuCode(code)
     skuPhotoRef.current.value = ''
@@ -248,7 +230,6 @@ export default function Inventory({ data, updateData }) {
     setPendingSkuCode(null)
   }
 
-  // ── Helpers ────────────────────────────────────────────────────
   const batchPhotoCount = (b) => {
     let n = 0
     for (let i = b.startNum; i <= b.endNum; i++) {
@@ -259,7 +240,11 @@ export default function Inventory({ data, updateData }) {
 
   const batchVideoCount = (batchId) => (batchVideos[batchId] || []).length
 
-  // ── Render ─────────────────────────────────────────────────────
+  const handleSkuSell = (item) => {
+    const batch = batches.find((b) => b.id === item.batchId)
+    if (batch) setSaleBatch(batch)
+  }
+
   return (
     <div className="page">
       <div className="page-header">
@@ -294,12 +279,6 @@ export default function Inventory({ data, updateData }) {
             <select className="filter-select" value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)}>
               {categories.map((c) => <option key={c} value={c}>{c === 'all' ? 'Alle categorieën' : c}</option>)}
             </select>
-            {['all', 'A', 'B', 'C'].map((c) => (
-              <button key={c} className={`filter-chip${filterCondition === c ? ' active' : ''}`}
-                onClick={() => setFilterCondition(c)}>
-                {c === 'all' ? 'Alles' : `Conditie ${c}`}
-              </button>
-            ))}
           </div>
 
           {filtered.length === 0 ? (
@@ -321,13 +300,14 @@ export default function Inventory({ data, updateData }) {
                 const unitCost = (b.costPrice || 0) + (b.importTax || 0)
                 const pCount = batchPhotoCount(b)
                 const vCount = batchVideoCount(b.id)
+                const primaryPhoto = b.photos?.[0] || b.photo
 
                 return (
                   <div className="batch-card" key={b.id} style={{ borderLeft: `3px solid ${color}30` }}>
                     <div className="batch-card-header">
                       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, flex: 1, minWidth: 0 }}>
-                        {b.photo ? (
-                          <img src={b.photo} alt=""
+                        {primaryPhoto ? (
+                          <img src={primaryPhoto} alt=""
                             style={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 10, border: '1px solid var(--border)', flexShrink: 0 }} />
                         ) : (
                           <div style={{ width: 48, height: 48, borderRadius: 10, background: color + '15', border: `1px solid ${color}25`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 18 }}>
@@ -340,11 +320,6 @@ export default function Inventory({ data, updateData }) {
                             <span className="sku-tag" style={{ background: color + '18', color }}>{sku}</span>
                             {b.brand && <span style={{ fontWeight: 700, fontSize: 14 }}>{b.brand}</span>}
                             {b.name && !b.brand && <span style={{ fontSize: 14, color: 'var(--text-2)' }}>{b.name}</span>}
-                            {b.condition && (
-                              <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 6, background: COND_COLOR[b.condition] + '18', color: COND_COLOR[b.condition], border: `1px solid ${COND_COLOR[b.condition]}30` }}>
-                                {b.condition}
-                              </span>
-                            )}
                           </div>
                           <div className="batch-card-meta">
                             <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
@@ -360,6 +335,9 @@ export default function Inventory({ data, updateData }) {
                                 {pCount > 0 && vCount > 0 && ' '}
                                 {vCount > 0 && `📹 ${vCount}`}
                               </span>
+                            )}
+                            {b.photos?.length > 1 && (
+                              <span style={{ color: 'var(--text-3)', fontSize: 10 }}>+{b.photos.length - 1} foto's</span>
                             )}
                           </div>
                         </div>
@@ -464,9 +442,9 @@ export default function Inventory({ data, updateData }) {
                   <th>SKU</th>
                   <th>Leverancier</th>
                   <th>Merk / Naam</th>
-                  <th>Cond.</th>
                   <th>Prijs</th>
                   <th>Status</th>
+                  <th style={{ width: 90 }}>Actie</th>
                 </tr>
               </thead>
               <tbody>
@@ -479,7 +457,6 @@ export default function Inventory({ data, updateData }) {
                 ) : (
                   filteredSkuItems.map((item) => (
                     <tr key={item.code}>
-                      {/* Photo cell */}
                       <td style={{ padding: '8px 10px' }}>
                         <div
                           onClick={() => handleSkuPhotoClick(item.code)}
@@ -515,13 +492,6 @@ export default function Inventory({ data, updateData }) {
                         {item.name && <span style={{ color: 'var(--text-2)', fontSize: 12 }}>{item.name}</span>}
                         {!item.brand && !item.name && <span style={{ color: 'var(--text-3)' }}>—</span>}
                       </td>
-                      <td>
-                        {item.condition ? (
-                          <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 7px', borderRadius: 6, background: COND_COLOR[item.condition] + '18', color: COND_COLOR[item.condition] }}>
-                            {item.condition}
-                          </span>
-                        ) : '—'}
-                      </td>
                       <td style={{ fontWeight: 500, color: 'var(--text-2)' }}>
                         {item.costPrice > 0 ? formatCurrency(item.costPrice) : '—'}
                       </td>
@@ -529,6 +499,17 @@ export default function Inventory({ data, updateData }) {
                         <span className={`badge ${STATUS_CLASS[item.status]}`}>
                           {STATUS_LABEL[item.status]}
                         </span>
+                      </td>
+                      <td style={{ padding: '8px 10px' }}>
+                        {item.status !== 'verkocht' && (
+                          <button
+                            className="btn btn-primary btn-sm"
+                            onClick={() => handleSkuSell(item)}
+                            style={{ fontSize: 11, padding: '4px 10px' }}
+                          >
+                            Verkoop
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))

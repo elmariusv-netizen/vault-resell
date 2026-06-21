@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { genId, getNextSkuLabel, formatSku } from '../utils/skuUtils'
+import { useState, useRef } from 'react'
+import { genId, getNextSkuLabel, formatSku, formatDate } from '../utils/skuUtils'
 import { clearData } from '../utils/storage'
 
 const COLORS = ['#00ff88', '#4fc3f7', '#ce93d8', '#ffb74d', '#80cbc4', '#ff7043', '#f06292', '#aed581', '#ffd60a', '#3ecfff']
@@ -29,10 +29,12 @@ function SupplierModal({ supplier, onClose, onSave }) {
               value={prefix}
               onChange={(e) => setPrefix(e.target.value.slice(0, 4).toUpperCase())}
               placeholder="bv. ABC"
-              disabled={!!supplier}
-              style={supplier ? { opacity: 0.5, cursor: 'not-allowed' } : {}}
             />
-            {supplier && <div style={{ fontSize: 11, color: 'var(--text-3)' }}>Prefix kan niet gewijzigd worden</div>}
+            {supplier && (
+              <div style={{ fontSize: 11, color: 'var(--yellow)', display: 'flex', alignItems: 'center', gap: 5 }}>
+                <span>⚠</span> Wijzigen updatet alle SKU codes van deze leverancier
+              </div>
+            )}
           </div>
           <div className="form-group">
             <label>Naam</label>
@@ -82,12 +84,22 @@ function ConfirmModal({ title, message, onCancel, onConfirm, danger }) {
   )
 }
 
+function formatSize(bytes) {
+  if (!bytes) return ''
+  if (bytes < 1024) return `${bytes}B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)}KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
+}
+
 export default function Settings({ data, updateData, onExport, activeUserId }) {
   const { suppliers, batches, sales } = data
+  const documents = data.documents || []
+
   const [editSupplier, setEditSupplier] = useState(null)
   const [addOpen, setAddOpen] = useState(false)
   const [confirmReset, setConfirmReset] = useState(false)
   const [confirmDeleteSup, setConfirmDeleteSup] = useState(null)
+  const docRef = useRef()
 
   const handleAdd = (s) => {
     if (suppliers.some((x) => x.prefix === s.prefix)) {
@@ -96,8 +108,37 @@ export default function Settings({ data, updateData, onExport, activeUserId }) {
     updateData({ suppliers: [...suppliers, { id: genId(), ...s }] })
   }
 
-  const handleEdit = (id, s) =>
-    updateData({ suppliers: suppliers.map((x) => (x.id === id ? { ...x, ...s } : x)) })
+  const handleEdit = (id, updates) => {
+    const oldSup = suppliers.find((s) => s.id === id)
+    const oldPrefix = oldSup?.prefix
+    const newPrefix = updates.prefix
+
+    let updatedBatches = batches
+    let updatedSkuPhotos = data.skuPhotos || {}
+
+    if (newPrefix && newPrefix !== oldPrefix) {
+      if (suppliers.some((s) => s.id !== id && s.prefix === newPrefix)) {
+        alert(`Prefix "${newPrefix}" is al in gebruik.`); return
+      }
+      updatedBatches = batches.map((b) =>
+        b.supplierPrefix === oldPrefix ? { ...b, supplierPrefix: newPrefix } : b
+      )
+      const newSkuPhotos = {}
+      Object.entries(updatedSkuPhotos).forEach(([key, val]) => {
+        const newKey = key.startsWith(oldPrefix)
+          ? newPrefix + key.slice(oldPrefix.length)
+          : key
+        newSkuPhotos[newKey] = val
+      })
+      updatedSkuPhotos = newSkuPhotos
+    }
+
+    updateData({
+      suppliers: suppliers.map((x) => (x.id === id ? { ...x, ...updates } : x)),
+      batches: updatedBatches,
+      skuPhotos: updatedSkuPhotos,
+    })
+  }
 
   const handleDeleteSup = (id) => {
     const sup = suppliers.find((s) => s.id === id)
@@ -127,12 +168,43 @@ export default function Settings({ data, updateData, onExport, activeUserId }) {
     e.target.value = ''
   }
 
+  const uploadDocument = (e) => {
+    const files = Array.from(e.target.files)
+    files.forEach((file) => {
+      const reader = new FileReader()
+      reader.onload = (ev) => {
+        const doc = {
+          id: genId(),
+          name: file.name,
+          date: new Date().toISOString().split('T')[0],
+          size: file.size,
+          type: file.type,
+          data: ev.target.result,
+        }
+        updateData({ documents: [...(data.documents || []), doc] })
+      }
+      reader.readAsDataURL(file)
+    })
+    e.target.value = ''
+  }
+
+  const downloadDocument = (doc) => {
+    const a = document.createElement('a')
+    a.href = doc.data
+    a.download = doc.name
+    a.click()
+  }
+
+  const deleteDocument = (id) => {
+    updateData({ documents: documents.filter((d) => d.id !== id) })
+  }
+
   return (
     <div className="page">
       <div className="page-header">
         <div>
           <h1>Instellingen</h1>
-          <div className="page-subtitle">Beheer leveranciers en app data</div>
+          <div className="page-subtitle">Beheer leveranciers, documenten en app data</div>
         </div>
       </div>
 
@@ -165,15 +237,13 @@ export default function Settings({ data, updateData, onExport, activeUserId }) {
                     border: '1px solid var(--border)',
                     borderRadius: 'var(--r-lg)',
                     padding: '12px 16px',
-                    transition: 'border-color 0.15s',
                   }}
                 >
                   <div
                     style={{
                       width: 36, height: 36, borderRadius: 10,
                       background: s.color + '18', border: `1px solid ${s.color}30`,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      flexShrink: 0,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
                     }}
                   >
                     <span style={{ width: 10, height: 10, borderRadius: '50%', background: s.color, display: 'block' }} />
@@ -191,8 +261,7 @@ export default function Settings({ data, updateData, onExport, activeUserId }) {
                           <span>Laatste: <span style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--text-2)' }}>{lastSku}</span></span>
                           <span>·</span>
                           <span style={{ color: s.color, fontWeight: 600 }}>
-                            Volgende bestelling begint bij{' '}
-                            <span style={{ fontFamily: 'monospace', fontWeight: 800 }}>{nextSku}</span>
+                            Volgende: <span style={{ fontFamily: 'monospace', fontWeight: 800 }}>{nextSku}</span>
                           </span>
                         </>
                       )}
@@ -211,6 +280,67 @@ export default function Settings({ data, updateData, onExport, activeUserId }) {
               )
             })}
           </div>
+        </div>
+
+        {/* Documents */}
+        <div className="glass-card">
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 15 }}>Documenten</div>
+              <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2 }}>
+                Facturen, bonnen en leverancierscontracten
+              </div>
+            </div>
+            <label className="btn btn-primary btn-sm" style={{ cursor: 'pointer' }}>
+              + Upload
+              <input ref={docRef} type="file" accept=".pdf,image/*" multiple onChange={uploadDocument} style={{ display: 'none' }} />
+            </label>
+          </div>
+
+          {documents.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '28px 0', color: 'var(--text-3)', fontSize: 13 }}>
+              Geen documenten. Upload facturen, bonnen of contracten.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {documents.map((doc) => (
+                <div
+                  key={doc.id}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 12,
+                    padding: '10px 14px',
+                    background: 'var(--bg-2)',
+                    borderRadius: 10,
+                    border: '1px solid var(--border)',
+                  }}
+                >
+                  <div style={{ fontSize: 20, flexShrink: 0 }}>
+                    {doc.type?.includes('pdf') ? '📄' : '🖼'}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {doc.name}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
+                      {formatDate(doc.date)}{doc.size ? ` · ${formatSize(doc.size)}` : ''}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                    <button className="btn btn-secondary btn-sm" onClick={() => downloadDocument(doc)}>
+                      ↓ Download
+                    </button>
+                    <button
+                      className="btn btn-danger btn-sm btn-icon"
+                      onClick={() => deleteDocument(doc.id)}
+                      style={{ fontSize: 14 }}
+                    >
+                      🗑
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Data management */}
@@ -265,10 +395,11 @@ export default function Settings({ data, updateData, onExport, activeUserId }) {
           <div style={{ fontSize: 13, color: 'var(--text-3)', lineHeight: 1.8 }}>
             <div>Vault Resell — lokale resell tracker</div>
             <div>Data opgeslagen in localStorage · geen externe server nodig</div>
-            <div style={{ marginTop: 10, display: 'flex', gap: 24 }}>
+            <div style={{ marginTop: 10, display: 'flex', gap: 24, flexWrap: 'wrap' }}>
               <span>Batches: <strong style={{ color: 'var(--text-2)' }}>{batches.length}</strong></span>
               <span>Verkopen: <strong style={{ color: 'var(--text-2)' }}>{sales.length}</strong></span>
               <span>Leveranciers: <strong style={{ color: 'var(--text-2)' }}>{suppliers.length}</strong></span>
+              <span>Documenten: <strong style={{ color: 'var(--text-2)' }}>{documents.length}</strong></span>
             </div>
           </div>
         </div>

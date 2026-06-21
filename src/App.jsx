@@ -6,7 +6,6 @@ import NewSKU from './pages/NewSKU'
 import Stats from './pages/Stats'
 import Settings from './pages/Settings'
 import Labels from './pages/Labels'
-import Berichten from './pages/Berichten'
 import Onboarding from './pages/Onboarding'
 import {
   loadData, saveData, getBackupMeta, saveBackupMeta,
@@ -152,13 +151,12 @@ export default function App() {
         )}
 
         <main className="main-content" key={page}>
-          {page === 'home'       && <Home {...props} theme={theme} />}
-          {page === 'inventory'  && <Inventory {...props} />}
-          {page === 'new'        && <NewSKU {...props} />}
-          {page === 'stats'      && <Stats data={data} theme={theme} />}
-          {page === 'settings'   && <Settings {...props} onExport={handleExport} activeUserId={activeUserId} />}
-          {page === 'labels'     && <Labels data={data} />}
-          {page === 'berichten'  && <Berichten {...props} />}
+          {page === 'home'      && <Home {...props} theme={theme} />}
+          {page === 'inventory' && <Inventory {...props} />}
+          {page === 'new'       && <NewSKU {...props} />}
+          {page === 'stats'     && <Stats data={data} theme={theme} />}
+          {page === 'settings'  && <Settings {...props} onExport={handleExport} activeUserId={activeUserId} />}
+          {page === 'labels'    && <Labels data={data} />}
         </main>
       </div>
     </div>
