@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
 import { genId } from '../utils/skuUtils'
 
@@ -23,12 +23,109 @@ function drawSkuStrip(page, font, sku) {
   })
 }
 
-export default function Labels() {
-  const [items, setItems] = useState([])
-  const [generating, setGenerating] = useState(false)
-  const [dragOver, setDragOver] = useState(false)
-  const fileInputRef = useRef(null)
+function formatBytes(n) {
+  if (!n) return ''
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`
+}
 
+function formatTs(iso) {
+  if (!iso) return ''
+  try {
+    return new Date(iso).toLocaleString('nl-BE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+  } catch { return iso }
+}
+
+export default function Labels() {
+  const [items, setItems]           = useState([])
+  const [generating, setGenerating] = useState(false)
+  const [dragOver, setDragOver]     = useState(false)
+  const fileInputRef                = useRef(null)
+
+  // Vinted intercepted labels state
+  const [intercepted, setIntercepted]       = useState([])   // manifest entries
+  const [selectedIds, setSelectedIds]       = useState(new Set())
+  const [merging, setMerging]               = useState(false)
+
+  // Read intercepted labels from localStorage (written by bridge.js)
+  const loadIntercepted = useCallback(() => {
+    try {
+      const raw = localStorage.getItem('vault-vinted-labels')
+      setIntercepted(raw ? JSON.parse(raw) : [])
+    } catch { setIntercepted([]) }
+  }, [])
+
+  useEffect(() => {
+    loadIntercepted()
+    const onStorage = (e) => { if (e.key === 'vault-vinted-labels') loadIntercepted() }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [loadIntercepted])
+
+  const toggleSelect = (id) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+
+  const removeIntercepted = (id) => {
+    setIntercepted((prev) => prev.filter((l) => l.id !== id))
+    setSelectedIds((prev) => { const n = new Set(prev); n.delete(id); return n })
+    localStorage.removeItem(`vault-vinted-label-${id}`)
+    // Also purge from bridge manifest
+    try {
+      const manifest = JSON.parse(localStorage.getItem('vault-vinted-labels') || '[]')
+      localStorage.setItem('vault-vinted-labels', JSON.stringify(manifest.filter((l) => l.id !== id)))
+    } catch {}
+  }
+
+  const mergeIntercepted = async () => {
+    if (!selectedIds.size) return
+    setMerging(true)
+    try {
+      const outPdf = await PDFDocument.create()
+      for (const id of selectedIds) {
+        const dataUrl = localStorage.getItem(`vault-vinted-label-${id}`) || ''
+        if (!dataUrl) { console.warn('[Vault] no dataUrl for', id); continue }
+        try {
+          const b64    = dataUrl.split(',')[1]
+          const binary = atob(b64)
+          const bytes  = new Uint8Array(binary.length)
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+
+          const srcPdf   = await PDFDocument.load(bytes, { ignoreEncryption: true })
+          const embedded = await outPdf.embedPdf(srcPdf, srcPdf.getPageIndices())
+
+          for (const ep of embedded) {
+            const { width: ew, height: eh } = ep
+            const scale = Math.min(OUT_W / ew, OUT_H / eh)
+            const page  = outPdf.addPage([OUT_W, OUT_H])
+            page.drawPage(ep, {
+              x: (OUT_W - ew * scale) / 2,
+              y: (OUT_H - eh * scale) / 2,
+              width: ew * scale,
+              height: eh * scale,
+            })
+          }
+        } catch (e) { console.error('[Vault] label merge error:', id, e) }
+      }
+
+      const pdfBytes = await outPdf.save()
+      const url = URL.createObjectURL(new Blob([pdfBytes], { type: 'application/pdf' }))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `vinted-labels-${new Date().toISOString().split('T')[0]}.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      alert('Fout bij samenvoegen: ' + err.message)
+    }
+    setMerging(false)
+  }
+
+  // ── Manual upload handlers ──────────────────────────────────────────────
   const processFiles = async (fileList) => {
     const files = Array.from(fileList).filter(
       (f) => f.type === 'application/pdf' || f.type.startsWith('image/')
@@ -152,6 +249,83 @@ export default function Labels() {
         )}
       </div>
 
+      {/* Vinted intercepted labels */}
+      {intercepted.length > 0 && (
+        <div className="glass-card" style={{ marginBottom: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>
+                🏷 Vinted labels ({intercepted.length})
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-3)' }}>
+                Automatisch onderschept via de Chrome extensie
+              </div>
+            </div>
+            {selectedIds.size > 0 && (
+              <button
+                className="btn btn-primary btn-sm"
+                onClick={mergeIntercepted}
+                disabled={merging}
+                style={{ whiteSpace: 'nowrap' }}
+              >
+                {merging ? 'Samenvoegen…' : `Merge & Print 4×6 (${selectedIds.size})`}
+              </button>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {intercepted.map((label) => {
+              const checked = selectedIds.has(label.id)
+              return (
+                <div
+                  key={label.id}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    background: checked ? 'var(--indigo-soft, rgba(79,70,229,0.08))' : 'var(--bg-2)',
+                    border: `1px solid ${checked ? 'var(--indigo, #4f46e5)' : 'var(--border)'}`,
+                    borderRadius: 'var(--r-lg)',
+                    padding: '10px 14px',
+                    cursor: 'pointer',
+                    transition: 'all .15s',
+                  }}
+                  onClick={() => toggleSelect(label.id)}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleSelect(label.id)}
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ width: 15, height: 15, accentColor: '#4f46e5', flexShrink: 0 }}
+                  />
+                  <span style={{ fontSize: 20, flexShrink: 0 }}>📄</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{
+                      fontSize: 13, fontWeight: 600,
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}>
+                      {label.filename}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 1 }}>
+                      {formatTs(label.capturedAt)}
+                      {label.orderId ? ` · bestelling #${label.orderId}` : ''}
+                      {label.size ? ` · ${formatBytes(label.size)}` : ''}
+                    </div>
+                  </div>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={(e) => { e.stopPropagation(); removeIntercepted(label.id) }}
+                    style={{ padding: '3px 8px', flexShrink: 0, fontSize: 14 }}
+                    title="Verwijder"
+                  >
+                    ×
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Drop zone */}
       <div
         className={`drop-zone${dragOver ? ' drag-over' : ''}`}
@@ -178,7 +352,7 @@ export default function Labels() {
         />
       </div>
 
-      {/* Items */}
+      {/* Manually uploaded items */}
       {items.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {items.map((item) => (
@@ -245,13 +419,13 @@ export default function Labels() {
         </div>
       )}
 
-      {items.length === 0 && (
+      {items.length === 0 && intercepted.length === 0 && (
         <div className="glass-card" style={{ marginTop: 8 }}>
           <div style={{ fontWeight: 600, color: 'var(--text-2)', marginBottom: 10 }}>Hoe werkt het?</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 13, color: 'var(--text-2)', lineHeight: 1.7 }}>
-            <div>1. Upload een Vinted verzendbewijs (PDF) of een labelafbeelding (JPG/PNG)</div>
-            <div>2. Voeg optioneel een SKU code toe — deze verschijnt als strip onderaan het label</div>
-            <div>3. Klik "Genereer PDF" om een printklaar 4×6 inch bestand te downloaden</div>
+            <div>1. Download een label op Vinted — de Chrome extensie onderschept het automatisch</div>
+            <div>2. Of upload een verzendbewijs (PDF) of labelafbeelding (JPG/PNG) handmatig</div>
+            <div>3. Selecteer labels en klik "Merge & Print 4×6" voor een printklaar bestand</div>
           </div>
           <div style={{ marginTop: 14, fontSize: 12, color: 'var(--text-3)' }}>
             PDF pagina's worden vector-kwaliteit gekopieerd via pdf-lib — geen kwaliteitsverlies.

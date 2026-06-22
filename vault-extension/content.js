@@ -4,12 +4,13 @@
   console.log('[Vault] content script loaded on', location.href);
 
   // ── Constants ────────────────────────────────────────────────────────────
-  const DONE_ATTR  = 'data-vault-done';
-  const DOT_ID     = 'vault-debug-dot';
-  const BAR_ID     = 'vault-label-bar';
-  const INDIGO     = '#4f46e5';
-  const GREEN      = '#16a34a';
-  const RED        = '#dc2626';
+  const DONE_ATTR   = 'data-vault-done';
+  const DOT_ID      = 'vault-debug-dot';
+  const BAR_ID      = 'vault-label-bar';
+  const BADGE_ID    = 'vault-label-badge';
+  const INDIGO      = '#4f46e5';
+  const GREEN       = '#16a34a';
+  const RED         = '#dc2626';
 
   // ── State ────────────────────────────────────────────────────────────────
   let syncedIds     = new Set();    // transactionIds already in storage
@@ -325,6 +326,28 @@
     return null;
   }
 
+  // ── Intercepted-labels counter badge ────────────────────────────────────
+  async function refreshLabelBadge() {
+    const { interceptedLabels = [] } = await chrome.storage.local.get(['interceptedLabels']);
+    const n = interceptedLabels.length;
+    let badge = document.getElementById(BADGE_ID);
+    if (n === 0) { if (badge) badge.remove(); return; }
+    if (!badge) {
+      badge = document.createElement('div');
+      badge.id = BADGE_ID;
+      Object.assign(badge.style, {
+        position: 'fixed', top: '12px', right: '12px', zIndex: '2147483647',
+        background: '#0f172a', border: `2px solid ${INDIGO}`, borderRadius: '10px',
+        padding: '6px 14px', display: 'flex', alignItems: 'center', gap: '7px',
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        fontSize: '12px', fontWeight: '700', color: '#e2e8f0',
+        boxShadow: '0 4px 16px rgba(0,0,0,0.5)', cursor: 'default',
+      });
+      document.body.appendChild(badge);
+    }
+    badge.textContent = `🏷 ${n} label${n !== 1 ? 's' : ''} klaar om te printen`;
+  }
+
   // ── Bootstrap ─────────────────────────────────────────────────────────────
   let panelDone = false;
   let labelDone = false;
@@ -337,6 +360,7 @@
     if (isOrdersPage(url) && !panelDone) {
       panelDone = true;
       await loadSyncedIds();
+      refreshLabelBadge();
       // Wait for page content then scan; retry after 3 s for slow SPAs
       setTimeout(() => scanAndSync(), 800);
       setTimeout(() => scanAndSync(), 3000);
@@ -351,6 +375,13 @@
       setTimeout(addLabelButton, 800);
     }
   }
+
+  // Refresh badge when storage changes
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.interceptedLabels && isOrdersPage(location.href)) {
+      refreshLabelBadge();
+    }
+  });
 
   // SPA navigation
   let lastUrl = location.href;
