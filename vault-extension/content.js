@@ -52,10 +52,23 @@
   };
 
   // ── API ────────────────────────────────────────────────────────────────────
+  function getVintedHeaders() {
+    const csrf = document.cookie.match(/(?:^|;\s*)_vinted_csrf_token=([^;]+)/)?.[1]
+      || document.querySelector('meta[name="csrf-token"]')?.content
+      || '';
+    const anonId = document.cookie.match(/(?:^|;\s*)_vinted_anon_id=([^;]+)/)?.[1] || '';
+    return {
+      'accept':        'application/json,text/plain,*/*,image/webp',
+      'locale':        'nl-BE',
+      'x-csrf-token':  csrf,
+      'x-anon-id':     anonId,
+    };
+  }
+
   async function vGet(path) {
     const r = await fetch(`https://www.vinted.be${path}`, {
       credentials: 'include',
-      headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      headers: getVintedHeaders(),
     });
     if (!r.ok) throw new Error(`${r.status} ${r.statusText} — ${path}`);
     return r.json();
@@ -64,18 +77,18 @@
   async function getListings() {
     const c = await cGet('v_list'); if (c) return c;
 
-    // Authenticated-user endpoints (no user_id needed), then fallbacks
     const endpoints = [
+      '/api/v2/catalog/items?user_id=48695306&page=1&per_page=50',
       '/api/v2/my/items?per_page=50',
-      '/api/v2/wardrobe/items?per_page=50',
+      '/api/v2/users/48695306/items?per_page=50',
     ];
 
     let raw = [];
     for (const path of endpoints) {
       try {
         const d = await vGet(path);
-        raw = d.items || d.wardrobe_items || [];
-        console.log(`[Vault] listings via ${path}: ${raw.length} items`);
+        raw = d.items || d.wardrobe_items || d.catalog_items || [];
+        console.log(`[Vault] listings via ${path}: ${raw.length} items`, Object.keys(d));
         if (raw.length) break;
       } catch (e) {
         console.warn(`[Vault] listings failed (${path}):`, e.message);
