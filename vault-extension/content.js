@@ -13,9 +13,8 @@
   };
 
   // ── Constants ──────────────────────────────────────────────────────────────
-  const MY_USER_ID = '48695306';
-  const OV_ID      = 'vault-overlay';
-  const BTN_ID     = 'vault-fab';
+  const OV_ID  = 'vault-overlay';
+  const BTN_ID = 'vault-fab';
 
   // ── Runtime state ──────────────────────────────────────────────────────────
   let overlayOpen = false;
@@ -62,25 +61,24 @@
     return r.json();
   }
 
-  // Try multiple endpoint variants until one returns items
   async function getListings() {
     const c = await cGet('v_list'); if (c) return c;
 
+    // Authenticated-user endpoints (no user_id needed), then fallbacks
     const endpoints = [
-      `/api/v2/users/${MY_USER_ID}/items?per_page=50&order=newest_first`,
-      `/api/v2/items?user_id=${MY_USER_ID}&per_page=50`,
-      `/api/v2/catalog/items?user_id=${MY_USER_ID}&per_page=50`,
+      '/api/v2/my/items?per_page=50',
+      '/api/v2/wardrobe/items?per_page=50',
     ];
 
     let raw = [];
     for (const path of endpoints) {
       try {
         const d = await vGet(path);
-        raw = d.items || d.catalog_items || [];
+        raw = d.items || d.wardrobe_items || [];
         console.log(`[Vault] listings via ${path}: ${raw.length} items`);
         if (raw.length) break;
       } catch (e) {
-        console.warn(`[Vault] listings endpoint failed (${path}):`, e.message);
+        console.warn(`[Vault] listings failed (${path}):`, e.message);
       }
     }
 
@@ -139,6 +137,66 @@
     const threads = d.threads || d.conversations || [];
     await cSet('v_convs', threads);
     return threads;
+  }
+
+  // ── Label discovery via conversation messages ──────────────────────────────
+
+  // Scan a messages array for any shipping-label PDF URL
+  function extractLabelUrl(messages) {
+    for (const msg of messages) {
+      // Explicit entity type
+      if (/shipping_label|label|file|attachment/i.test(msg.entity_type || '')) {
+        const u = msg.entity?.url || msg.entity?.label_url || msg.entity?.file_url;
+        if (u) return u;
+      }
+      // Context object (system messages often carry the URL here)
+      const ctx = msg.context || {};
+      const ctxUrl = ctx.shipping_label_url || ctx.label_url || ctx.document_url || ctx.url;
+      if (ctxUrl && /pdf_label|\.pdf|label/i.test(ctxUrl)) return ctxUrl;
+      // Inline entity URL
+      const eUrl = msg.entity?.url;
+      if (eUrl && /pdf_label|\.pdf/i.test(eUrl)) return eUrl;
+      // Attachments array
+      for (const att of (msg.attachments || [])) {
+        const u = att.url || att.file_url;
+        if (u && /pdf_label|\.pdf/i.test(u)) return u;
+      }
+      // Body text — last resort, extract first PDF-looking URL
+      if (msg.body) {
+        const m = msg.body.match(/https?:\/\/\S+(?:pdf_label|\.pdf)\S*/i);
+        if (m) return m[0];
+      }
+    }
+    return null;
+  }
+
+  // Scan all conversations that match a sold order, return Map<transactionId, {url, convId}>
+  async function scanConvsForLabels(soldOrders) {
+    const found = new Map();
+    let threads;
+    try { threads = await getConversations(); } catch { return found; }
+
+    // itemId → order lookup
+    const byItemId = new Map(soldOrders.filter(o => o.itemId).map(o => [o.itemId, o]));
+
+    for (const thread of threads) {
+      const itemId = String(thread.item?.id || '');
+      const order  = byItemId.get(itemId);
+      if (!order || found.has(order.transactionId)) continue;
+
+      try {
+        const d   = await vGet(`/api/v2/conversations/${thread.id}/messages`);
+        const url = extractLabelUrl(d.messages || []);
+        if (url) {
+          console.log('[Vault] label in chat', thread.id, '→ txn', order.transactionId, url);
+          found.set(order.transactionId, { url, convId: thread.id });
+        }
+      } catch (e) {
+        console.warn('[Vault] conv messages failed', thread.id, e.message);
+      }
+    }
+
+    return found;
   }
 
   // Enrich sold orders with buyer + date from conversations (run async after first render)
@@ -524,51 +582,90 @@
     const orders  = await getSold();
     const pending = orders.filter(o => o.transactionId && !dlIds.has(o.transactionId));
     content.innerHTML = '';
+    footer.innerHTML  = '';
 
     if (!pending.length) {
-      content.appendChild(emptyState('✅', 'Alle labels geprint', 'Geen openstaande labels — alles is gedownload.'));
+      content.appendChild(emptyState('✅', 'Alle labels geprint', 'Geen openstaande labels.'));
       return;
     }
 
-    content.appendChild(sectionHead('Openstaande labels', `${pending.length} te downloaden`));
+    // Show skeleton + status while scanning chats
+    content.appendChild(sectionHead('Labels', `${pending.length} te downloaden`));
+    const scanMsg = el('div', `font-size:12px;color:${D.sub};margin-bottom:14px`,
+      '🔍 Gesprekken scannen op labels…');
+    content.appendChild(scanMsg);
+    content.appendChild(skeletonList(Math.min(pending.length, 6)));
+
+    // Scan all conversations for label PDFs
+    const chatLabels = await scanConvsForLabels(pending);
+
+    // Build final label map: prefer chat URL, fall back to direct API endpoint
+    const labelMap = new Map();
+    for (const o of pending) {
+      const chat = chatLabels.get(o.transactionId);
+      labelMap.set(o.transactionId, chat
+        ? { url: chat.url,               source: 'chat' }
+        : { url: labelUrl(o.transactionId), source: 'api'  });
+    }
+
+    const chatCount = [...labelMap.values()].filter(v => v.source === 'chat').length;
+
+    // Re-render with results
+    content.innerHTML = '';
+    content.appendChild(sectionHead('Labels', `${pending.length} te downloaden`));
+
+    if (chatCount > 0) {
+      content.appendChild(el('div',
+        `font-size:12px;color:#15803d;background:#f0fdf4;padding:8px 12px;border-radius:8px;margin-bottom:14px`,
+        `✓ ${chatCount} label${chatCount > 1 ? 's' : ''} gevonden in chat gesprekken`));
+    }
+
     const rows = pending.map((o, i) => {
-      const dlBtn = btn('⬇ 4×6 label', `background:${D.badge};color:#374151;flex-shrink:0`);
-      dlBtn.addEventListener('click', () => downloadLabel(dlBtn, o));
+      const info    = labelMap.get(o.transactionId);
+      const srcPill = info?.source === 'chat'
+        ? pill('💬 chat', '#4f46e5', '#ede9fe')
+        : pill('API', '#9ca3af', '#f3f4f6');
+      const dlBtn = btn('⬇ 4×6', `background:${D.badge};color:#374151;flex-shrink:0`);
+      dlBtn.addEventListener('click', () => doDownloadLabel(dlBtn, o, info?.url));
       const sub = [o.buyer ? `@${o.buyer}` : '', fmtD(o.date)].filter(Boolean).join(' · ');
-      return rowDiv([photoThumb(o.photo), textStack(o.title, sub), priceTag(o.price), dlBtn], i < pending.length - 1);
+      return rowDiv(
+        [photoThumb(o.photo), textStack(o.title, sub), srcPill, priceTag(o.price), dlBtn],
+        i < pending.length - 1,
+      );
     });
     content.appendChild(cardWrap(rows));
 
-    // Footer
-    footer.innerHTML = '';
     const printAll = btn(`🖨 Print alle ${pending.length} labels`, `background:${D.accent};color:#fff;flex:1`);
-    printAll.addEventListener('click', () => batchPrint(pending, printAll, content, footer));
+    printAll.addEventListener('click', () => {
+      const urls = pending.map(o => labelMap.get(o.transactionId)?.url).filter(Boolean);
+      const ids  = pending.map(o => o.transactionId);
+      batchPrint(pending, urls, ids, printAll, content, footer);
+    });
     footer.appendChild(printAll);
   }
 
-  async function downloadLabel(dlBtn, order) {
+  async function doDownloadLabel(dlBtn, order, url) {
     dlBtn.textContent = '⏳ Croppen…'; dlBtn.disabled = true;
-    const res = await sendMsg({ type:'PRINT_LABELS', labelUrls:[labelUrl(order.transactionId)], transactionIds:[order.transactionId] }, 30000);
+    const res = await sendMsg({
+      type: 'PRINT_LABELS',
+      labelUrls: [url || labelUrl(order.transactionId)],
+      transactionIds: [order.transactionId],
+    }, 30000);
     if (res?.success) {
       dlIds.add(order.transactionId);
-      dlBtn.textContent = '✓ Gedownload';
-      dlBtn.style.cssText = dlBtn.style.cssText.replace(D.badge,'#dcfce7');
-      dlBtn.style.color = '#15803d';
+      dlBtn.textContent = '✓ Klaar';
+      dlBtn.style.background = '#dcfce7'; dlBtn.style.color = '#15803d';
     } else {
-      dlBtn.textContent = '✗ Probeer opnieuw'; dlBtn.disabled = false;
+      dlBtn.textContent = '✗ Opnieuw'; dlBtn.disabled = false;
       dlBtn.style.background = '#fee2e2'; dlBtn.style.color = '#dc2626';
     }
   }
 
-  async function batchPrint(orders, printBtn, content, footer) {
-    printBtn.disabled = true; printBtn.textContent = `⏳ Laden ${orders.length} labels…`;
-    const res = await sendMsg({
-      type: 'PRINT_LABELS',
-      labelUrls: orders.map(o => labelUrl(o.transactionId)),
-      transactionIds: orders.map(o => o.transactionId),
-    }, 120000);
+  async function batchPrint(orders, urls, ids, printBtn, content, footer) {
+    printBtn.disabled = true; printBtn.textContent = `⏳ Laden ${urls.length} labels…`;
+    const res = await sendMsg({ type: 'PRINT_LABELS', labelUrls: urls, transactionIds: ids }, 120000);
     if (res?.success) {
-      (res.downloadedIds || orders.map(o => o.transactionId)).forEach(id => dlIds.add(id));
+      (res.downloadedIds || ids).forEach(id => dlIds.add(id));
       toast(`✅ ${orders.length} labels gedownload als 4×6 PDF`);
       mem['v_sold'] = null;
       await tabLabels(content, footer);
@@ -610,7 +707,7 @@
   new MutationObserver(() => {
     if (location.href === lastHref) return;
     lastHref = location.href;
-    booted = false; overlayOpen = false; myUserId = null;
+    booted = false; overlayOpen = false;
     cClear();
     document.getElementById(OV_ID)?.remove();
     document.getElementById(BTN_ID)?.remove();
