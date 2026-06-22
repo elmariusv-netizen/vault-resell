@@ -1,192 +1,401 @@
 (function () {
   'use strict';
 
-  const OVERLAY_ID = 'vault-overlay';
-  const TOG_ID     = 'vault-panel-toggle';
-  const INDIGO     = '#4f46e5';
-  const GREEN      = '#16a34a';
-  const RED        = '#dc2626';
+  // ── Design tokens ──────────────────────────────────────────────────────────
+  const D = {
+    bg:     '#f9fafb',
+    card:   '#ffffff',
+    text:   '#111111',
+    sub:    '#9ca3af',
+    accent: '#6366f1',
+    badge:  '#f3f4f6',
+    font:   '-apple-system,"SF Pro Display","Inter","Segoe UI",sans-serif',
+  };
 
-  // ── State ─────────────────────────────────────────────────────────────────
-  let overlayOpen   = false;
-  let activeTab     = 'verkopen';
-  let scanActive    = false;
-  let syncedIds     = new Set();
-  let downloadedIds = new Set();
+  // ── Constants ──────────────────────────────────────────────────────────────
+  const MY_LOGIN = 'elmariusv';
+  const OV_ID    = 'vault-overlay';
+  const BTN_ID   = 'vault-fab';
 
-  const tabData = { verkopen: null, aankopen: null }; // null = not yet loaded
+  // ── Runtime state ──────────────────────────────────────────────────────────
+  let overlayOpen = false;
+  let activeTab   = 'zoekertjes';
+  let myUserId    = null;
+  let syncedIds   = new Set();
+  let dlIds       = new Set();
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
-  function esc(s) {
-    return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  // In-memory cache (backed by chrome.storage.session where available)
+  const mem = {};
+
+  // ── Cache helpers ──────────────────────────────────────────────────────────
+  async function cGet(k) {
+    if (k in mem) return mem[k];
+    try {
+      const d = await chrome.storage.session.get([k]);
+      return (mem[k] = d[k] ?? null);
+    } catch { return null; }
+  }
+  async function cSet(k, v) {
+    mem[k] = v;
+    try { await chrome.storage.session.set({ [k]: v }); } catch {}
+  }
+  function cClear() {
+    Object.keys(mem).forEach(k => delete mem[k]);
+    try { chrome.storage.session.clear(); } catch {}
   }
 
-  function fmtPrice(v) {
-    const n = parseFloat(v || 0);
-    return n > 0 ? `€${n.toFixed(2).replace('.', ',')}` : '—';
-  }
-
-  function fmtDate(s) {
-    if (!s) return '—';
+  // ── Formatters ─────────────────────────────────────────────────────────────
+  const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const fmt$ = v => { const n = parseFloat(v || 0); return n > 0 ? `€${n.toFixed(2).replace('.', ',')}` : '—'; };
+  const fmtD = s => {
+    if (!s) return '';
     const d = new Date(s);
-    if (isNaN(d)) return s.slice(0, 10);
-    return d.toLocaleDateString('nl-BE', { day: '2-digit', month: 'short', year: '2-digit' });
+    return isNaN(d) ? s.slice(0,10) : d.toLocaleDateString('nl-BE', { day:'2-digit', month:'short', year:'2-digit' });
+  };
+
+  // ── API ────────────────────────────────────────────────────────────────────
+  async function vGet(path) {
+    const r = await fetch(`https://www.vinted.be${path}`, {
+      credentials: 'include',
+      headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+    });
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText} — ${path}`);
+    return r.json();
   }
 
-  function apiLabelUrl(id) {
-    return `https://www.vinted.be/api/v2/transactions/${id}/shipment/pdf_label`;
+  async function getMyUserId() {
+    if (myUserId) return myUserId;
+    const cached = await cGet('v_uid');
+    if (cached) { myUserId = cached; return cached; }
+    const d = await vGet(`/api/v2/users?login=${MY_LOGIN}`);
+    const id = String(d.users?.[0]?.id || d.user?.id || '');
+    if (id) { myUserId = id; await cSet('v_uid', id); }
+    console.log('[Vault] user ID:', id);
+    return id;
   }
 
-  // ── Page detection ────────────────────────────────────────────────────────
-  function isOrdersPage(url) {
-    return /\/(my[-_\/]?(orders?|purchases?|sales?|transactions?|bestellingen?|sold[-_]items?|items?))/i.test(url)
-        || /\/transactions?\/\d+/i.test(url)
-        || /\/my_orders/i.test(url);
+  async function getListings() {
+    const c = await cGet('v_list'); if (c) return c;
+    const uid = await getMyUserId();
+    if (!uid) throw new Error('Kan gebruiker niet vinden');
+    const d = await vGet(`/api/v2/users/${uid}/items?per_page=50&order=newest_first`);
+    console.log('[Vault] listings sample:', JSON.stringify(d.items?.[0] || {}).slice(0, 300));
+    const items = (d.items || []).map(o => ({
+      itemId: String(o.id || ''),
+      title:  o.title || '?',
+      photo:  o.photos?.[0]?.url || o.photo?.url || null,
+      price:  parseFloat(o.price || 0),
+      views:  o.view_count || 0,
+      status: o.status || 'active',
+      date:   (o.created_at || '').slice(0, 10),
+      url:    `https://www.vinted.be/items/${o.id}`,
+    }));
+    await cSet('v_list', items);
+    return items;
   }
 
-  // ── Storage ───────────────────────────────────────────────────────────────
-  async function loadSyncedIds() {
-    const { syncedOrders = [] } = await chrome.storage.local.get(['syncedOrders']);
-    syncedIds = new Set(syncedOrders.map((o) => o.transactionId).filter(Boolean));
+  async function getSold() {
+    const c = await cGet('v_sold'); if (c) return c;
+    const d = await vGet('/api/v2/my_orders?order_type=sold&per_page=50');
+    console.log('[Vault] sold sample:', JSON.stringify((d.orders || d.transactions || [])[0] || {}).slice(0, 400));
+    const orders = (d.orders || d.transactions || []).map(o => ({
+      transactionId: String(o.transaction_id || o.id || ''),
+      itemId:  String(o.item?.id || ''),
+      title:   o.item?.title || o.title || '?',
+      photo:   o.item?.photos?.[0]?.url || o.item?.photo?.url || null,
+      price:   parseFloat(o.total_price || o.price || 0),
+      buyer:   o.buyer?.login  || o.user?.login  || '',
+      country: o.buyer?.country_iso_code || o.country_iso_code || '',
+      date:    (o.created_at || '').slice(0, 10),
+      convId:  null,
+    }));
+    await cSet('v_sold', orders);
+    return orders;
   }
 
-  async function loadDownloadedIds() {
-    const { interceptedLabels = [] } = await chrome.storage.local.get(['interceptedLabels']);
-    downloadedIds = new Set(interceptedLabels.map((l) => l.orderId).filter(Boolean));
+  async function getPurchased() {
+    const c = await cGet('v_buy'); if (c) return c;
+    const d = await vGet('/api/v2/my_orders?order_type=purchased&per_page=50');
+    const orders = (d.orders || d.transactions || []).map(o => ({
+      transactionId: String(o.transaction_id || o.id || ''),
+      title:  o.item?.title || o.title || '?',
+      photo:  o.item?.photos?.[0]?.url || o.item?.photo?.url || null,
+      price:  parseFloat(o.total_price || o.price || 0),
+      seller: o.seller?.login || o.user?.login || '',
+      date:   (o.created_at || '').slice(0, 10),
+    }));
+    await cSet('v_buy', orders);
+    return orders;
   }
 
-  // ── Message helper (MV3 timeout guard) ───────────────────────────────────
+  async function getConversations() {
+    const c = await cGet('v_convs'); if (c) return c;
+    const d = await vGet('/api/v2/conversations?per_page=100');
+    const threads = d.threads || d.conversations || [];
+    await cSet('v_convs', threads);
+    return threads;
+  }
+
+  // Enrich sold orders with buyer + date from conversations (run async after first render)
+  async function enrichSold(orders) {
+    let threads;
+    try { threads = await getConversations(); } catch { return; }
+    const byItemId = new Map(threads.filter(t => t.item?.id).map(t => [String(t.item.id), t]));
+    let changed = false;
+    for (const o of orders) {
+      const t = byItemId.get(o.itemId);
+      if (!t) continue;
+      if (!o.buyer   && t.with_user?.login) { o.buyer  = t.with_user.login; changed = true; }
+      if (!o.date    && t.created_at)        { o.date   = t.created_at.slice(0, 10); changed = true; }
+      if (!o.convId)                          { o.convId = t.id; changed = true; }
+    }
+    if (changed) await cSet('v_sold', orders);
+  }
+
+  // ── Supabase sync ──────────────────────────────────────────────────────────
   function sendMsg(msg, ms = 10000) {
     return Promise.race([
-      new Promise((resolve) => {
-        chrome.runtime.sendMessage(msg, (res) => {
-          if (chrome.runtime.lastError) resolve({ success: false });
-          else resolve(res || { success: false });
+      new Promise(res => {
+        chrome.runtime.sendMessage(msg, r => {
+          if (chrome.runtime.lastError) res({ success: false });
+          else res(r || { success: false });
         });
       }),
-      new Promise((resolve) => setTimeout(() => resolve({ success: false, timeout: true }), ms)),
+      new Promise(res => setTimeout(() => res({ success: false, timeout: true }), ms)),
     ]);
   }
 
-  // ── Vinted API ────────────────────────────────────────────────────────────
-  async function vintedFetch(path) {
-    const res = await fetch(`https://www.vinted.be${path}`, {
-      credentials: 'include',
-      headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-    });
-    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-    return res.json();
-  }
-
-  async function fetchSoldOrders() {
-    try {
-      const data = await vintedFetch('/api/v2/my_orders?order_type=sold&page=1&per_page=80');
-      const raw  = data.orders || data.transactions || data.my_orders || [];
-      console.log('[Vault] sold orders:', raw.length);
-      if (raw[0]) console.log('[Vault] sold sample fields:', Object.keys(raw[0]));
-      return raw.map(parseOrder('sold'));
-    } catch (e) { console.error('[Vault] sold API:', e); return []; }
-  }
-
-  async function fetchPurchasedOrders() {
-    try {
-      const data = await vintedFetch('/api/v2/my_orders?order_type=purchased&page=1&per_page=80');
-      const raw  = data.orders || data.transactions || data.my_orders || [];
-      console.log('[Vault] purchased orders:', raw.length);
-      return raw.map(parseOrder('purchased'));
-    } catch (e) { console.error('[Vault] purchased API:', e); return []; }
-  }
-
-  function parseOrder(type) {
-    return (o) => ({
-      transactionId: String(o.transaction_id || o.transaction?.id || o.id || ''),
-      title:   o.item?.title || o.item_title || o.title || 'Onbekend item',
-      photo:   o.item?.photos?.[0]?.url || o.item?.photo?.url || o.photo?.url || o.photos?.[0]?.url || null,
-      price:   parseFloat(o.total_price || o.item?.price || o.price || 0),
-      buyer:   type === 'sold'      ? (o.buyer?.login  || o.user?.login  || '') : '',
-      seller:  type === 'purchased' ? (o.seller?.login || o.user?.login || '') : '',
-      country: o.buyer?.country_iso_code || o.country_iso_code || o.country?.iso_code || '',
-      date:    (o.created_at || o.updated_at || '').slice(0, 10) || new Date().toISOString().slice(0, 10),
-      status:  type,
-      labelUrl: null, // filled below for sold orders
-    });
-  }
-
-  // ── Auto-sync sold orders to Supabase ─────────────────────────────────────
   async function autoSync(orders) {
+    const { syncedOrders = [] } = await chrome.storage.local.get(['syncedOrders']);
+    syncedIds = new Set(syncedOrders.map(o => o.transactionId).filter(Boolean));
     for (const o of orders) {
       if (!o.transactionId || syncedIds.has(o.transactionId)) continue;
-      o.labelUrl = apiLabelUrl(o.transactionId);
-      const res = await sendMsg({ type: 'SYNC_ORDER', order: o });
-      if (res?.success && !res.duplicate) {
-        syncedIds.add(o.transactionId);
-        console.log('[Vault] auto-synced', o.transactionId);
-      }
+      const res = await sendMsg({ type: 'SYNC_ORDER', order: { ...o, labelUrl: labelUrl(o.transactionId) } });
+      if (res?.success && !res.duplicate) syncedIds.add(o.transactionId);
     }
   }
 
-  // ── Toast ─────────────────────────────────────────────────────────────────
-  function toast(msg) {
-    document.getElementById('vault-toast')?.remove();
-    const t = Object.assign(document.createElement('div'), { id: 'vault-toast', textContent: msg });
+  async function loadDlIds() {
+    const { interceptedLabels = [] } = await chrome.storage.local.get(['interceptedLabels']);
+    dlIds = new Set(interceptedLabels.map(l => l.orderId).filter(Boolean));
+  }
+
+  function labelUrl(txId) {
+    return `https://www.vinted.be/api/v2/transactions/${txId}/shipment/pdf_label`;
+  }
+
+  // ── Toast ──────────────────────────────────────────────────────────────────
+  function toast(msg, ok = true) {
+    document.getElementById('vlt-toast')?.remove();
+    const t = document.createElement('div');
+    t.id = 'vlt-toast';
+    t.textContent = msg;
     Object.assign(t.style, {
-      position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)',
-      zIndex: '2147483647', background: '#0f172a', color: '#f8fafc',
-      padding: '10px 20px', borderRadius: '10px', fontSize: '13px', fontWeight: '600',
-      boxShadow: '0 4px 24px rgba(0,0,0,0.3)', opacity: '1', transition: 'opacity 0.3s',
-      fontFamily: 'system-ui, sans-serif', whiteSpace: 'nowrap',
+      position: 'fixed', bottom: '28px', left: '50%', transform: 'translateX(-50%)',
+      zIndex: '2147483647', background: ok ? '#111' : '#dc2626', color: '#fff',
+      padding: '10px 22px', borderRadius: '12px', fontSize: '13px', fontWeight: '500',
+      boxShadow: '0 4px 24px rgba(0,0,0,0.25)', opacity: '1', transition: 'opacity 0.3s',
+      fontFamily: D.font, whiteSpace: 'nowrap', letterSpacing: '0.01em',
     });
-    (document.body || document.documentElement).appendChild(t);
+    document.body.appendChild(t);
     setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, 3500);
   }
 
-  // ── Overlay shell ─────────────────────────────────────────────────────────
-  function buildOverlay() {
-    if (document.getElementById(OVERLAY_ID)) return;
-
-    const ov = document.createElement('div');
-    ov.id = OVERLAY_ID;
-    Object.assign(ov.style, {
-      position: 'fixed', inset: '0', zIndex: '2147483646',
-      background: '#f8fafc', display: 'flex', flexDirection: 'column',
-      fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif',
-      opacity: '0', transition: 'opacity 0.18s ease',
-    });
-
-    ov.innerHTML = `
-      <!-- top bar -->
-      <div style="background:#fff;border-bottom:1px solid #e2e8f0;padding:0 28px;height:58px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;gap:16px">
-        <span style="font-size:20px;font-weight:900;letter-spacing:3px;color:${INDIGO}">VAULT</span>
-        <div id="vault-tabs" style="display:flex;height:100%;gap:0">
-          ${['verkopen','aankopen','labels'].map((t, i) => `
-            <button data-tab="${t}" style="
-              display:flex;align-items:center;gap:6px;padding:0 22px;height:100%;
-              border:none;border-bottom:3px solid transparent;background:none;
-              cursor:pointer;font-size:13px;font-weight:600;color:#94a3b8;
-              font-family:inherit;white-space:nowrap;transition:all 0.15s;
-            ">${['📦 Verkopen','🛍 Aankopen','🏷 Labels'][i]}</button>
-          `).join('')}
-        </div>
-        <button id="vault-ov-close" style="background:none;border:none;color:#94a3b8;font-size:22px;cursor:pointer;padding:6px;line-height:1;border-radius:6px;flex-shrink:0">✕</button>
-      </div>
-      <!-- content -->
-      <div id="vault-ov-content" style="flex:1;overflow-y:auto;padding:24px 28px"></div>
-      <!-- footer -->
-      <div id="vault-ov-footer" style="background:#fff;border-top:1px solid #e2e8f0;padding:14px 28px;display:flex;gap:10px;flex-shrink:0"></div>
+  // ── Inject CSS (shimmer animation + hover) ─────────────────────────────────
+  function injectCSS() {
+    if (document.getElementById('vlt-css')) return;
+    const s = document.createElement('style');
+    s.id = 'vlt-css';
+    s.textContent = `
+      @keyframes vlt-sh {
+        0%{background-position:-400px 0}100%{background-position:400px 0}
+      }
+      .vlt-sk {
+        background:linear-gradient(90deg,#f3f4f6 25%,#e9e9e9 50%,#f3f4f6 75%);
+        background-size:400px 100%;animation:vlt-sh 1.4s ease-in-out infinite;border-radius:6px;
+      }
+      .vlt-row { transition: background 0.1s; }
+      .vlt-row:hover { background: #fafafa !important; }
+      #${OV_ID} label:hover { background: #fafafa !important; }
+      .vlt-btn:hover { opacity:0.88; }
+      .vlt-btn:active { transform:scale(0.97); }
     `;
+    document.head.appendChild(s);
+  }
 
-    (document.body || document.documentElement).appendChild(ov);
+  // ── UI primitives ──────────────────────────────────────────────────────────
+  function el(tag, css, html) {
+    const e = document.createElement(tag);
+    if (css)  e.style.cssText = css;
+    if (html) e.innerHTML = html;
+    return e;
+  }
 
-    ov.querySelector('#vault-ov-close').addEventListener('click', () => toggleOverlay(false));
-    ov.querySelectorAll('[data-tab]').forEach((btn) => {
-      btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+  function photoThumb(src) {
+    if (src) {
+      const img = document.createElement('img');
+      img.src = src; img.loading = 'lazy';
+      img.style.cssText = 'width:48px;height:48px;border-radius:8px;object-fit:cover;flex-shrink:0';
+      img.onerror = () => { img.replaceWith(photoThumb(null)); };
+      return img;
+    }
+    return el('div',
+      `width:48px;height:48px;border-radius:8px;background:#f3f4f6;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:20px`,
+      '📦');
+  }
+
+  function textStack(title, sub) {
+    const d = el('div', 'flex:1;min-width:0');
+    d.innerHTML = `
+      <div style="font-size:13px;font-weight:500;color:${D.text};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3">${esc(title)}</div>
+      ${sub ? `<div style="font-size:11px;color:${D.sub};margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(sub)}</div>` : ''}`;
+    return d;
+  }
+
+  function priceTag(v) {
+    return el('div', `font-size:14px;font-weight:600;color:${D.text};flex-shrink:0;text-align:right;min-width:52px`, esc(fmt$(v)));
+  }
+
+  function pill(text, color, bg) {
+    return el('span',
+      `font-size:11px;font-weight:500;padding:3px 9px;border-radius:20px;background:${bg};color:${color};flex-shrink:0;white-space:nowrap`,
+      esc(text));
+  }
+
+  function btn(label, style) {
+    const b = document.createElement('button');
+    b.textContent = label; b.className = 'vlt-btn';
+    b.style.cssText = `border:none;border-radius:10px;padding:10px 18px;font-size:13px;font-weight:500;cursor:pointer;font-family:${D.font};${style}`;
+    return b;
+  }
+
+  function cardWrap(rows) {
+    const d = el('div', `background:${D.card};border-radius:16px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,0.07);margin-bottom:16px`);
+    rows.forEach(r => d.appendChild(r));
+    return d;
+  }
+
+  function sectionHead(title, count) {
+    return el('div', 'margin-bottom:14px;margin-top:4px',
+      `<h2 style="margin:0;font-size:16px;font-weight:600;color:${D.text};display:inline">${esc(title)}</h2>` +
+      (count != null ? `<span style="margin-left:8px;font-size:12px;color:${D.sub}">${count}</span>` : ''));
+  }
+
+  function rowDiv(children, borderBottom = true) {
+    const r = el('div', `display:flex;align-items:center;gap:13px;padding:12px 16px;${borderBottom ? `border-bottom:1px solid #f9fafb;` : ''}`);
+    r.className = 'vlt-row';
+    children.forEach(c => c && r.appendChild(c));
+    return r;
+  }
+
+  function skeletonList(n = 7) {
+    const wrap = el('div', `background:${D.card};border-radius:16px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,0.07)`);
+    for (let i = 0; i < n; i++) {
+      const r = el('div', `display:flex;align-items:center;gap:13px;padding:12px 16px;${i < n-1 ? 'border-bottom:1px solid #f9fafb;' : ''}`);
+      r.innerHTML = `
+        <div class="vlt-sk" style="width:48px;height:48px;border-radius:8px;flex-shrink:0"></div>
+        <div style="flex:1"><div class="vlt-sk" style="height:13px;width:58%;margin-bottom:8px"></div><div class="vlt-sk" style="height:11px;width:38%"></div></div>
+        <div class="vlt-sk" style="height:14px;width:48px"></div>`;
+      wrap.appendChild(r);
+    }
+    return wrap;
+  }
+
+  function emptyState(icon, title, sub) {
+    return el('div',
+      `display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:260px;color:${D.sub};text-align:center;gap:8px;padding:32px`,
+      `<div style="font-size:40px">${icon}</div>
+       <div style="font-size:15px;font-weight:600;color:#374151">${esc(title)}</div>
+       <div style="font-size:12px;line-height:1.6">${esc(sub)}</div>`);
+  }
+
+  function errorState(msg, retry) {
+    const d = el('div',
+      `background:${D.card};border-radius:16px;padding:32px;box-shadow:0 1px 4px rgba(0,0,0,0.07);text-align:center`,
+      `<div style="font-size:32px;margin-bottom:10px">⚠️</div>
+       <div style="font-size:14px;font-weight:600;color:#374151;margin-bottom:4px">API fout</div>
+       <div style="font-size:12px;color:${D.sub};margin-bottom:18px">${esc(msg)}</div>`);
+    const b = btn('Opnieuw proberen', `background:${D.accent};color:#fff`);
+    b.addEventListener('click', retry);
+    d.appendChild(b);
+    return d;
+  }
+
+  // ── Overlay shell ──────────────────────────────────────────────────────────
+  function buildOverlay() {
+    if (document.getElementById(OV_ID)) return;
+    injectCSS();
+
+    const ov = el('div', `position:fixed;inset:0;z-index:2147483646;background:${D.bg};display:flex;flex-direction:column;font-family:${D.font};opacity:0;transition:opacity 0.2s ease`);
+    ov.id = OV_ID;
+
+    // Header
+    const hdr = el('div', `background:${D.card};padding:0 28px;height:58px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;box-shadow:0 1px 0 #f3f4f6`);
+    hdr.innerHTML = `<span style="font-size:18px;font-weight:700;letter-spacing:0.15em;color:${D.text}">VAULT</span>`;
+    const closeBtn = btn('✕', `background:none;color:${D.sub};font-size:20px;padding:6px 8px;border-radius:8px`);
+    closeBtn.addEventListener('click', () => toggleOverlay(false));
+    hdr.appendChild(closeBtn);
+
+    // Tab bar
+    const tabBar = el('div', `background:${D.card};padding:10px 20px;display:flex;gap:6px;flex-shrink:0;border-bottom:1px solid #f3f4f6`);
+    const TABS = [
+      { id:'zoekertjes', label:'🏪 Listings'  },
+      { id:'verkopen',   label:'📦 Verkopen'  },
+      { id:'aankopen',   label:'🛍 Aankopen'  },
+      { id:'labels',     label:'🏷 Labels'    },
+    ];
+    TABS.forEach(({ id, label }) => {
+      const t = btn(label, `background:transparent;color:#6b7280;padding:7px 14px;border-radius:8px;transition:all 0.15s`);
+      t.dataset.tab = id;
+      t.addEventListener('click', () => switchTab(id));
+      tabBar.appendChild(t);
     });
+
+    // Content
+    const content = el('div', `flex:1;overflow-y:auto;padding:20px 28px`);
+    content.id = 'vlt-content';
+
+    // Footer
+    const footer = el('div', `background:${D.card};padding:12px 28px;display:flex;gap:10px;flex-shrink:0;box-shadow:0 -1px 0 #f3f4f6`);
+    footer.id = 'vlt-footer';
+
+    ov.append(hdr, tabBar, content, footer);
+    document.body.appendChild(ov);
+  }
+
+  function setTabStyle(id) {
+    document.querySelectorAll(`#${OV_ID} [data-tab]`).forEach(t => {
+      const on = t.dataset.tab === id;
+      t.style.background = on ? D.accent : 'transparent';
+      t.style.color      = on ? '#fff'   : '#6b7280';
+    });
+  }
+
+  async function switchTab(id) {
+    activeTab = id;
+    setTabStyle(id);
+    const content = document.getElementById('vlt-content');
+    const footer  = document.getElementById('vlt-footer');
+    if (!content || !footer) return;
+    content.innerHTML = '';
+    footer.innerHTML  = '';
+    content.appendChild(skeletonList());
+    try {
+      if (id === 'zoekertjes') await tabZoekertjes(content, footer);
+      if (id === 'verkopen')   await tabVerkopen(content, footer);
+      if (id === 'aankopen')   await tabAankopen(content, footer);
+      if (id === 'labels')     await tabLabels(content, footer);
+    } catch (err) {
+      console.error('[Vault]', err);
+      content.innerHTML = '';
+      content.appendChild(errorState(err.message, () => switchTab(id)));
+    }
   }
 
   function toggleOverlay(force) {
     buildOverlay();
     overlayOpen = force !== undefined ? force : !overlayOpen;
-    const ov = document.getElementById(OVERLAY_ID);
+    const ov = document.getElementById(OV_ID);
     if (!ov) return;
     if (overlayOpen) {
       ov.style.display = 'flex';
@@ -194,372 +403,217 @@
       switchTab(activeTab);
     } else {
       ov.style.opacity = '0';
-      setTimeout(() => { ov.style.display = 'none'; }, 180);
+      setTimeout(() => { ov.style.display = 'none'; }, 200);
     }
   }
 
-  // ── Tab switching ─────────────────────────────────────────────────────────
-  function setActiveTabStyle(tab) {
-    document.querySelectorAll('#vault-tabs [data-tab]').forEach((btn) => {
-      const on = btn.dataset.tab === tab;
-      btn.style.color            = on ? INDIGO : '#94a3b8';
-      btn.style.borderBottomColor = on ? INDIGO : 'transparent';
+  // ── Tab: Listings ──────────────────────────────────────────────────────────
+  async function tabZoekertjes(content, footer) {
+    const items = await getListings();
+    content.innerHTML = '';
+    if (!items.length) { content.appendChild(emptyState('🏪', 'Geen actieve listings', 'Geen actieve advertenties gevonden.')); return; }
+
+    content.appendChild(sectionHead('Actieve listings', `${items.length} items`));
+    const rows = items.map((o, i) => {
+      const statusBadge = o.status === 'active'
+        ? pill('Actief', '#15803d', '#dcfce7')
+        : pill(o.status, '#6b7280', '#f3f4f6');
+      const views = el('div', `font-size:11px;color:${D.sub};flex-shrink:0`, o.views ? `👁 ${o.views}` : '');
+      const r = rowDiv([photoThumb(o.photo), textStack(o.title, fmtD(o.date)), views, priceTag(o.price), statusBadge], i < items.length - 1);
+      r.style.cursor = 'pointer';
+      r.addEventListener('click', () => window.open(o.url, '_blank'));
+      return r;
+    });
+    content.appendChild(cardWrap(rows));
+  }
+
+  // ── Tab: Verkopen ──────────────────────────────────────────────────────────
+  async function tabVerkopen(content, footer) {
+    const orders = await getSold();
+    content.innerHTML = '';
+    if (!orders.length) { content.appendChild(emptyState('📦', 'Geen verkopen', 'Nog geen verkopen gevonden.')); return; }
+
+    drawVerkopen(content, orders);
+    drawVerkopenFooter(footer, orders);
+
+    // Background: auto-sync + enrich from conversations
+    autoSync(orders);
+    enrichSold(orders).then(() => {
+      if (activeTab === 'verkopen') drawVerkopen(content, orders);
     });
   }
 
-  async function switchTab(tab) {
-    activeTab = tab;
-    setActiveTabStyle(tab);
-    const content = document.getElementById('vault-ov-content');
-    const footer  = document.getElementById('vault-ov-footer');
-    if (!content || !footer) return;
+  function drawVerkopen(content, orders) {
+    const prev = content.querySelector('.vlt-sell-wrap');
+    if (prev) prev.remove();
+    const wrap = el('div', '');
+    wrap.className = 'vlt-sell-wrap';
+    wrap.appendChild(sectionHead('Verkopen', `${orders.length} orders`));
 
-    content.innerHTML = loadingHTML();
-    footer.innerHTML  = '';
+    const rows = orders.map((o, i) => {
+      const cb = document.createElement('input');
+      Object.assign(cb, { type: 'checkbox' });
+      cb.dataset.idx = i;
+      Object.assign(cb.style, { cursor:'pointer', accentColor: D.accent, flexShrink:'0', width:'15px', height:'15px', margin:'0' });
+      cb.addEventListener('change', () => {
+        const n = content.querySelectorAll('[data-idx]:checked').length;
+        const b = document.getElementById('vlt-sync');
+        if (b) b.textContent = n > 0 ? `☁ Sync (${n} geselecteerd)` : '☁ Sync alle naar Vault';
+      });
 
-    if (tab === 'verkopen') await renderVerkopen(content, footer);
-    if (tab === 'aankopen') await renderAankopen(content, footer);
-    if (tab === 'labels')   await renderLabels(content, footer);
-  }
-
-  function loadingHTML() {
-    return `<div style="display:flex;align-items:center;justify-content:center;height:200px;color:#94a3b8;font-size:13px;gap:8px">
-      <span style="font-size:20px">⏳</span> Laden…</div>`;
-  }
-
-  function emptyHTML(icon, title, sub) {
-    return `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:240px;color:#94a3b8;text-align:center;gap:8px">
-      <div style="font-size:40px">${icon}</div>
-      <div style="font-size:14px;font-weight:600;color:#475569">${title}</div>
-      <div style="font-size:12px;line-height:1.6">${sub}</div></div>`;
-  }
-
-  // ── Tab 1 — Verkopen ──────────────────────────────────────────────────────
-  async function renderVerkopen(content, footer) {
-    if (!tabData.verkopen) {
-      await loadSyncedIds();
-      tabData.verkopen = await fetchSoldOrders();
-      await autoSync(tabData.verkopen);
-    }
-    const orders = tabData.verkopen;
-
-    if (!orders.length) {
-      content.innerHTML = emptyHTML('📦', 'Geen verkopen gevonden', 'De API gaf geen resultaten terug.<br>Zorg dat je bent ingelogd op Vinted.');
-      return;
-    }
-
-    content.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-        <div>
-          <h2 style="margin:0;font-size:16px;font-weight:700;color:#0f172a">Verkochte orders</h2>
-          <div style="font-size:12px;color:#94a3b8;margin-top:2px">${orders.length} orders gevonden</div>
-        </div>
-        <button id="vault-refresh-verkopen" style="${btnStyle('#f8fafc','#374151','#e2e8f0')}">🔄 Verversen</button>
-      </div>
-      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden">
-        <div style="${rowHeaderStyle()}">
-          <div style="width:15px"></div>
-          <div style="width:52px"></div>
-          <div style="flex:1;min-width:0">ITEM</div>
-          <div style="width:130px">KOPER</div>
-          <div style="width:90px;text-align:right">PRIJS</div>
-          <div style="width:90px">DATUM</div>
-          <div style="width:44px">LAND</div>
-          <div style="width:28px"></div>
-        </div>
-        ${orders.map((o, i) => orderRowHTML(o, i, true)).join('')}
-      </div>`;
-
-    content.querySelector('#vault-refresh-verkopen')?.addEventListener('click', async (e) => {
-      e.currentTarget.textContent = '⏳'; e.currentTarget.disabled = true;
-      tabData.verkopen = null; await renderVerkopen(content, footer);
-    });
-    wireCheckboxes(content, footer, 'verkopen');
-    wireRowSyncBtns(content);
-    renderVerkopenFooter(footer, orders);
-  }
-
-  function renderVerkopenFooter(footer, orders) {
-    footer.innerHTML = `
-      <button id="vault-sel-all" style="${btnStyle('#f8fafc','#374151','#e2e8f0')}">☑ Alles selecteren</button>
-      <button id="vault-sync-sel" style="${btnStyle(INDIGO,'#fff','transparent')} flex:1">☁ Sync geselecteerde (0)</button>`;
-    footer.querySelector('#vault-sel-all').addEventListener('click', () => {
-      document.querySelectorAll('#vault-ov-content input[type=checkbox]').forEach((cb) => { cb.checked = true; });
-      updateSelCount(footer, orders);
-    });
-    footer.querySelector('#vault-sync-sel').addEventListener('click', () => syncSelected(footer));
-  }
-
-  // ── Tab 2 — Aankopen ─────────────────────────────────────────────────────
-  async function renderAankopen(content, footer) {
-    if (!tabData.aankopen) tabData.aankopen = await fetchPurchasedOrders();
-    const orders = tabData.aankopen;
-
-    if (!orders.length) {
-      content.innerHTML = emptyHTML('🛍', 'Geen aankopen gevonden', 'Je hebt nog geen aankopen gedaan<br>of de API gaf geen resultaten terug.');
-      return;
-    }
-
-    content.innerHTML = `
-      <div style="margin-bottom:16px">
-        <h2 style="margin:0;font-size:16px;font-weight:700;color:#0f172a">Aankopen</h2>
-        <div style="font-size:12px;color:#94a3b8;margin-top:2px">${orders.length} aankopen gevonden</div>
-      </div>
-      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden">
-        <div style="${rowHeaderStyle()}">
-          <div style="width:52px"></div>
-          <div style="flex:1;min-width:0">ITEM</div>
-          <div style="width:130px">VERKOPER</div>
-          <div style="width:90px;text-align:right">PRIJS</div>
-          <div style="width:90px">DATUM</div>
-          <div style="width:44px">LAND</div>
-        </div>
-        ${orders.map((o) => orderRowHTML(o, -1, false)).join('')}
-      </div>`;
-  }
-
-  // ── Tab 3 — Labels ────────────────────────────────────────────────────────
-  async function renderLabels(content, footer) {
-    await loadDownloadedIds();
-    if (!tabData.verkopen) {
-      await loadSyncedIds();
-      tabData.verkopen = await fetchSoldOrders();
-    }
-    const pending = (tabData.verkopen || []).filter((o) => o.transactionId && !downloadedIds.has(o.transactionId));
-
-    if (!pending.length) {
-      content.innerHTML = emptyHTML('✅', 'Alle labels al geprint', 'Er zijn geen openstaande labels.<br>Nieuwe verkopen verschijnen hier automatisch.');
-      return;
-    }
-
-    content.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-        <div>
-          <h2 style="margin:0;font-size:16px;font-weight:700;color:#0f172a">Openstaande labels</h2>
-          <div style="font-size:12px;color:#94a3b8;margin-top:2px">${pending.length} labels nog niet geprint</div>
-        </div>
-      </div>
-      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden">
-        ${pending.map((o) => labelRowHTML(o)).join('')}
-      </div>`;
-
-    content.querySelectorAll('[data-dl-id]').forEach((btn) => {
-      btn.addEventListener('click', () => downloadLabel(btn, btn.dataset.dlId));
+      const sub = [o.buyer ? `@${o.buyer}` : '', o.country, fmtD(o.date)].filter(Boolean).join(' · ');
+      const lbl = document.createElement('label');
+      lbl.style.cssText = `display:flex;align-items:center;gap:13px;padding:12px 16px;cursor:pointer;${i < orders.length - 1 ? 'border-bottom:1px solid #f9fafb;' : ''}`;
+      lbl.append(cb, photoThumb(o.photo), textStack(o.title, sub), priceTag(o.price));
+      return lbl;
     });
 
-    footer.innerHTML = `<button id="vault-print-all-labels" style="${btnStyle(INDIGO,'#fff','transparent')} flex:1">🖨 Print alle ${pending.length} labels</button>`;
-    footer.querySelector('#vault-print-all-labels').addEventListener('click', () => printAllLabels(pending, footer));
+    wrap.appendChild(cardWrap(rows));
+    content.appendChild(wrap);
   }
 
-  function labelRowHTML(o) {
-    const photoHtml = o.photo
-      ? `<img src="${esc(o.photo)}" alt="" style="${thumbStyle()}" loading="lazy">`
-      : `<div style="${thumbStyle()} background:#f8fafc;display:flex;align-items:center;justify-content:center;font-size:22px">📦</div>`;
-    return `
-      <div style="${rowStyle()}">
-        ${photoHtml}
-        <div style="flex:1;min-width:0">
-          <div style="${titleStyle()}">${esc(o.title)}</div>
-          <div style="${subStyle()}">#${o.transactionId} · ${fmtDate(o.date)}</div>
-        </div>
-        <div style="font-size:14px;font-weight:700;color:${INDIGO};width:80px;text-align:right">${fmtPrice(o.price)}</div>
-        <button data-dl-id="${esc(o.transactionId)}" style="${btnStyle('#f8fafc','#374151','#e2e8f0')} white-space:nowrap">⬇ Label</button>
-      </div>`;
-  }
-
-  async function downloadLabel(btn, transactionId) {
-    btn.textContent = '⏳'; btn.disabled = true;
-    const res = await sendMsg({ type: 'PRINT_LABELS', labelUrls: [apiLabelUrl(transactionId)], transactionIds: [transactionId] }, 30000);
-    if (res?.success) {
-      downloadedIds.add(transactionId);
-      btn.textContent = '✓ Klaar'; btn.style.color = GREEN;
-      setTimeout(() => { btn.textContent = '⬇ Label'; btn.style.color = '#374151'; btn.disabled = false; }, 2000);
-    } else {
-      btn.textContent = '✗ Fout'; btn.style.color = RED;
-      setTimeout(() => { btn.textContent = '⬇ Label'; btn.style.color = '#374151'; btn.disabled = false; }, 2000);
-    }
-  }
-
-  async function printAllLabels(orders, footer) {
-    const btn = footer.querySelector('#vault-print-all-labels');
-    if (btn) { btn.disabled = true; btn.textContent = '⏳ Bezig…'; }
-    const res = await sendMsg({
-      type: 'PRINT_LABELS',
-      labelUrls: orders.map((o) => apiLabelUrl(o.transactionId)),
-      transactionIds: orders.map((o) => o.transactionId),
-    }, 60000);
-    if (res?.success) {
-      (res.downloadedIds || orders.map((o) => o.transactionId)).forEach((id) => downloadedIds.add(id));
-      toast(`✅ ${orders.length} labels gedownload!`);
-      tabData.verkopen = null;
-      await renderLabels(document.getElementById('vault-ov-content'), footer);
-    } else {
-      toast('PDF mislukt: ' + (res?.error || 'onbekende fout'));
-      if (btn) { btn.disabled = false; btn.textContent = `🖨 Print alle ${orders.length} labels`; }
-    }
-  }
-
-  // ── Shared row HTML ───────────────────────────────────────────────────────
-  function orderRowHTML(o, idx, withCheckbox) {
-    const person = o.buyer || o.seller || '';
-    const photoHtml = o.photo
-      ? `<img src="${esc(o.photo)}" alt="" style="${thumbStyle()}" loading="lazy">`
-      : `<div style="${thumbStyle()} background:#f8fafc;display:flex;align-items:center;justify-content:center;font-size:20px">📦</div>`;
-
-    return `
-      <label style="${rowStyle()} cursor:pointer">
-        ${withCheckbox && idx >= 0
-          ? `<input type="checkbox" data-idx="${idx}" style="cursor:pointer;accent-color:${INDIGO};flex-shrink:0;width:15px;height:15px;margin:0">`
-          : ''}
-        ${photoHtml}
-        <div style="flex:1;min-width:0">
-          <div style="${titleStyle()}">${esc(o.title)}</div>
-          ${person ? `<div style="${subStyle()}">@${esc(person)}</div>` : ''}
-        </div>
-        <div style="width:130px;font-size:12px;color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0">${person ? `@${esc(person)}` : '—'}</div>
-        <div style="width:90px;text-align:right;font-size:14px;font-weight:700;color:${INDIGO};flex-shrink:0">${fmtPrice(o.price)}</div>
-        <div style="width:90px;font-size:12px;color:#64748b;flex-shrink:0">${fmtDate(o.date)}</div>
-        <div style="width:44px;font-size:13px;flex-shrink:0">${o.country || '—'}</div>
-        ${withCheckbox && o.transactionId
-          ? `<button data-sync-idx="${idx}" title="Sync" style="${btnStyle('#f8fafc','#64748b','#e2e8f0')} padding:4px 8px;font-size:13px">☁</button>`
-          : '<div style="width:28px"></div>'}
-      </label>`;
-  }
-
-  function rowHeaderStyle() {
-    return `display:flex;align-items:center;gap:12px;padding:8px 16px;
-      background:#f8fafc;border-bottom:1px solid #e2e8f0;
-      font-size:10px;font-weight:700;color:#94a3b8;letter-spacing:0.8px;flex-shrink:0`;
-  }
-
-  function rowStyle() {
-    return `display:flex;align-items:center;gap:12px;padding:10px 16px;
-      border-bottom:1px solid #f8fafc;box-sizing:border-box;
-      transition:background 0.1s`;
-  }
-
-  function thumbStyle() {
-    return `width:52px;height:52px;border-radius:8px;object-fit:cover;
-      flex-shrink:0;border:1px solid #f1f5f9`;
-  }
-
-  function titleStyle() {
-    return `font-size:13px;font-weight:500;color:#0f172a;
-      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3`;
-  }
-
-  function subStyle() {
-    return `font-size:11px;color:#94a3b8;margin-top:2px;
-      white-space:nowrap;overflow:hidden;text-overflow:ellipsis`;
-  }
-
-  function btnStyle(bg, color, border) {
-    return `background:${bg};color:${color};border:1px solid ${border};
-      border-radius:7px;padding:7px 13px;font-size:12px;font-weight:600;
-      cursor:pointer;font-family:inherit;flex-shrink:0;line-height:1.2`;
-  }
-
-  // ── Checkbox + selection ──────────────────────────────────────────────────
-  function wireCheckboxes(content, footer, tab) {
-    content.querySelectorAll('input[type=checkbox]').forEach((cb) => {
-      cb.addEventListener('change', () => updateSelCount(footer, tabData[tab]));
+  function drawVerkopenFooter(footer, orders) {
+    footer.innerHTML = '';
+    const selAll = btn('Alles', `background:${D.badge};color:#374151;flex-shrink:0`);
+    selAll.addEventListener('click', () => {
+      document.querySelectorAll('#vlt-content [data-idx]').forEach(cb => { cb.checked = true; });
+      const b = document.getElementById('vlt-sync');
+      if (b) b.textContent = `☁ Sync (${orders.length} geselecteerd)`;
     });
-  }
 
-  function wireRowSyncBtns(content) {
-    content.querySelectorAll('[data-sync-idx]').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        e.preventDefault(); e.stopPropagation();
-        const o = tabData.verkopen?.[parseInt(btn.dataset.syncIdx, 10)];
-        if (!o) return;
-        btn.textContent = '⏳';
-        sendMsg({ type: 'SYNC_TO_SUPABASE', order: o }).then((res) => {
-          btn.textContent = res?.success ? '✓' : '!';
-          btn.style.color = res?.success ? GREEN : RED;
-          setTimeout(() => { btn.textContent = '☁'; btn.style.color = '#64748b'; }, 2500);
-        });
+    const syncBtn = btn('☁ Sync alle naar Vault', `background:${D.accent};color:#fff;flex:1`);
+    syncBtn.id = 'vlt-sync';
+    syncBtn.addEventListener('click', () => {
+      const checked = [...document.querySelectorAll('#vlt-content [data-idx]:checked')]
+        .map(cb => orders[parseInt(cb.dataset.idx, 10)]).filter(o => o?.transactionId);
+      const targets = checked.length ? checked : orders.filter(o => o.transactionId);
+      if (!targets.length) return;
+      syncBtn.disabled = true; syncBtn.textContent = `⏳ Syncing ${targets.length}…`;
+      Promise.all(targets.map(o => sendMsg({ type: 'SYNC_TO_SUPABASE', order: o }))).then(rs => {
+        const ok = rs.filter(r => r?.success).length;
+        toast(`✓ ${ok}/${targets.length} orders gesynchroniseerd`);
+        syncBtn.disabled = false; syncBtn.textContent = '☁ Sync alle naar Vault';
       });
     });
+
+    footer.append(selAll, syncBtn);
   }
 
-  function getCheckedOrders(tab) {
-    return [...document.querySelectorAll('#vault-ov-content input[type=checkbox]:checked')]
-      .map((cb) => (tabData[tab] || [])[parseInt(cb.dataset.idx, 10)])
-      .filter((o) => o?.transactionId);
-  }
+  // ── Tab: Aankopen ──────────────────────────────────────────────────────────
+  async function tabAankopen(content, footer) {
+    const orders = await getPurchased();
+    content.innerHTML = '';
+    if (!orders.length) { content.appendChild(emptyState('🛍', 'Geen aankopen', 'Nog geen aankopen gevonden.')); return; }
 
-  function updateSelCount(footer, orders) {
-    const n   = document.querySelectorAll('#vault-ov-content input[type=checkbox]:checked').length;
-    const btn = footer.querySelector('#vault-sync-sel');
-    if (btn) btn.textContent = `☁ Sync geselecteerde (${n})`;
-  }
-
-  function syncSelected(footer) {
-    const orders = getCheckedOrders('verkopen');
-    if (!orders.length) { toast('Selecteer eerst orders om te synchroniseren.'); return; }
-    const btn = footer.querySelector('#vault-sync-sel');
-    if (btn) { btn.disabled = true; btn.textContent = '⏳ Syncing…'; }
-    Promise.all(orders.map((o) => sendMsg({ type: 'SYNC_TO_SUPABASE', order: o }))).then((results) => {
-      const ok = results.filter((r) => r?.success).length;
-      toast(`✓ ${ok}/${orders.length} orders gesynchroniseerd`);
-      if (btn) { btn.disabled = false; updateSelCount(footer, tabData.verkopen); }
+    content.appendChild(sectionHead('Aankopen', `${orders.length} orders`));
+    const rows = orders.map((o, i) => {
+      const sub = [o.seller ? `@${o.seller}` : '', fmtD(o.date)].filter(Boolean).join(' · ');
+      return rowDiv([photoThumb(o.photo), textStack(o.title, sub), priceTag(o.price)], i < orders.length - 1);
     });
+    content.appendChild(cardWrap(rows));
   }
 
-  // ── Floating V button ─────────────────────────────────────────────────────
-  function injectToggleButton() {
-    if (document.getElementById(TOG_ID)) return;
-    const btn = document.createElement('button');
-    btn.id = TOG_ID;
-    btn.innerHTML = `<span style="font-size:13px;font-weight:900;letter-spacing:1px;font-family:system-ui,sans-serif">V</span>`;
-    btn.title = 'Vault Seller Tools';
-    Object.assign(btn.style, {
-      position: 'fixed', bottom: '24px', right: '24px', zIndex: '2147483647',
-      background: INDIGO, color: '#fff', border: 'none', borderRadius: '50%',
-      width: '48px', height: '48px', cursor: 'pointer',
-      boxShadow: '0 4px 20px rgba(79,70,229,0.45)',
-      fontFamily: 'system-ui, sans-serif',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      transition: 'transform 0.15s, background 0.15s',
+  // ── Tab: Labels ────────────────────────────────────────────────────────────
+  async function tabLabels(content, footer) {
+    await loadDlIds();
+    const orders  = await getSold();
+    const pending = orders.filter(o => o.transactionId && !dlIds.has(o.transactionId));
+    content.innerHTML = '';
+
+    if (!pending.length) {
+      content.appendChild(emptyState('✅', 'Alle labels geprint', 'Geen openstaande labels — alles is gedownload.'));
+      return;
+    }
+
+    content.appendChild(sectionHead('Openstaande labels', `${pending.length} te downloaden`));
+    const rows = pending.map((o, i) => {
+      const dlBtn = btn('⬇ 4×6 label', `background:${D.badge};color:#374151;flex-shrink:0`);
+      dlBtn.addEventListener('click', () => downloadLabel(dlBtn, o));
+      const sub = [o.buyer ? `@${o.buyer}` : '', fmtD(o.date)].filter(Boolean).join(' · ');
+      return rowDiv([photoThumb(o.photo), textStack(o.title, sub), priceTag(o.price), dlBtn], i < pending.length - 1);
     });
-    btn.addEventListener('mouseenter', () => { btn.style.transform = 'scale(1.1)'; });
-    btn.addEventListener('mouseleave', () => { btn.style.transform = 'scale(1)'; });
-    btn.addEventListener('click', () => toggleOverlay());
-    (document.body || document.documentElement).appendChild(btn);
+    content.appendChild(cardWrap(rows));
+
+    // Footer
+    footer.innerHTML = '';
+    const printAll = btn(`🖨 Print alle ${pending.length} labels`, `background:${D.accent};color:#fff;flex:1`);
+    printAll.addEventListener('click', () => batchPrint(pending, printAll, content, footer));
+    footer.appendChild(printAll);
   }
 
-  // ── Bootstrap ─────────────────────────────────────────────────────────────
-  let panelDone = false;
-
-  async function init() {
-    if (isOrdersPage(location.href) && !panelDone) {
-      panelDone = true;
-      buildOverlay();
-      injectToggleButton();
+  async function downloadLabel(dlBtn, order) {
+    dlBtn.textContent = '⏳ Croppen…'; dlBtn.disabled = true;
+    const res = await sendMsg({ type:'PRINT_LABELS', labelUrls:[labelUrl(order.transactionId)], transactionIds:[order.transactionId] }, 30000);
+    if (res?.success) {
+      dlIds.add(order.transactionId);
+      dlBtn.textContent = '✓ Gedownload';
+      dlBtn.style.cssText = dlBtn.style.cssText.replace(D.badge,'#dcfce7');
+      dlBtn.style.color = '#15803d';
+    } else {
+      dlBtn.textContent = '✗ Probeer opnieuw'; dlBtn.disabled = false;
+      dlBtn.style.background = '#fee2e2'; dlBtn.style.color = '#dc2626';
     }
   }
 
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === 'local' && changes.interceptedLabels) {
-      const labels = changes.interceptedLabels.newValue || [];
-      downloadedIds = new Set(labels.map((l) => l.orderId).filter(Boolean));
+  async function batchPrint(orders, printBtn, content, footer) {
+    printBtn.disabled = true; printBtn.textContent = `⏳ Laden ${orders.length} labels…`;
+    const res = await sendMsg({
+      type: 'PRINT_LABELS',
+      labelUrls: orders.map(o => labelUrl(o.transactionId)),
+      transactionIds: orders.map(o => o.transactionId),
+    }, 120000);
+    if (res?.success) {
+      (res.downloadedIds || orders.map(o => o.transactionId)).forEach(id => dlIds.add(id));
+      toast(`✅ ${orders.length} labels gedownload als 4×6 PDF`);
+      mem['v_sold'] = null;
+      await tabLabels(content, footer);
+    } else {
+      toast('Label download mislukt: ' + (res?.error || 'onbekende fout'), false);
+      printBtn.disabled = false; printBtn.textContent = `🖨 Print alle ${orders.length} labels`;
     }
-  });
+  }
 
-  let lastUrl = location.href;
+  // ── Floating V button ──────────────────────────────────────────────────────
+  function injectFab() {
+    if (document.getElementById(BTN_ID)) return;
+    const b = el('button',
+      `position:fixed;bottom:24px;right:24px;z-index:2147483647;background:${D.accent};color:#fff;
+       border:none;border-radius:50%;width:48px;height:48px;cursor:pointer;
+       box-shadow:0 4px 20px rgba(99,102,241,0.45);display:flex;align-items:center;justify-content:center;
+       font-family:${D.font};transition:transform 0.15s,box-shadow 0.15s`,
+      `<span style="font-size:13px;font-weight:700;letter-spacing:1px">V</span>`);
+    b.id = BTN_ID; b.title = 'Vault Seller Tools';
+    b.addEventListener('mouseenter', () => { b.style.transform='scale(1.1)'; b.style.boxShadow='0 6px 28px rgba(99,102,241,0.55)'; });
+    b.addEventListener('mouseleave', () => { b.style.transform='scale(1)';   b.style.boxShadow='0 4px 20px rgba(99,102,241,0.45)'; });
+    b.addEventListener('click', () => toggleOverlay());
+    document.body.appendChild(b);
+  }
+
+  // ── Bootstrap ──────────────────────────────────────────────────────────────
+  let booted = false;
+
+  function boot() {
+    if (booted) return;
+    booted = true;
+    buildOverlay();
+    injectFab();
+    console.log('[Vault] booted on', location.href);
+  }
+
+  // SPA navigation watcher
+  let lastHref = location.href;
   new MutationObserver(() => {
-    if (location.href !== lastUrl) {
-      lastUrl = location.href;
-      panelDone = false;
-      overlayOpen = false;
-      tabData.verkopen = null;
-      tabData.aankopen = null;
-      document.getElementById(OVERLAY_ID)?.remove();
-      document.getElementById(TOG_ID)?.remove();
-      document.getElementById('vault-toast')?.remove();
-      setTimeout(init, 300);
-    }
+    if (location.href === lastHref) return;
+    lastHref = location.href;
+    booted = false; overlayOpen = false; myUserId = null;
+    cClear();
+    document.getElementById(OV_ID)?.remove();
+    document.getElementById(BTN_ID)?.remove();
+    document.getElementById('vlt-css')?.remove();
+    document.getElementById('vlt-toast')?.remove();
+    setTimeout(boot, 400);
   }).observe(document, { subtree: true, childList: true });
 
-  init();
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
 })();
