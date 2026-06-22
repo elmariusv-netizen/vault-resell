@@ -6,7 +6,8 @@
   "permissions": ["storage", "activeTab", "downloads"],
   "host_permissions": [
     "https://*.vinted.be/*",
-    "https://*.vinted.com/*"
+    "https://*.vinted.com/*",
+    "https://*.vinted.nl/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -19,7 +20,8 @@
     {
       "matches": [
         "https://*.vinted.be/*",
-        "https://*.vinted.com/*"
+        "https://*.vinted.com/*",
+        "https://*.vinted.nl/*"
       ],
       "js": ["content.js"],
       "run_at": "document_idle"
