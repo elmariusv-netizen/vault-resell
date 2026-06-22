@@ -74,37 +74,95 @@
     return r.json();
   }
 
+  // Parse items from a document — tries __NEXT_DATA__ JSON first, then DOM cards
+  function parseItemsDoc(doc) {
+    // 1. Try embedded Next.js JSON (most reliable)
+    try {
+      const nd  = doc.getElementById('__NEXT_DATA__');
+      if (nd) {
+        const pp  = JSON.parse(nd.textContent)?.props?.pageProps || {};
+        const raw = pp.items || pp.currentUserItems || pp.wardrobe?.items || pp.catalog?.items || [];
+        if (raw.length) {
+          console.log('[Vault] listings from __NEXT_DATA__:', raw.length);
+          return raw.map(o => ({
+            itemId: String(o.id || ''),
+            title:  o.title || '?',
+            photo:  o.photos?.[0]?.url || o.photo?.url || null,
+            price:  parseFloat(o.price?.amount || o.price || 0),
+            views:  o.view_count || 0,
+            status: o.status || 'active',
+            date:   (o.created_at || '').slice(0, 10),
+            url:    o.url || `https://www.vinted.be/items/${o.id}`,
+          }));
+        }
+      }
+    } catch {}
+
+    // 2. DOM card fallback
+    const cards = [...doc.querySelectorAll(
+      '[data-testid="item-card"],[data-testid="ItemCard"],' +
+      '[data-testid="grid-item"],[data-testid="closet-item"],' +
+      '.feed-grid__item,.item-box',
+    )];
+    console.log('[Vault] DOM item cards found:', cards.length);
+    return cards.map(card => {
+      const link  = card.querySelector('a[href*="/items/"],a[href*="-"]:not([href*="//"])');
+      const img   = card.querySelector('img');
+      const titleEl = card.querySelector(
+        '[data-testid="item-card--title"],[data-testid="ItemCardTitle"],' +
+        'h3,h2,[class*="title"i]',
+      );
+      const priceEl = card.querySelector(
+        '[data-testid="item-card--price"],[data-testid="ItemCardPrice"],[class*="price"i]',
+      );
+      const href   = link?.href || '';
+      const itemId = href.match(/\/items?\/(\d+)/)?.[1] || href.match(/\/(\d+)-[a-z]/)?.[1] || '';
+      const price  = parseFloat((priceEl?.textContent || '').replace(/[^0-9.,]/g, '').replace(',', '.')) || 0;
+      return {
+        itemId,
+        title:  titleEl?.textContent?.trim() || '?',
+        photo:  img?.src || img?.dataset?.src || null,
+        price,
+        views:  0,
+        status: 'active',
+        date:   '',
+        url:    href,
+      };
+    }).filter(o => o.itemId);
+  }
+
   async function getListings() {
     const c = await cGet('v_list'); if (c) return c;
 
-    const endpoints = [
-      '/api/v2/catalog/items?user_id=48695306&page=1&per_page=50',
-      '/api/v2/my/items?per_page=50',
-      '/api/v2/users/48695306/items?per_page=50',
-    ];
+    let items = [];
 
-    let raw = [];
-    for (const path of endpoints) {
-      try {
-        const d = await vGet(path);
-        raw = d.items || d.wardrobe_items || d.catalog_items || [];
-        console.log(`[Vault] listings via ${path}: ${raw.length} items`, Object.keys(d));
-        if (raw.length) break;
-      } catch (e) {
-        console.warn(`[Vault] listings failed (${path}):`, e.message);
-      }
+    // 1. If already on /my/items — scrape live DOM immediately
+    if (/\/my\/items/i.test(location.pathname)) {
+      items = parseItemsDoc(document);
+      console.log('[Vault] listings from live /my/items:', items.length);
     }
 
-    const items = raw.map(o => ({
-      itemId: String(o.id || ''),
-      title:  o.title || '?',
-      photo:  o.photos?.[0]?.url || o.photo?.url || null,
-      price:  parseFloat(o.price?.amount || o.price || 0),
-      views:  o.view_count || o.stats?.views || 0,
-      status: o.status || 'active',
-      date:   (o.created_at || '').slice(0, 10),
-      url:    o.url || `https://www.vinted.be/items/${o.id}`,
-    }));
+    // 2. Fetch /my/items as authenticated HTML page
+    if (!items.length) {
+      try {
+        const r = await fetch('https://www.vinted.be/my/items', {
+          credentials: 'include', headers: getVintedHeaders(),
+        });
+        if (r.ok) items = parseItemsDoc(new DOMParser().parseFromString(await r.text(), 'text/html'));
+        console.log('[Vault] listings from fetched /my/items:', items.length);
+      } catch (e) { console.warn('[Vault] /my/items fetch failed:', e.message); }
+    }
+
+    // 3. Public profile page fallback
+    if (!items.length) {
+      try {
+        const r = await fetch('https://www.vinted.be/member/48695306/items', {
+          credentials: 'include', headers: getVintedHeaders(),
+        });
+        if (r.ok) items = parseItemsDoc(new DOMParser().parseFromString(await r.text(), 'text/html'));
+        console.log('[Vault] listings from profile page:', items.length);
+      } catch (e) { console.warn('[Vault] profile page fetch failed:', e.message); }
+    }
 
     await cSet('v_list', items);
     return items;
@@ -112,17 +170,20 @@
 
   async function getSold() {
     const c = await cGet('v_sold'); if (c) return c;
-    const d = await vGet('/api/v2/my_orders?order_type=sold&per_page=50');
-    console.log('[Vault] sold sample:', JSON.stringify((d.orders || d.transactions || [])[0] || {}).slice(0, 400));
-    const orders = (d.orders || d.transactions || []).map(o => ({
+    const d = await vGet('/api/v2/my_orders?order_type=sold&per_page=100');
+    console.log('[Vault] sold response keys:', Object.keys(d));
+    const raw = d.orders || d.transactions || d.my_orders || [];
+    console.log('[Vault] sold count:', raw.length);
+    if (raw[0]) console.log('[Vault] sold[0] keys:', Object.keys(raw[0]), JSON.stringify(raw[0]).slice(0, 500));
+    const orders = raw.map(o => ({
       transactionId: String(o.transaction_id || o.id || ''),
       itemId:  String(o.item?.id || ''),
       title:   o.item?.title || o.title || '?',
       photo:   o.item?.photos?.[0]?.url || o.item?.photo?.url || null,
-      price:   parseFloat(o.total_price || o.price || 0),
+      price:   parseFloat(o.total_price || o.item?.price_numeric || o.price || 0),
       buyer:   o.buyer?.login  || o.user?.login  || '',
       country: o.buyer?.country_iso_code || o.country_iso_code || '',
-      date:    (o.created_at || '').slice(0, 10),
+      date:    (o.created_at || o.updated_at || '').slice(0, 10),
       convId:  null,
     }));
     await cSet('v_sold', orders);
