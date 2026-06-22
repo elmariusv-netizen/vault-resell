@@ -7,7 +7,9 @@
   "host_permissions": [
     "https://*.vinted.be/*",
     "https://*.vinted.com/*",
-    "https://*.vinted.nl/*"
+    "https://*.vinted.nl/*",
+    "http://localhost:*/*",
+    "http://127.0.0.1:*/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -24,6 +26,14 @@
         "https://*.vinted.nl/*"
       ],
       "js": ["content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "http://localhost:*/*",
+        "http://127.0.0.1:*/*"
+      ],
+      "js": ["bridge.js"],
       "run_at": "document_idle"
     }
   ]

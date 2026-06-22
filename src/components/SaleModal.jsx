@@ -58,22 +58,22 @@ function LinkRow({ value, onChange, onRemove }) {
   )
 }
 
-export default function SaleModal({ data, onClose, onSave, defaultBatchId }) {
+export default function SaleModal({ data, onClose, onSave, defaultBatchId, prefill = null }) {
   const { batches, sales } = data
   const photoRef = useRef()
 
   const [batchId, setBatchId] = useState(defaultBatchId || (batches[0]?.id ?? ''))
   const [type, setType] = useState('individual')
   const [qty, setQty] = useState(1)
-  const [price, setPrice] = useState('')
+  const [price, setPrice] = useState(prefill?.price != null ? String(prefill.price) : '')
   const [platform, setPlatform] = useState('Vinted')
-  const [buyer, setBuyer] = useState('')
+  const [buyer, setBuyer] = useState(prefill?.buyer || '')
   const [shippingCost, setShippingCost] = useState('')
-  const [saleNotes, setSaleNotes] = useState('')
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0])
+  const [saleNotes, setSaleNotes] = useState(prefill?.notes || '')
+  const [date, setDate] = useState(prefill?.date || new Date().toISOString().split('T')[0])
   const [fromLive, setFromLive] = useState(false)
   const [photo, setPhoto] = useState(null)
-  const [links, setLinks] = useState([])
+  const [links, setLinks] = useState(prefill?.url ? [prefill.url] : [])
   const [photoLoading, setPhotoLoading] = useState(false)
   const [shipped, setShipped] = useState(false)
   const [shippedDate, setShippedDate] = useState(new Date().toISOString().split('T')[0])

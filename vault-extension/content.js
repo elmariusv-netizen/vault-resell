@@ -291,14 +291,16 @@
     );
     const date = dateMatch ? dateMatch[0].trim() : null;
 
+    const STATUS_RE = /^(alles|in behandeling|voltooid|geannuleerd|bestelling gepauzeerd|verzendlabel|de bestelling|betaald|verzonden|nieuw|verkocht|te koop|geleverd|afgerond|pending|bekijk|contact|meer laden|filters|sorteren|zoeken|inloggen|registreren)/i;
     const lines = text
       .split('\n')
       .map((l) => l.trim())
       .filter(
         (l) =>
-          l.length > 3 &&
+          l.length > 10 &&
           l.length < 120 &&
-          !/^€|^\d+[,\.]\d+\s*€?$|^(betaald|verzonden|nieuw|verkocht|te koop|geleverd|geannuleerd|afgerond|pending)/i.test(l)
+          !/^€|^\d+[,\.]\d+\s*€?$/.test(l) &&
+          !STATUS_RE.test(l)
       );
     const title = lines[0] || 'Onbekend item';
 

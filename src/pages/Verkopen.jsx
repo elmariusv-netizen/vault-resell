@@ -1,18 +1,103 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import {
   formatCurrency, formatDate, formatSkuRange, calcSaleProfit, normalizePlatform,
 } from '../utils/skuUtils'
+import SaleModal from '../components/SaleModal'
 
 const SHORT = { 'Medeverkoper/Groothandel': 'B2B', 'Privé persoon': 'Privé' }
 const short = (p) => SHORT[p] || p
 
-export default function Verkopen({ data, onDeleteSale }) {
+const MONTHS_NL = { jan:1, feb:2, mrt:3, apr:4, mei:5, jun:6, jul:7, aug:8, sep:9, okt:10, nov:11, dec:12 }
+
+function parseVintedDate(str) {
+  if (!str) return new Date().toISOString().split('T')[0]
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str
+  const dmy = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/)
+  if (dmy) {
+    const y = dmy[3].length === 2 ? '20' + dmy[3] : dmy[3]
+    return `${y}-${dmy[2].padStart(2,'0')}-${dmy[1].padStart(2,'0')}`
+  }
+  const nl = str.match(/^(\d{1,2})\s+([a-z]{3})[a-z]*\.?\s*(\d{4})?/i)
+  if (nl) {
+    const m = MONTHS_NL[nl[2].toLowerCase().slice(0, 3)]
+    if (m) {
+      const y = nl[3] || new Date().getFullYear()
+      return `${y}-${String(m).padStart(2,'0')}-${nl[1].padStart(2,'0')}`
+    }
+  }
+  return new Date().toISOString().split('T')[0]
+}
+
+const SYNC_KEY       = 'vault-vinted-sync'
+const REGISTERED_KEY = 'vault-vinted-registered'
+
+function readVintedOrders() {
+  try { return JSON.parse(localStorage.getItem(SYNC_KEY) || '[]') } catch { return [] }
+}
+function readRegistered() {
+  try { return new Set(JSON.parse(localStorage.getItem(REGISTERED_KEY) || '[]')) } catch { return new Set() }
+}
+function markRegistered(syncedAt) {
+  const reg = readRegistered()
+  reg.add(syncedAt)
+  localStorage.setItem(REGISTERED_KEY, JSON.stringify([...reg]))
+}
+
+export default function Verkopen({ data, onDeleteSale, updateData }) {
   const { batches, sales, suppliers } = data
 
   const [search, setSearch] = useState('')
   const [filterPlatform, setFilterPlatform] = useState('all')
   const [filterMonth, setFilterMonth] = useState('all')
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
+
+  // ── Vinted Sync state ──────────────────────────────────────────────────
+  const [vintedOrders, setVintedOrders] = useState([])
+  const [saleModalPrefill, setSaleModalPrefill] = useState(null)
+
+  useEffect(() => {
+    const load = () => {
+      const all = readVintedOrders()
+      const registered = readRegistered()
+      setVintedOrders(all.filter((o) => !registered.has(o.syncedAt)))
+    }
+    load()
+    // Re-check when extension bridge writes (storage event from same-origin)
+    window.addEventListener('storage', load)
+    return () => window.removeEventListener('storage', load)
+  }, [])
+
+  const openSaleModal = (order) => {
+    setSaleModalPrefill({
+      buyer:  order.buyer !== 'Onbekende koper' ? order.buyer : '',
+      price:  order.price || '',
+      date:   parseVintedDate(order.date),
+      url:    order.url || '',
+      notes:  order.transactionId ? `Vinted #${order.transactionId}` : '',
+      _syncedAt: order.syncedAt,
+    })
+  }
+
+  const handleSaleModalSave = (sale) => {
+    const updates = { sales: [...sales, sale] }
+    if (sale.fromLive) {
+      updates.batches = batches.map((b) =>
+        b.id === sale.batchId ? { ...b, liveCount: Math.max(0, (b.liveCount || 0) - (sale.quantity || 1)) } : b
+      )
+    }
+    updateData(updates)
+    // Mark as registered so bridge.js filters it out on next push
+    if (saleModalPrefill?._syncedAt) {
+      markRegistered(saleModalPrefill._syncedAt)
+      setVintedOrders((prev) => prev.filter((o) => o.syncedAt !== saleModalPrefill._syncedAt))
+    }
+    setSaleModalPrefill(null)
+  }
+
+  const dismissVintedOrder = (syncedAt) => {
+    markRegistered(syncedAt)
+    setVintedOrders((prev) => prev.filter((o) => o.syncedAt !== syncedAt))
+  }
 
   const platforms = useMemo(() => {
     const set = new Set(sales.map((s) => normalizePlatform(s.platform)).filter(Boolean))
@@ -71,6 +156,56 @@ export default function Verkopen({ data, onDeleteSale }) {
           <div className="page-subtitle">{sales.length} verkopen geregistreerd</div>
         </div>
       </div>
+
+      {/* ── Vinted Sync ── */}
+      {vintedOrders.length > 0 && (
+        <div style={{ marginBottom: 20, background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
+          <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 16 }}>🔄</span>
+            <span style={{ fontWeight: 700, fontSize: 14 }}>Vinted Sync</span>
+            <span style={{ fontSize: 12, color: 'var(--text-3)', background: 'var(--bg-3,var(--bg))', padding: '1px 7px', borderRadius: 20 }}>
+              {vintedOrders.length}
+            </span>
+          </div>
+          <div>
+            {vintedOrders.map((order) => (
+              <div
+                key={order.syncedAt || order.transactionId}
+                style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 500, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {order.title}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
+                    {order.date}
+                    {order.buyer && order.buyer !== 'Onbekende koper' && ` · ${order.buyer}`}
+                    {order.transactionId && ` · #${order.transactionId}`}
+                  </div>
+                </div>
+                <div style={{ fontWeight: 700, color: 'var(--green)', flexShrink: 0, fontSize: 14 }}>
+                  {order.price > 0 ? `€${Number(order.price).toFixed(2).replace('.', ',')}` : '—'}
+                </div>
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={() => openSaleModal(order)}
+                  style={{ flexShrink: 0, fontSize: 11 }}
+                >
+                  + Registreer als verkoop
+                </button>
+                <button
+                  className="btn btn-ghost btn-sm btn-icon"
+                  onClick={() => dismissVintedOrder(order.syncedAt)}
+                  title="Verwijder uit lijst"
+                  style={{ fontSize: 14, flexShrink: 0 }}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="filters">
         <input
@@ -258,6 +393,15 @@ export default function Verkopen({ data, onDeleteSale }) {
             ))}
           </div>
         </>
+      )}
+
+      {saleModalPrefill && (
+        <SaleModal
+          data={data}
+          prefill={saleModalPrefill}
+          onClose={() => setSaleModalPrefill(null)}
+          onSave={handleSaleModalSave}
+        />
       )}
 
       {confirmDeleteId && (
