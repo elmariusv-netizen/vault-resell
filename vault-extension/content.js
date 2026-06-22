@@ -144,13 +144,79 @@
     };
   }
 
+  // ── Sync button click handler ─────────────────────────────────────────────
+  async function handleSyncButtonClick() {
+    const btn = document.getElementById(TOG_ID);
+    if (!btn) return;
+
+    // If panel is open, close it
+    if (panelOpen) { togglePanel(false); return; }
+
+    // Prevent double-click
+    if (btn.dataset.syncing === 'true') return;
+    btn.dataset.syncing = 'true';
+
+    btn.textContent = '⏳';
+    btn.title = 'Bezig met scannen…';
+    btn.style.background = '#2563eb';
+    btn.style.cursor = 'default';
+
+    await loadSyncedIds();
+    const countBefore = syncedIds.size;
+
+    await scanAndSync();
+
+    const added = syncedIds.size - countBefore;
+
+    btn.textContent = added > 0 ? '✓' : '🏷';
+    btn.style.background = GREEN;
+    btn.style.cursor = 'pointer';
+    btn.title = added > 0
+      ? `✓ ${added} order${added !== 1 ? 's' : ''} gesynchroniseerd`
+      : 'Geen nieuwe orders gevonden';
+
+    showToast(added > 0
+      ? `✓ ${added} order${added !== 1 ? 's' : ''} gesynchroniseerd naar Vault`
+      : 'Geen nieuwe orders gevonden');
+
+    togglePanel(true);
+
+    setTimeout(() => {
+      btn.textContent = '🏷';
+      btn.title = 'Vault: sync orders';
+      btn.dataset.syncing = 'false';
+    }, 3000);
+
+    btn.dataset.syncing = 'false';
+  }
+
+  function showToast(message) {
+    document.getElementById('vault-toast')?.remove();
+    const t = document.createElement('div');
+    t.id = 'vault-toast';
+    t.textContent = message;
+    Object.assign(t.style, {
+      position: 'fixed', bottom: '80px', right: '20px', zIndex: '2147483647',
+      background: '#0f172a', color: '#e2e8f0', padding: '10px 16px',
+      borderRadius: '10px', fontSize: '13px', fontWeight: '600',
+      border: '1px solid #334155', boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      opacity: '1', transition: 'opacity 0.3s', pointerEvents: 'none',
+    });
+    (document.body || document.documentElement).appendChild(t);
+    setTimeout(() => {
+      t.style.opacity = '0';
+      setTimeout(() => t.remove(), 300);
+    }, 3500);
+  }
+
   // ── Toggle button (floating, bottom-right) ────────────────────────────────
   function injectToggleButton() {
     if (document.getElementById(TOG_ID)) return;
     const btn = document.createElement('button');
     btn.id = TOG_ID;
     btn.textContent = '🏷';
-    btn.title = 'Vault Labels openen';
+    btn.title = 'Vault: sync orders';
     Object.assign(btn.style, {
       position: 'fixed', bottom: '20px', right: '20px', zIndex: '2147483647',
       background: GREEN, color: '#fff', border: 'none', borderRadius: '50%',
@@ -158,8 +224,9 @@
       boxShadow: '0 4px 16px rgba(22,163,74,0.5)',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: '1',
+      transition: 'background 0.2s',
     });
-    btn.addEventListener('click', () => togglePanel());
+    btn.addEventListener('click', handleSyncButtonClick);
     (document.body || document.documentElement).appendChild(btn);
   }
 
@@ -179,7 +246,10 @@
     panel.innerHTML = `
       <div style="padding:13px 16px;border-bottom:1px solid #1e293b;display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
         <span style="color:#e2e8f0;font-weight:700;font-size:14px">🏷 Vault Labels</span>
-        <button id="vault-panel-close" style="background:none;border:none;color:#94a3b8;font-size:18px;cursor:pointer;padding:2px 6px;line-height:1;border-radius:4px">✕</button>
+        <div style="display:flex;align-items:center;gap:6px">
+          <button id="vault-panel-sync" title="Scan & sync orders" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;font-size:12px;cursor:pointer;padding:4px 9px;line-height:1;border-radius:6px;font-family:inherit">🔄 Sync</button>
+          <button id="vault-panel-close" style="background:none;border:none;color:#94a3b8;font-size:18px;cursor:pointer;padding:2px 6px;line-height:1;border-radius:4px">✕</button>
+        </div>
       </div>
       <div id="vault-panel-list" style="flex:1;overflow-y:auto;padding:4px 0"></div>
       <div style="padding:12px 16px;border-top:1px solid #1e293b;display:flex;flex-direction:column;gap:8px;flex-shrink:0">
@@ -195,6 +265,20 @@
     panel.querySelector('#vault-panel-close').addEventListener('click', () => togglePanel(false));
     panel.querySelector('#vault-print-selected').addEventListener('click', printSelected);
     panel.querySelector('#vault-print-all').addEventListener('click', printAll);
+    panel.querySelector('#vault-panel-sync').addEventListener('click', async (e) => {
+      const syncBtn = e.currentTarget;
+      syncBtn.textContent = '⏳ Bezig…';
+      syncBtn.disabled = true;
+      await loadSyncedIds();
+      const before = syncedIds.size;
+      await scanAndSync();
+      const added = syncedIds.size - before;
+      syncBtn.textContent = added > 0 ? `✓ ${added} gesync'd` : '✓ Niets nieuw';
+      showToast(added > 0
+        ? `✓ ${added} order${added !== 1 ? 's' : ''} gesynchroniseerd naar Vault`
+        : 'Geen nieuwe orders gevonden');
+      setTimeout(() => { syncBtn.textContent = '🔄 Sync'; syncBtn.disabled = false; }, 2500);
+    });
   }
 
   // ── Toggle panel ──────────────────────────────────────────────────────────
@@ -202,10 +286,7 @@
     buildPanel();
     panelOpen = force !== undefined ? force : !panelOpen;
     const panel = document.getElementById(PANEL_ID);
-    const tog   = document.getElementById(TOG_ID);
     if (panel) panel.style.transform = panelOpen ? 'translateX(0)' : 'translateX(100%)';
-    if (tog)   tog.style.opacity = panelOpen ? '0' : '1';
-    if (tog)   tog.style.pointerEvents = panelOpen ? 'none' : 'auto';
     if (panelOpen) renderPanel();
   }
 
