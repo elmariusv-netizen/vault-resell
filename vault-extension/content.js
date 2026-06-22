@@ -57,31 +57,70 @@
 
   function findOrderRows() {
     const explicit = [
-      '[data-testid*="transaction"]', '[data-testid*="order"]', '[data-testid*="purchase"]',
+      // data-testid patterns (most stable across Vinted updates)
+      '[data-testid*="sold-item"]',
+      '[data-testid*="transaction-item"]',
+      '[data-testid*="transaction"]',
+      '[data-testid*="order-item"]',
+      '[data-testid*="order"]',
+      '[data-testid*="purchase"]',
+      // CSS class patterns
       '[class*="transaction--item"]', '[class*="transaction-item"]',
-      '[class*="order-item"]', '[class*="order-card"]', '[class*="sale-item"]',
+      '[class*="order-item"]', '[class*="order-card"]',
+      '[class*="sale-item"]', '[class*="sold-item"]',
+      '[class*="SoldItem"]', '[class*="TransactionItem"]',
     ];
     for (const sel of explicit) {
       const els = [...document.querySelectorAll(sel)];
-      if (els.length > 0) { console.log('[Vault] rows via', sel, els.length); return els; }
+      if (els.length > 0) { console.log('[Vault] rows via', sel, '→', els.length); return els; }
     }
+    // Fallback: containers of /transactions/ links only (not /items/ — item IDs ≠ transaction IDs)
     const seen = new Set();
     const rows = [];
-    document.querySelectorAll('a[href*="/transaction"], a[href*="/items/"]').forEach((a) => {
+    document.querySelectorAll('a[href*="/transaction"]').forEach((a) => {
       const c = getCardContainer(a);
       if (!seen.has(c)) { seen.add(c); rows.push(c); }
     });
-    console.log('[Vault] rows via link fallback:', rows.length);
+    if (rows.length) { console.log('[Vault] rows via /transaction/ link fallback:', rows.length); return rows; }
+    // Last resort: li/article elements that contain any link
+    document.querySelectorAll('li, article').forEach((el) => {
+      if (el.querySelector('a[href]') && !seen.has(el)) { seen.add(el); rows.push(el); }
+    });
+    console.log('[Vault] rows via li/article fallback:', rows.length);
     return rows;
   }
 
   // ── Extract transaction IDs directly from page links ──────────────────────
   function extractAllTransactionIds() {
     const ids = new Set();
+    // /transactions/:id
     document.querySelectorAll('a[href*="/transactions/"]').forEach((a) => {
       const m = a.href.match(/\/transactions\/(\d+)/);
       if (m) ids.add(m[1]);
     });
+    // /transaction/:id (without s)
+    document.querySelectorAll('a[href*="/transaction/"]').forEach((a) => {
+      const m = a.href.match(/\/transaction\/(\d+)/);
+      if (m) ids.add(m[1]);
+    });
+    // ?transaction_id=123
+    document.querySelectorAll('a[href*="transaction_id="]').forEach((a) => {
+      try { const v = new URL(a.href).searchParams.get('transaction_id'); if (v) ids.add(v); } catch {}
+    });
+    // data-transaction-id attribute
+    document.querySelectorAll('[data-transaction-id]').forEach((el) => {
+      if (el.dataset.transactionId) ids.add(el.dataset.transactionId);
+    });
+    console.log('[Vault] transaction IDs from links:', ids.size, [...ids].slice(0, 3));
+    // diagnostic: show what URL patterns ARE on the page so we can fix selectors
+    if (!ids.size) {
+      const sample = [...document.querySelectorAll('main a[href], [role="main"] a[href]')]
+        .slice(0, 8).map((a) => a.getAttribute('href'));
+      console.warn('[Vault] 0 transaction IDs found. Sample hrefs:', sample);
+      const testIds = [...new Set([...document.querySelectorAll('[data-testid]')]
+        .map((e) => e.dataset.testid))].slice(0, 20);
+      console.warn('[Vault] data-testid values on page:', testIds);
+    }
     return [...ids];
   }
 
@@ -99,10 +138,12 @@
     const itemLink = row.querySelector('a[href*="/items/"]');
     const anyLink  = txLink || itemLink;
 
-    // Prefer /transactions/{id} over /items/{id}
-    const txIdFromLink = (txLink?.href || '').match(/\/transactions\/(\d+)/)?.[1];
-    const txIdFallback = (anyLink?.href || '').match(/\/(?:transaction[s]?|items)\/(\d+)/)?.[1];
-    const transactionId = txIdFromLink || txIdFallback || null;
+    // Only use confirmed transaction IDs — never item IDs (they are different)
+    const transactionId =
+      txLink?.href.match(/\/transactions?\/(\d+)/)?.[1]
+      || row.dataset.transactionId
+      || row.querySelector('[data-transaction-id]')?.dataset.transactionId
+      || null;
 
     const pm = text.match(/€\s*(\d+[,\.]\d{1,2})|(\d+[,\.]\d{1,2})\s*€/);
     const price = pm ? parseFloat((pm[1] || pm[2]).replace(',', '.')) : 0;
@@ -145,49 +186,64 @@
   }
 
   // ── Sync button click handler ─────────────────────────────────────────────
+  function resetSyncBtn(btn) {
+    if (!btn) return;
+    btn.textContent = '🏷';
+    btn.title = 'Vault: sync orders';
+    btn.style.background = GREEN;
+    btn.style.cursor = 'pointer';
+    btn.dataset.syncing = 'false';
+  }
+
   async function handleSyncButtonClick() {
     const btn = document.getElementById(TOG_ID);
     if (!btn) return;
 
-    // If panel is open, close it
     if (panelOpen) { togglePanel(false); return; }
-
-    // Prevent double-click
     if (btn.dataset.syncing === 'true') return;
-    btn.dataset.syncing = 'true';
 
+    btn.dataset.syncing = 'true';
     btn.textContent = '⏳';
     btn.title = 'Bezig met scannen…';
     btn.style.background = '#2563eb';
     btn.style.cursor = 'default';
 
-    await loadSyncedIds();
-    const countBefore = syncedIds.size;
+    // Hard failsafe: always reset after 30s regardless of what happens
+    const failsafe = setTimeout(() => {
+      resetSyncBtn(btn);
+      scanActive = false;
+      showToast('Scan time-out — geen orders gevonden of verbindingsprobleem.');
+    }, 30000);
 
-    await scanAndSync();
+    try {
+      await loadSyncedIds();
+      const countBefore = syncedIds.size;
 
-    const added = syncedIds.size - countBefore;
+      await scanAndSync();
 
-    btn.textContent = added > 0 ? '✓' : '🏷';
-    btn.style.background = GREEN;
-    btn.style.cursor = 'pointer';
-    btn.title = added > 0
-      ? `✓ ${added} order${added !== 1 ? 's' : ''} gesynchroniseerd`
-      : 'Geen nieuwe orders gevonden';
+      const added = syncedIds.size - countBefore;
 
-    showToast(added > 0
-      ? `✓ ${added} order${added !== 1 ? 's' : ''} gesynchroniseerd naar Vault`
-      : 'Geen nieuwe orders gevonden');
+      btn.textContent = added > 0 ? '✓' : '🏷';
+      btn.style.background = GREEN;
+      btn.style.cursor = 'pointer';
+      btn.title = added > 0
+        ? `✓ ${added} order${added !== 1 ? 's' : ''} gesynchroniseerd`
+        : 'Geen nieuwe orders gevonden';
 
-    togglePanel(true);
+      showToast(added > 0
+        ? `✓ ${added} order${added !== 1 ? 's' : ''} gesynchroniseerd naar Vault`
+        : 'Geen nieuwe orders gevonden');
 
-    setTimeout(() => {
-      btn.textContent = '🏷';
-      btn.title = 'Vault: sync orders';
+      togglePanel(true);
+      setTimeout(() => resetSyncBtn(btn), 3000);
+    } catch (err) {
+      console.error('[Vault] sync button error:', err);
+      showToast('Fout tijdens scan: ' + err.message);
+      resetSyncBtn(btn);
+    } finally {
+      clearTimeout(failsafe);
       btn.dataset.syncing = 'false';
-    }, 3000);
-
-    btn.dataset.syncing = 'false';
+    }
   }
 
   function showToast(message) {
@@ -413,51 +469,61 @@
     });
   }
 
+  // ── Safe message helper — timeout + lastError guard (prevents MV3 hangs) ──
+  function sendMsg(message, timeoutMs = 8000) {
+    return Promise.race([
+      new Promise((resolve) => {
+        chrome.runtime.sendMessage(message, (res) => {
+          if (chrome.runtime.lastError) {
+            console.warn('[Vault] sendMessage error:', chrome.runtime.lastError.message);
+            resolve({ success: false });
+          } else {
+            resolve(res || { success: false });
+          }
+        });
+      }),
+      new Promise((resolve) => setTimeout(() => resolve({ success: false, timeout: true }), timeoutMs)),
+    ]);
+  }
+
   // ── Auto-scan & sync all orders ───────────────────────────────────────────
   async function scanAndSync() {
     if (scanActive) return;
     scanActive = true;
     try {
-      // Also harvest transaction IDs directly from links (catches IDs not in card containers)
+      // Step 1: harvest transaction IDs from all link patterns on the page
       extractAllTransactionIds().forEach((id) => {
         if (!allOrders.some((o) => o.transactionId === id)) {
           allOrders.push({
-            transactionId: id,
-            title: 'Bestelling #' + id,
-            price: 0,
+            transactionId: id, title: 'Bestelling #' + id, price: 0,
             date: new Date().toLocaleDateString('nl-BE'),
-            buyer: '',
-            country: '',
-            sku: null,
-            labelUrl: apiLabelUrl(id),
-            url: `https://www.vinted.be/transactions/${id}`,
+            buyer: '', country: '', sku: null, photo: null,
+            labelUrl: apiLabelUrl(id), url: `https://www.vinted.be/transactions/${id}`,
           });
         }
       });
 
+      // Step 2: enrich stubs with full data from DOM rows
       const rows = findOrderRows();
-      console.log('[Vault] scanning', rows.length, 'order rows');
+      console.log('[Vault] DOM rows found:', rows.length);
       for (const row of rows) {
         const order = extractOrder(row);
-        if (order.transactionId) {
-          const idx = allOrders.findIndex((o) => o.transactionId === order.transactionId);
-          if (idx === -1) {
-            allOrders.push(order);
-          } else {
-            // Enrich stub entry with full data
-            allOrders[idx] = { ...allOrders[idx], ...order };
-          }
-        }
-        if (order.transactionId && !syncedIds.has(order.transactionId)) {
-          const res = await new Promise((r) =>
-            chrome.runtime.sendMessage({ type: 'SYNC_ORDER', order }, r)
-          );
-          if (res?.success && !res.duplicate) {
-            syncedIds.add(order.transactionId);
-            console.log('[Vault] auto-synced', order.transactionId, order.title);
-          }
+        if (!order.transactionId) continue;
+        const idx = allOrders.findIndex((o) => o.transactionId === order.transactionId);
+        if (idx === -1) allOrders.push(order);
+        else allOrders[idx] = { ...allOrders[idx], ...order };
+      }
+
+      // Step 3: sync ALL collected orders (stubs + enriched) not yet seen
+      for (const order of [...allOrders]) {
+        if (!order.transactionId || syncedIds.has(order.transactionId)) continue;
+        const res = await sendMsg({ type: 'SYNC_ORDER', order });
+        if (res?.success && !res.duplicate) {
+          syncedIds.add(order.transactionId);
+          console.log('[Vault] synced', order.transactionId, order.title);
         }
       }
+
       if (panelOpen) renderPanel();
     } finally {
       scanActive = false;
