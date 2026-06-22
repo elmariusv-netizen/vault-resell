@@ -477,6 +477,50 @@
     });
   }
 
+  // ── Vinted API fetch ──────────────────────────────────────────────────────
+  async function fetchOrdersFromApi(page = 1) {
+    try {
+      const url = `https://www.vinted.be/api/v2/my_orders?order_type=sold&page=${page}&per_page=50`;
+      const res = await fetch(url, {
+        credentials: 'include',
+        headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      });
+      if (!res.ok) {
+        console.warn('[Vault] API responded', res.status, res.statusText);
+        return [];
+      }
+      const data = await res.json();
+      const raw = data.orders || data.transactions || data.my_orders || [];
+      console.log('[Vault] API page', page, '→', raw.length, 'orders');
+      if (raw.length && page === 1) {
+        console.log('[Vault] sample order fields:', JSON.stringify(raw[0]).slice(0, 400));
+      }
+      return raw.map(parseApiOrder).filter((o) => o.transactionId);
+    } catch (e) {
+      console.error('[Vault] API fetch error:', e);
+      return [];
+    }
+  }
+
+  function parseApiOrder(o) {
+    const transactionId = String(o.transaction_id || o.transaction?.id || o.id || '');
+    const title  = o.item?.title || o.item_title || o.title || 'Onbekend item';
+    const photo  = o.item?.photos?.[0]?.url || o.item?.photo?.url
+                || o.photo?.url || o.photos?.[0]?.url || null;
+    const price  = parseFloat(o.total_price || o.item?.price || o.price || 0);
+    const buyer  = o.buyer?.login || o.user?.login || o.buyer_login || '';
+    const country = o.buyer?.country_iso_code || o.country_iso_code
+                 || o.country?.iso_code || '';
+    const date   = (o.created_at || o.updated_at || '').slice(0, 10)
+                || new Date().toISOString().slice(0, 10);
+    return {
+      transactionId, title, price, date, buyer, country,
+      sku: null, photo, status: o.status || 'sold',
+      labelUrl: transactionId ? apiLabelUrl(transactionId) : null,
+      url: transactionId ? `https://www.vinted.be/transactions/${transactionId}` : location.href,
+    };
+  }
+
   // ── Safe message helper — timeout + lastError guard (prevents MV3 hangs) ──
   function sendMsg(message, timeoutMs = 8000) {
     return Promise.race([
@@ -494,35 +538,45 @@
     ]);
   }
 
-  // ── Auto-scan & sync all orders ───────────────────────────────────────────
+  // ── Scan & sync ───────────────────────────────────────────────────────────
   async function scanAndSync() {
     if (scanActive) return;
     scanActive = true;
     try {
-      // Step 1: harvest transaction IDs from all link patterns on the page
-      extractAllTransactionIds().forEach((id) => {
-        if (!allOrders.some((o) => o.transactionId === id)) {
-          allOrders.push({
-            transactionId: id, title: 'Bestelling #' + id, price: 0,
-            date: new Date().toLocaleDateString('nl-BE'),
-            buyer: '', country: '', sku: null, photo: null,
-            labelUrl: apiLabelUrl(id), url: `https://www.vinted.be/transactions/${id}`,
-          });
-        }
-      });
+      // Primary: Vinted API (has transaction IDs directly, no DOM fragility)
+      const apiOrders = await fetchOrdersFromApi();
 
-      // Step 2: enrich stubs with full data from DOM rows
-      const rows = findOrderRows();
-      console.log('[Vault] DOM rows found:', rows.length);
-      for (const row of rows) {
-        const order = extractOrder(row);
-        if (!order.transactionId) continue;
-        const idx = allOrders.findIndex((o) => o.transactionId === order.transactionId);
-        if (idx === -1) allOrders.push(order);
-        else allOrders[idx] = { ...allOrders[idx], ...order };
+      if (apiOrders.length > 0) {
+        for (const order of apiOrders) {
+          const idx = allOrders.findIndex((o) => o.transactionId === order.transactionId);
+          if (idx === -1) allOrders.push(order);
+          else allOrders[idx] = { ...allOrders[idx], ...order };
+        }
+      } else {
+        // Fallback: DOM scraping (other order pages or API unavailable)
+        console.warn('[Vault] API returned 0 — falling back to DOM scraping');
+        extractAllTransactionIds().forEach((id) => {
+          if (!allOrders.some((o) => o.transactionId === id)) {
+            allOrders.push({
+              transactionId: id, title: 'Bestelling #' + id, price: 0,
+              date: new Date().toLocaleDateString('nl-BE'),
+              buyer: '', country: '', sku: null, photo: null,
+              labelUrl: apiLabelUrl(id), url: `https://www.vinted.be/transactions/${id}`,
+            });
+          }
+        });
+        const rows = findOrderRows();
+        console.log('[Vault] DOM fallback rows:', rows.length);
+        for (const row of rows) {
+          const order = extractOrder(row);
+          if (!order.transactionId) continue;
+          const idx = allOrders.findIndex((o) => o.transactionId === order.transactionId);
+          if (idx === -1) allOrders.push(order);
+          else allOrders[idx] = { ...allOrders[idx], ...order };
+        }
       }
 
-      // Step 3: sync ALL collected orders (stubs + enriched) not yet seen
+      // Sync all unseen orders to Supabase via background
       for (const order of [...allOrders]) {
         if (!order.transactionId || syncedIds.has(order.transactionId)) continue;
         const res = await sendMsg({ type: 'SYNC_ORDER', order });
