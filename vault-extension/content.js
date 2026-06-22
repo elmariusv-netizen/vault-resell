@@ -3,28 +3,35 @@
 
   console.log('[Vault] content script loaded on', location.href);
 
-  // ── Constants ────────────────────────────────────────────────────────────
-  const DONE_ATTR   = 'data-vault-done';
-  const DOT_ID      = 'vault-debug-dot';
-  const BAR_ID      = 'vault-label-bar';
-  const BADGE_ID    = 'vault-label-badge';
-  const INDIGO      = '#4f46e5';
-  const GREEN       = '#16a34a';
-  const RED         = '#dc2626';
+  // ── Constants ─────────────────────────────────────────────────────────────
+  const DONE_ATTR = 'data-vault-done';
+  const DOT_ID    = 'vault-debug-dot';
+  const PANEL_ID  = 'vault-label-panel';
+  const TOG_ID    = 'vault-panel-toggle';
+  const INDIGO    = '#4f46e5';
+  const GREEN     = '#16a34a';
+  const RED       = '#dc2626';
 
-  // ── State ────────────────────────────────────────────────────────────────
-  let syncedIds     = new Set();    // transactionIds already in storage
-  let checkedOrders = new Map();   // key → order, for label printing
+  // ── State ─────────────────────────────────────────────────────────────────
+  let syncedIds     = new Set();
+  let allOrders     = [];         // { transactionId, title, price, … }
+  let downloadedIds = new Set();  // transactionIds with label already in storage
   let scanActive    = false;
+  let panelOpen     = false;
 
-  // ── Debug dot ────────────────────────────────────────────────────────────
+  // ── Real Vinted API label URL ─────────────────────────────────────────────
+  function apiLabelUrl(transactionId) {
+    return `https://www.vinted.be/api/v2/transactions/${transactionId}/shipment/pdf_label`;
+  }
+
+  // ── Debug dot ─────────────────────────────────────────────────────────────
   function injectDebugDot() {
     if (document.getElementById(DOT_ID)) return;
     const dot = document.createElement('div');
     dot.id = DOT_ID;
     dot.title = 'Vault Resell actief';
     Object.assign(dot.style, {
-      position: 'fixed', bottom: '6px', right: '6px',
+      position: 'fixed', bottom: '6px', left: '6px',
       width: '10px', height: '10px', borderRadius: '50%',
       background: RED, zIndex: '2147483647',
       pointerEvents: 'none', boxShadow: '0 0 0 2px #fff',
@@ -32,7 +39,7 @@
     (document.body || document.documentElement).appendChild(dot);
   }
 
-  // ── Page detection ───────────────────────────────────────────────────────
+  // ── Page detection ────────────────────────────────────────────────────────
   function isOrdersPage(url) {
     return /\/(my[-_\/]?(orders?|purchases?|sales?|transactions?|bestellingen?))/i.test(url);
   }
@@ -40,14 +47,21 @@
     return /\/(label|print[-_]label|shipment|verzending|verzendbewijs)/i.test(url);
   }
 
-  // ── Load synced IDs from storage ─────────────────────────────────────────
+  // ── Load synced IDs from storage ──────────────────────────────────────────
   async function loadSyncedIds() {
     const { syncedOrders = [] } = await chrome.storage.local.get(['syncedOrders']);
     syncedIds = new Set(syncedOrders.map((o) => o.transactionId).filter(Boolean));
     console.log('[Vault] loaded', syncedIds.size, 'synced IDs');
   }
 
-  // ── DOM helpers ──────────────────────────────────────────────────────────
+  // ── Load downloaded label IDs from storage ────────────────────────────────
+  async function loadDownloadedIds() {
+    const { interceptedLabels = [] } = await chrome.storage.local.get(['interceptedLabels']);
+    downloadedIds = new Set(interceptedLabels.map((l) => l.orderId).filter(Boolean));
+    console.log('[Vault] loaded', downloadedIds.size, 'downloaded label IDs');
+  }
+
+  // ── DOM helpers ───────────────────────────────────────────────────────────
   function getCardContainer(el) {
     let node = el;
     for (let i = 0; i < 8; i++) {
@@ -70,7 +84,6 @@
       const els = [...document.querySelectorAll(sel)];
       if (els.length > 0) { console.log('[Vault] rows via', sel, els.length); return els; }
     }
-    // Fallback: parent containers of /transaction/ or /items/ links
     const seen = new Set();
     const rows = [];
     document.querySelectorAll('a[href*="/transaction"], a[href*="/items/"]').forEach((a) => {
@@ -79,6 +92,16 @@
     });
     console.log('[Vault] rows via link fallback:', rows.length);
     return rows;
+  }
+
+  // ── Extract transaction IDs directly from page links ──────────────────────
+  function extractAllTransactionIds() {
+    const ids = new Set();
+    document.querySelectorAll('a[href*="/transactions/"]').forEach((a) => {
+      const m = a.href.match(/\/transactions\/(\d+)/);
+      if (m) ids.add(m[1]);
+    });
+    return [...ids];
   }
 
   // ── Extract order data from a row element ─────────────────────────────────
@@ -91,43 +114,35 @@
   function extractOrder(row) {
     const text = row.innerText || row.textContent || '';
 
-    // Transaction link & ID
-    const txLink  = row.querySelector('a[href*="/transaction"]');
+    const txLink   = row.querySelector('a[href*="/transaction"]');
     const itemLink = row.querySelector('a[href*="/items/"]');
     const anyLink  = txLink || itemLink;
-    const transactionId = (anyLink?.href || '').match(/\/(?:transaction[s]?|items)\/(\d+)/)?.[1] ?? null;
 
-    // Price
+    // Prefer /transactions/{id} over /items/{id}
+    const txIdFromLink = (txLink?.href || '').match(/\/transactions\/(\d+)/)?.[1];
+    const txIdFallback = (anyLink?.href || '').match(/\/(?:transaction[s]?|items)\/(\d+)/)?.[1];
+    const transactionId = txIdFromLink || txIdFallback || null;
+
     const pm = text.match(/€\s*(\d+[,\.]\d{1,2})|(\d+[,\.]\d{1,2})\s*€/);
     const price = pm ? parseFloat((pm[1] || pm[2]).replace(',', '.')) : 0;
 
-    // Date
     const dm = text.match(/\b(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}|\d{1,2}\s+(?:jan|feb|mrt|apr|mei|jun|jul|aug|sep|okt|nov|dec)[a-z]*\.?\s*\d{0,4})\b/i);
     const date = dm ? dm[0].trim() : new Date().toLocaleDateString('nl-BE');
 
-    // Title
     const lines = text.split('\n').map((l) => l.trim()).filter(
       (l) => l.length > 10 && l.length < 120 &&
         !/^€|\d+[,\.]\d+\s*€?$/.test(l) && !STATUS_RE.test(l)
     );
     const title = lines[0] || 'Onbekend item';
 
-    // Buyer
     const buyerEl = row.querySelector('[class*="user"], [class*="buyer"], [class*="username"]');
     const buyer   = buyerEl?.textContent?.trim() || '';
 
-    // Country (flag emoji)
     const flagMatch = text.match(/[\u{1F1E0}-\u{1F1FF}]{2}/u);
     const country   = flagMatch ? (FLAG_MAP[flagMatch[0]] || '') : '';
 
-    // SKU (e.g. RIA001, IND012)
     const skuMatch = text.match(/\b([A-Z]{2,4}\d{3,4})\b/);
     const sku      = skuMatch ? skuMatch[1] : null;
-
-    // Label URL
-    const labelAnchor = row.querySelector('a[href*="label"], a[href*="verzend"], a[href*="shipment"]');
-    const labelUrl    = labelAnchor?.href ||
-      (transactionId ? `https://www.vinted.be/transaction/${transactionId}/label` : null);
 
     return {
       transactionId,
@@ -137,18 +152,17 @@
       buyer,
       country,
       sku,
-      labelUrl,
+      labelUrl: transactionId ? apiLabelUrl(transactionId) : null,
       url: anyLink?.href || location.href,
     };
   }
 
-  // ── Inject per-row UI ────────────────────────────────────────────────────
+  // ── Inject per-row sync button ────────────────────────────────────────────
   function injectRowUI(row, order) {
     if (row.getAttribute(DONE_ATTR)) return;
     row.setAttribute(DONE_ATTR, '1');
 
     const isSynced = order.transactionId && syncedIds.has(order.transactionId);
-    const key      = order.transactionId || (order.title + order.date);
 
     const wrap = document.createElement('div');
     Object.assign(wrap.style, {
@@ -157,17 +171,6 @@
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     });
 
-    // Checkbox for label printing
-    const cb = document.createElement('input');
-    cb.type  = 'checkbox';
-    cb.title = 'Selecteer voor labels';
-    Object.assign(cb.style, { cursor: 'pointer', width: '14px', height: '14px', accentColor: INDIGO });
-    cb.addEventListener('change', () => {
-      cb.checked ? checkedOrders.set(key, order) : checkedOrders.delete(key);
-      updateLabelBar();
-    });
-
-    // Sync button or ✓ badge
     let syncEl;
     if (isSynced) {
       syncEl = document.createElement('span');
@@ -195,24 +198,212 @@
       });
     }
 
-    wrap.appendChild(cb);
     wrap.appendChild(syncEl);
-
-    // Insert near action area or at end of row
     const actions = row.querySelector('[class*="action"], [class*="button"], [class*="btn"]');
     (actions || row).appendChild(wrap);
   }
 
-  // ── Auto-scan & sync all orders ──────────────────────────────────────────
+  // ── Toggle button (floating, bottom-right) ────────────────────────────────
+  function injectToggleButton() {
+    if (document.getElementById(TOG_ID)) return;
+    const btn = document.createElement('button');
+    btn.id = TOG_ID;
+    btn.textContent = '🏷';
+    btn.title = 'Vault Labels openen';
+    Object.assign(btn.style, {
+      position: 'fixed', bottom: '24px', right: '24px', zIndex: '2147483647',
+      background: INDIGO, color: '#fff', border: 'none', borderRadius: '50%',
+      width: '48px', height: '48px', fontSize: '22px', cursor: 'pointer',
+      boxShadow: '0 4px 16px rgba(79,70,229,0.5)',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: '1',
+    });
+    btn.addEventListener('click', () => togglePanel());
+    (document.body || document.documentElement).appendChild(btn);
+  }
+
+  // ── Build panel (once) ────────────────────────────────────────────────────
+  function buildPanel() {
+    if (document.getElementById(PANEL_ID)) return;
+    const panel = document.createElement('div');
+    panel.id = PANEL_ID;
+    Object.assign(panel.style, {
+      position: 'fixed', top: '0', right: '0', width: '310px', height: '100vh',
+      background: '#0f172a', borderLeft: '2px solid ' + INDIGO,
+      zIndex: '2147483646', display: 'flex', flexDirection: 'column',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      transform: 'translateX(100%)', transition: 'transform 0.25s ease',
+      boxShadow: '-4px 0 24px rgba(0,0,0,0.6)', boxSizing: 'border-box',
+    });
+    panel.innerHTML = `
+      <div style="padding:13px 16px;border-bottom:1px solid #1e293b;display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
+        <span style="color:#e2e8f0;font-weight:700;font-size:14px">🏷 Vault Labels</span>
+        <button id="vault-panel-close" style="background:none;border:none;color:#94a3b8;font-size:18px;cursor:pointer;padding:2px 6px;line-height:1;border-radius:4px">✕</button>
+      </div>
+      <div id="vault-panel-list" style="flex:1;overflow-y:auto;padding:4px 0"></div>
+      <div style="padding:12px 16px;border-top:1px solid #1e293b;display:flex;flex-direction:column;gap:8px;flex-shrink:0">
+        <button id="vault-print-selected" style="background:${INDIGO};color:#fff;border:none;border-radius:8px;padding:10px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">
+          Print geselecteerde (0)
+        </button>
+        <button id="vault-print-all" style="background:#1e293b;color:#cbd5e1;border:1px solid #334155;border-radius:8px;padding:10px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">
+          Print alle labels (0)
+        </button>
+      </div>
+    `;
+    (document.body || document.documentElement).appendChild(panel);
+    panel.querySelector('#vault-panel-close').addEventListener('click', () => togglePanel(false));
+    panel.querySelector('#vault-print-selected').addEventListener('click', printSelected);
+    panel.querySelector('#vault-print-all').addEventListener('click', printAll);
+  }
+
+  // ── Toggle panel ──────────────────────────────────────────────────────────
+  function togglePanel(force) {
+    buildPanel();
+    panelOpen = force !== undefined ? force : !panelOpen;
+    const panel = document.getElementById(PANEL_ID);
+    const tog   = document.getElementById(TOG_ID);
+    if (panel) panel.style.transform = panelOpen ? 'translateX(0)' : 'translateX(100%)';
+    if (tog)   tog.style.opacity = panelOpen ? '0' : '1';
+    if (tog)   tog.style.pointerEvents = panelOpen ? 'none' : 'auto';
+    if (panelOpen) renderPanel();
+  }
+
+  // ── Render panel order list ───────────────────────────────────────────────
+  function renderPanel() {
+    const list   = document.getElementById('vault-panel-list');
+    const selBtn = document.getElementById('vault-print-selected');
+    const allBtn = document.getElementById('vault-print-all');
+    if (!list) return;
+
+    const withTx = allOrders.filter((o) => o.transactionId);
+
+    if (!withTx.length) {
+      list.innerHTML = '<p style="color:#64748b;font-size:12px;padding:20px 16px;text-align:center;margin:0">Geen bestellingen gevonden.<br>Wacht tot de pagina is geladen.</p>';
+      if (selBtn) selBtn.textContent = 'Print geselecteerde (0)';
+      if (allBtn) allBtn.textContent = 'Print alle labels (0)';
+      return;
+    }
+
+    list.innerHTML = withTx.map((order, i) => {
+      const done  = downloadedIds.has(order.transactionId);
+      const title = order.title.length > 26 ? order.title.slice(0, 26) + '…' : order.title;
+      const price = order.price ? `€${order.price.toFixed(2).replace('.', ',')}` : '';
+      return `
+        <label style="display:flex;align-items:center;gap:9px;padding:9px 16px;cursor:pointer;border-bottom:1px solid #1e293b;box-sizing:border-box;background:transparent">
+          <input type="checkbox" data-idx="${i}" style="cursor:pointer;accent-color:${INDIGO};flex-shrink:0;width:14px;height:14px;margin:0">
+          <span style="flex:1;min-width:0">
+            <span style="display:block;color:#e2e8f0;font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(title)}</span>
+            <span style="display:block;color:#64748b;font-size:11px;margin-top:2px">#${order.transactionId}${price ? ' · ' + price : ''}</span>
+          </span>
+          <span title="${done ? 'Label al gedownload' : 'Nog niet gedownload'}" style="color:${done ? GREEN : '#475569'};font-size:${done ? '17px' : '13px'};flex-shrink:0;line-height:1">${done ? '✓' : '⏳'}</span>
+        </label>
+      `;
+    }).join('');
+
+    list.querySelectorAll('input[type=checkbox]').forEach((cb) => {
+      cb.addEventListener('change', updateSelectedCount);
+    });
+
+    if (allBtn) allBtn.textContent = `Print alle labels (${withTx.length})`;
+    updateSelectedCount();
+  }
+
+  function escHtml(str) {
+    return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function updateSelectedCount() {
+    const list   = document.getElementById('vault-panel-list');
+    const selBtn = document.getElementById('vault-print-selected');
+    if (!list || !selBtn) return;
+    const n = list.querySelectorAll('input[type=checkbox]:checked').length;
+    selBtn.textContent = `Print geselecteerde (${n})`;
+  }
+
+  function getSelectedOrders() {
+    const list  = document.getElementById('vault-panel-list');
+    if (!list) return [];
+    const withTx = allOrders.filter((o) => o.transactionId);
+    return [...list.querySelectorAll('input[type=checkbox]:checked')]
+      .map((cb) => withTx[parseInt(cb.dataset.idx, 10)])
+      .filter(Boolean);
+  }
+
+  function printSelected() {
+    const orders = getSelectedOrders();
+    if (!orders.length) { alert('Selecteer eerst bestellingen.'); return; }
+    doPrintLabels(orders);
+  }
+
+  function printAll() {
+    const orders = allOrders.filter((o) => o.transactionId);
+    if (!orders.length) { alert('Geen bestellingen met transactie-ID gevonden.'); return; }
+    doPrintLabels(orders);
+  }
+
+  function doPrintLabels(orders) {
+    const selBtn = document.getElementById('vault-print-selected');
+    const allBtn = document.getElementById('vault-print-all');
+    if (selBtn) { selBtn.disabled = true; selBtn.textContent = '⏳ Labels ophalen…'; }
+    if (allBtn) { allBtn.disabled = true; }
+
+    const labelUrls      = orders.map((o) => apiLabelUrl(o.transactionId));
+    const transactionIds = orders.map((o) => o.transactionId);
+
+    console.log('[Vault] printing labels for transactions:', transactionIds);
+
+    chrome.runtime.sendMessage({ type: 'PRINT_LABELS', labelUrls, transactionIds }, (res) => {
+      if (res?.success) {
+        (res.downloadedIds || transactionIds).forEach((id) => downloadedIds.add(id));
+        renderPanel();
+        if (selBtn) selBtn.textContent = '✅ Gedownload!';
+        setTimeout(() => {
+          if (selBtn) { selBtn.disabled = false; updateSelectedCount(); }
+          if (allBtn) { allBtn.disabled = false; renderPanel(); }
+        }, 2500);
+      } else {
+        alert('PDF aanmaken mislukt: ' + (res?.error || 'onbekende fout'));
+        if (selBtn) { selBtn.disabled = false; updateSelectedCount(); }
+        if (allBtn) { allBtn.disabled = false; }
+      }
+    });
+  }
+
+  // ── Auto-scan & sync all orders ───────────────────────────────────────────
   async function scanAndSync() {
     if (scanActive) return;
     scanActive = true;
     try {
+      // Also harvest transaction IDs directly from links (catches IDs not in card containers)
+      extractAllTransactionIds().forEach((id) => {
+        if (!allOrders.some((o) => o.transactionId === id)) {
+          allOrders.push({
+            transactionId: id,
+            title: 'Bestelling #' + id,
+            price: 0,
+            date: new Date().toLocaleDateString('nl-BE'),
+            buyer: '',
+            country: '',
+            sku: null,
+            labelUrl: apiLabelUrl(id),
+            url: `https://www.vinted.be/transactions/${id}`,
+          });
+        }
+      });
+
       const rows = findOrderRows();
       console.log('[Vault] scanning', rows.length, 'order rows');
       for (const row of rows) {
         const order = extractOrder(row);
-        // Auto-sync new orders silently
+        if (order.transactionId) {
+          const idx = allOrders.findIndex((o) => o.transactionId === order.transactionId);
+          if (idx === -1) {
+            allOrders.push(order);
+          } else {
+            // Enrich stub entry with full data
+            allOrders[idx] = { ...allOrders[idx], ...order };
+          }
+        }
         if (order.transactionId && !syncedIds.has(order.transactionId)) {
           const res = await new Promise((r) =>
             chrome.runtime.sendMessage({ type: 'SYNC_ORDER', order }, r)
@@ -224,63 +415,10 @@
         }
         injectRowUI(row, order);
       }
+      if (panelOpen) renderPanel();
     } finally {
       scanActive = false;
     }
-  }
-
-  // ── Floating label-print bar ──────────────────────────────────────────────
-  function updateLabelBar() {
-    let bar = document.getElementById(BAR_ID);
-    const n = checkedOrders.size;
-    if (n === 0) { if (bar) bar.style.display = 'none'; return; }
-
-    if (!bar) {
-      bar = document.createElement('div');
-      bar.id = BAR_ID;
-      Object.assign(bar.style, {
-        position: 'fixed', bottom: '0', left: '0', right: '0',
-        background: '#0f172a', borderTop: `2px solid ${INDIGO}`,
-        padding: '10px 20px', display: 'flex', alignItems: 'center',
-        justifyContent: 'space-between', zIndex: '2147483646',
-        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-        boxShadow: '0 -4px 20px rgba(0,0,0,0.5)',
-      });
-      document.body.appendChild(bar);
-    }
-    bar.style.display = 'flex';
-    bar.innerHTML = `
-      <span style="color:#e2e8f0;font-size:13px;font-weight:600">${n} label${n > 1 ? 's' : ''} geselecteerd</span>
-      <button id="vault-print-btn" style="background:${INDIGO};color:#fff;border:none;border-radius:8px;padding:8px 18px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">
-        📥 Print labels (4×6)
-      </button>
-    `;
-    document.getElementById('vault-print-btn').addEventListener('click', printLabels);
-  }
-
-  async function printLabels() {
-    const btn = document.getElementById('vault-print-btn');
-    if (btn) { btn.textContent = '⏳ Bezig…'; btn.disabled = true; }
-
-    const orders    = [...checkedOrders.values()];
-    const labelUrls = orders.map((o) => o.labelUrl).filter(Boolean);
-    console.log('[Vault] printing labels:', labelUrls);
-
-    if (!labelUrls.length) {
-      alert('Geen label-URLs gevonden. Open elke bestelling om het label op te halen.');
-      if (btn) { btn.textContent = '📥 Print labels (4×6)'; btn.disabled = false; }
-      return;
-    }
-
-    chrome.runtime.sendMessage({ type: 'PRINT_LABELS', labelUrls }, (res) => {
-      if (res?.success) {
-        if (btn) btn.textContent = '✅ Gedownload!';
-        setTimeout(() => { if (btn) { btn.textContent = '📥 Print labels (4×6)'; btn.disabled = false; } }, 2500);
-      } else {
-        alert('PDF aanmaken mislukt: ' + (res?.error || 'onbekende fout'));
-        if (btn) { btn.textContent = '📥 Print labels (4×6)'; btn.disabled = false; }
-      }
-    });
   }
 
   // ── Label page: floating download button ──────────────────────────────────
@@ -326,28 +464,6 @@
     return null;
   }
 
-  // ── Intercepted-labels counter badge ────────────────────────────────────
-  async function refreshLabelBadge() {
-    const { interceptedLabels = [] } = await chrome.storage.local.get(['interceptedLabels']);
-    const n = interceptedLabels.length;
-    let badge = document.getElementById(BADGE_ID);
-    if (n === 0) { if (badge) badge.remove(); return; }
-    if (!badge) {
-      badge = document.createElement('div');
-      badge.id = BADGE_ID;
-      Object.assign(badge.style, {
-        position: 'fixed', top: '12px', right: '12px', zIndex: '2147483647',
-        background: '#0f172a', border: `2px solid ${INDIGO}`, borderRadius: '10px',
-        padding: '6px 14px', display: 'flex', alignItems: 'center', gap: '7px',
-        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-        fontSize: '12px', fontWeight: '700', color: '#e2e8f0',
-        boxShadow: '0 4px 16px rgba(0,0,0,0.5)', cursor: 'default',
-      });
-      document.body.appendChild(badge);
-    }
-    badge.textContent = `🏷 ${n} label${n !== 1 ? 's' : ''} klaar om te printen`;
-  }
-
   // ── Bootstrap ─────────────────────────────────────────────────────────────
   let panelDone = false;
   let labelDone = false;
@@ -359,12 +475,13 @@
 
     if (isOrdersPage(url) && !panelDone) {
       panelDone = true;
+      allOrders = [];
       await loadSyncedIds();
-      refreshLabelBadge();
-      // Wait for page content then scan; retry after 3 s for slow SPAs
+      await loadDownloadedIds();
+      buildPanel();
+      injectToggleButton();
       setTimeout(() => scanAndSync(), 800);
       setTimeout(() => scanAndSync(), 3000);
-      // Keep watching for lazy-loaded rows
       const mo = new MutationObserver(() => scanAndSync());
       mo.observe(document.body, { subtree: true, childList: true });
       setTimeout(() => mo.disconnect(), 20000);
@@ -376,10 +493,12 @@
     }
   }
 
-  // Refresh badge when storage changes
+  // Refresh downloaded IDs when storage changes (e.g. intercept in background)
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === 'local' && changes.interceptedLabels && isOrdersPage(location.href)) {
-      refreshLabelBadge();
+    if (area === 'local' && changes.interceptedLabels) {
+      const labels = changes.interceptedLabels.newValue || [];
+      downloadedIds = new Set(labels.map((l) => l.orderId).filter(Boolean));
+      if (panelOpen) renderPanel();
     }
   });
 
@@ -388,12 +507,13 @@
   new MutationObserver(() => {
     if (location.href !== lastUrl) {
       console.log('[Vault] URL changed →', location.href);
-      lastUrl    = location.href;
-      panelDone  = false;
-      labelDone  = false;
-      checkedOrders.clear();
-      const bar = document.getElementById(BAR_ID);
-      if (bar) bar.style.display = 'none';
+      lastUrl   = location.href;
+      panelDone = false;
+      labelDone = false;
+      panelOpen = false;
+      allOrders = [];
+      document.getElementById(PANEL_ID)?.remove();
+      document.getElementById(TOG_ID)?.remove();
       setTimeout(init, 300);
     }
   }).observe(document, { subtree: true, childList: true });

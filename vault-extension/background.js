@@ -5,7 +5,6 @@ chrome.downloads.onCreated.addListener((item) => {
   if (isVintedLabel(item)) interceptLabel(item);
 });
 
-// Also catch filename when it resolves (onCreated may have empty filename)
 chrome.downloads.onChanged.addListener((delta) => {
   if (!delta.filename?.current) return;
   chrome.downloads.search({ id: delta.id }, ([item]) => {
@@ -21,22 +20,23 @@ function isVintedLabel(item) {
 
   const isVinted = /vinted\.(be|com|nl|fr|de|es|it|pl|cz|sk|lt|lv|ee|pt|se|fi|nl)/.test(url);
   const looksLikeLabel =
-    /label|bordereau|shipping|verzendbewijs|verzendlabel/.test(urlLower) ||
+    /label|bordereau|shipping|verzendbewijs|verzendlabel|pdf_label/.test(urlLower) ||
     /label|bordereau|shipping|verzendbewijs|verzendlabel/.test(base);
 
-  return isVinted && looksLikeLabel && (url.endsWith('.pdf') || /pdf|label/.test(urlLower));
+  return isVinted && looksLikeLabel && (url.includes('.pdf') || /pdf|label|shipment/.test(urlLower));
 }
 
 async function interceptLabel(item) {
   try {
     const { interceptedLabels = [] } = await chrome.storage.local.get(['interceptedLabels']);
 
-    // Deduplicate by URL
-    if (interceptedLabels.some((l) => l.url === item.url)) return;
+    const orderId = (item.url.match(/\/transactions?\/(\d+)/) || [])[1] || null;
+
+    // Deduplicate by URL or orderId
+    if (interceptedLabels.some((l) => l.url === item.url || (orderId && l.orderId === orderId))) return;
 
     console.log('[Vault] intercepting label:', item.url);
 
-    // Fetch the PDF bytes while the URL is still valid
     const resp = await fetch(item.url, { credentials: 'include' });
     if (!resp.ok) {
       console.warn('[Vault] label fetch failed:', resp.status);
@@ -44,27 +44,22 @@ async function interceptLabel(item) {
     }
     const bytes = new Uint8Array(await resp.arrayBuffer());
 
-    // Convert to base64
     let binary = '';
     for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
     const dataUrl = 'data:application/pdf;base64,' + btoa(binary);
 
     const base = (item.filename || '').split(/[/\\]/).pop() || `label-${Date.now()}.pdf`;
-    const orderId = (item.url.match(/\/transactions?\/(\d+)/) || [])[1] || null;
 
-    const label = {
-      id:          Date.now().toString() + Math.random().toString(36).slice(2, 6),
-      filename:    base || `vinted-label-${Date.now()}.pdf`,
-      url:         item.url,
+    interceptedLabels.unshift({
+      id:         Date.now().toString() + Math.random().toString(36).slice(2, 6),
+      filename:   base,
+      url:        item.url,
       orderId,
-      capturedAt:  new Date().toISOString(),
+      capturedAt: new Date().toISOString(),
       dataUrl,
-      size:        bytes.length,
-    };
-
-    interceptedLabels.unshift(label);
-    // Keep max 15 labels (each ~200 KB → ~3 MB total base64, safe within 10 MB limit)
-    if (interceptedLabels.length > 15) interceptedLabels.splice(15);
+      size:       bytes.length,
+    });
+    if (interceptedLabels.length > 30) interceptedLabels.splice(30);
 
     await chrome.storage.local.set({ interceptedLabels });
     console.log('[Vault] label saved, total:', interceptedLabels.length);
@@ -80,7 +75,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
   if (message.type === 'PRINT_LABELS') {
-    mergeAndDownloadLabels(message.labelUrls).then(sendResponse);
+    mergeAndDownloadLabels(message.labelUrls, message.transactionIds || []).then(sendResponse);
     return true;
   }
   if (message.type === 'DOWNLOAD_LABEL') {
@@ -136,19 +131,40 @@ async function updateDailyStats(order) {
   await chrome.storage.local.set({ dailyStats });
 }
 
-// ── PDF merge (from extension panel print-labels button) ──────────────────
-async function mergeAndDownloadLabels(labelUrls) {
+// ── PDF merge via real Vinted API ─────────────────────────────────────────
+// Fetches each label from https://www.vinted.be/api/v2/transactions/{id}/shipment/pdf_label
+// using the user's session cookie (credentials: 'include'), merges into one 4×6 thermal PDF.
+async function mergeAndDownloadLabels(labelUrls, transactionIds) {
   try {
     const { PDFDocument } = PDFLib;
     const merged = await PDFDocument.create();
-    const PW = 288, PH = 432;
+    const PW = 288, PH = 432; // 4×6 inches at 72 dpi
 
-    for (const url of labelUrls) {
+    const { interceptedLabels = [] } = await chrome.storage.local.get(['interceptedLabels']);
+    const existingIds = new Set(interceptedLabels.map((l) => l.orderId).filter(Boolean));
+
+    const successIds  = [];
+    const newLabels   = [];
+
+    for (let i = 0; i < labelUrls.length; i++) {
+      const url  = labelUrls[i];
+      const txId = transactionIds[i] || null;
       try {
+        console.log('[Vault] fetching label for transaction', txId, url);
         const resp = await fetch(url, { credentials: 'include' });
-        if (!resp.ok) { console.warn('[Vault] label fetch failed:', url, resp.status); continue; }
+        if (!resp.ok) {
+          console.warn('[Vault] label fetch failed:', url, resp.status, resp.statusText);
+          continue;
+        }
+
         const bytes = new Uint8Array(await resp.arrayBuffer());
-        const src   = await PDFDocument.load(bytes, { ignoreEncryption: true });
+        if (bytes.length < 100) {
+          console.warn('[Vault] label response too small, likely not a PDF:', url);
+          continue;
+        }
+
+        // Embed page into merged PDF
+        const src = await PDFDocument.load(bytes, { ignoreEncryption: true });
         if (!src.getPageCount()) continue;
 
         const [embedded] = await merged.embedPages([src.getPages()[0]]);
@@ -159,9 +175,45 @@ async function mergeAndDownloadLabels(labelUrls) {
           x: (PW - sw * scale) / 2, y: (PH - sh * scale) / 2,
           width: sw * scale, height: sh * scale,
         });
-      } catch (e) { console.error('[Vault] error processing label:', url, e); }
+
+        if (txId) successIds.push(txId);
+
+        // Save to interceptedLabels if not already stored
+        if (txId && !existingIds.has(txId)) {
+          let binary = '';
+          for (let j = 0; j < bytes.length; j++) binary += String.fromCharCode(bytes[j]);
+          newLabels.push({
+            id:         Date.now().toString() + Math.random().toString(36).slice(2, 6),
+            filename:   `label-${txId}.pdf`,
+            url,
+            orderId:    txId,
+            capturedAt: new Date().toISOString(),
+            dataUrl:    'data:application/pdf;base64,' + btoa(binary),
+            size:       bytes.length,
+          });
+          existingIds.add(txId);
+        }
+      } catch (e) {
+        console.error('[Vault] error processing label:', url, e);
+      }
     }
 
+    if (!merged.getPageCount()) {
+      return {
+        success: false,
+        error: 'Geen labels konden worden opgehaald. Controleer of je bent ingelogd op Vinted.',
+      };
+    }
+
+    // Persist newly fetched labels
+    if (newLabels.length) {
+      for (const lbl of newLabels) interceptedLabels.unshift(lbl);
+      if (interceptedLabels.length > 30) interceptedLabels.splice(30);
+      await chrome.storage.local.set({ interceptedLabels });
+      console.log('[Vault] saved', newLabels.length, 'new labels to storage');
+    }
+
+    // Download merged PDF
     const pdfBytes = await merged.save();
     let binary = '';
     for (let i = 0; i < pdfBytes.length; i++) binary += String.fromCharCode(pdfBytes[i]);
@@ -172,7 +224,8 @@ async function mergeAndDownloadLabels(labelUrls) {
       filename: `vault-labels-${Date.now()}.pdf`,
       saveAs: false,
     });
-    return { success: true };
+
+    return { success: true, downloadedIds: successIds };
   } catch (e) {
     console.error('[Vault] PDF merge error:', e);
     return { success: false, error: e.message };
