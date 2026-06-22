@@ -8,6 +8,12 @@ CREATE TABLE IF NOT EXISTS vinted_orders (
   status TEXT,
   item_url TEXT,
   label_url TEXT,
+  photo_url TEXT,
+  sale_date DATE,
   synced_at TIMESTAMPTZ DEFAULT NOW(),
   registered_in_vault BOOLEAN DEFAULT FALSE
 );
+
+-- Run these if the table already exists:
+ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS photo_url TEXT;
+ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS sale_date DATE;

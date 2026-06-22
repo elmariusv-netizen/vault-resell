@@ -24,7 +24,8 @@
 
   // ── Page detection ────────────────────────────────────────────────────────
   function isOrdersPage(url) {
-    return /\/(my[-_\/]?(orders?|purchases?|sales?|transactions?|bestellingen?))/i.test(url);
+    return /\/(my[-_\/]?(orders?|purchases?|sales?|transactions?|bestellingen?|sold[-_]items?))/i.test(url)
+        || /\/transactions?\/\d+/i.test(url);
   }
 
   // ── Load synced IDs from storage ──────────────────────────────────────────
@@ -124,6 +125,11 @@
     const skuMatch = text.match(/\b([A-Z]{2,4}\d{3,4})\b/);
     const sku      = skuMatch ? skuMatch[1] : null;
 
+    const imgEl = row.querySelector(
+      'img[src*="freetls.fastly.net"], img[src*="vinted-static"], img[src*="cloudfront"], img[src*="vinted.com"]'
+    );
+    const photo = imgEl?.src || null;
+
     return {
       transactionId,
       title,
@@ -132,6 +138,7 @@
       buyer,
       country,
       sku,
+      photo,
       labelUrl: transactionId ? apiLabelUrl(transactionId) : null,
       url: anyLink?.href || location.href,
     };

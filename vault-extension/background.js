@@ -24,6 +24,8 @@ async function syncToSupabase(order) {
         status:         order.status || 'synced',
         item_url:       order.url || '',
         label_url:      order.labelUrl || '',
+        photo_url:      order.photo || '',
+        sale_date:      order.date || null,
       }),
     });
     if (!res.ok) console.warn('[Vault] Supabase sync failed:', res.status, await res.text());
