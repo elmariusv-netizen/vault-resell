@@ -45,6 +45,8 @@
   // ── Formatters ─────────────────────────────────────────────────────────────
   const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   const fmt$ = v => { const n = parseFloat(v || 0); return n > 0 ? `€${n.toFixed(2).replace('.', ',')}` : '—'; };
+  // Upgrade low-res Vinted thumbnail to 310px wide version
+  const hiPhoto = url => url ? url.replace(/\/\d+x\d+\//g, '/310x/').replace(/\/\d+x\//g, '/310x/') : null;
   const fmtD = s => {
     if (!s) return '';
     const d = new Date(s);
@@ -104,7 +106,7 @@
           return raw.map(o => ({
             itemId: String(o.id || ''),
             title:  o.title || '?',
-            photo:  o.photos?.[0]?.url || o.photo?.url || null,
+            photo:  hiPhoto(o.photos?.[0]?.url || o.photo?.url || null),
             price:  parseFloat(o.price?.amount || o.price || 0),
             views:  o.view_count || 0,
             status: o.status || 'active',
@@ -139,7 +141,7 @@
       return {
         itemId,
         title:  titleEl?.textContent?.trim() || '?',
-        photo:  img?.src || img?.dataset?.src || null,
+        photo:  hiPhoto(img?.src || img?.dataset?.src || null),
         price,
         views:  0,
         status: 'active',
@@ -197,7 +199,7 @@
       transactionId: String(o.transaction_id || o.id || ''),
       itemId:  String(o.item?.id || ''),
       title:   o.item?.title || o.title || '?',
-      photo:   o.item?.photos?.[0]?.url || o.item?.photo?.url || null,
+      photo:   hiPhoto(o.item?.photos?.[0]?.url || o.item?.photo?.url || null),
       price:   parseFloat(o.total_price || o.item?.price_numeric || o.price || 0),
       buyer:   o.buyer?.login  || o.user?.login  || '',
       country: o.buyer?.country_iso_code || o.country_iso_code || '',
@@ -226,10 +228,23 @@
 
   async function getConversations() {
     const c = await cGet('v_convs'); if (c) return c;
-    const d = await vGet('/api/v2/conversations?per_page=100');
-    const threads = d.threads || d.conversations || [];
-    await cSet('v_convs', threads);
-    return threads;
+    const endpoints = [
+      '/api/v2/conversations?per_page=100',
+      '/api/v2/inbox?per_page=100',
+      '/api/v2/threads?per_page=100',
+    ];
+    for (const path of endpoints) {
+      try {
+        const d = await vGet(path);
+        console.log('[Vault] convs via', path, 'keys:', Object.keys(d));
+        const threads = d.threads || d.conversations || d.inbox || d.items || [];
+        if (threads.length) {
+          await cSet('v_convs', threads);
+          return threads;
+        }
+      } catch (e) { console.warn('[Vault] convs failed', path, e.message); }
+    }
+    return [];
   }
 
   // ── Label discovery via conversation messages ──────────────────────────────
@@ -673,14 +688,21 @@
   async function tabLabels(content, footer) {
     await loadDlIds();
     const orders  = await getSold();
-    // Only orders that haven't shipped yet — exclude anything confirmed dispatched
-    const SHIPPED = new Set(['shipped','delivered','completed','received','rated','cancelled','refunded']);
+    // Status comes as Dutch text from Vinted, e.g. "Verzendlabel is naar de verkoper gestuurd."
+    // SHOW  → status contains "label" (label sent/ready)
+    // HIDE  → status contains "verzonden"/"geleverd"/"voltooid"/"cancelled"/"refunded" OR
+    //          the order has already been downloaded
+    const isShipped = s => /verzond|geleverd|voltooid|completed|delivered|shipped|cancelled|refunded/i.test(s || '');
+    const needsLabel = s => /label/i.test(s || '');
+
+    // Show orders that need a label AND haven't been shipped yet
     const pending = orders.filter(o =>
       o.transactionId &&
       !dlIds.has(o.transactionId) &&
-      !SHIPPED.has(o.status),
+      (needsLabel(o.status) || (!isShipped(o.status) && o.status !== '')),
     );
-    console.log('[Vault] labels pending:', pending.length, 'of', orders.length, 'total sold');
+    console.log('[Vault] labels pending:', pending.length, 'of', orders.length,
+      '— statuses:', [...new Set(orders.map(o => o.status))].join(' | '));
     content.innerHTML = '';
     footer.innerHTML  = '';
 
