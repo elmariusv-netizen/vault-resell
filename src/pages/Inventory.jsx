@@ -2,6 +2,7 @@ import { useState, useMemo, useRef } from 'react'
 import EditBatchModal from '../components/EditBatchModal'
 import SaleModal from '../components/SaleModal'
 import MediaModal from '../components/MediaModal'
+import SkuDetailModal from '../components/SkuDetailModal'
 import {
   genId, formatSku, formatSkuRange, formatCurrency, formatDate,
   getRemainingQty, getSupplierColor,
@@ -99,6 +100,7 @@ export default function Inventory({ data, updateData }) {
   const [skuSearch, setSkuSearch] = useState('')
   const [skuStatus, setSkuStatus] = useState('all')
   const [skuSupplier, setSkuSupplier] = useState('all')
+  const [skuDetail, setSkuDetail] = useState(null) // batch to show in detail modal
   const [pendingSkuCode, setPendingSkuCode] = useState(null)
   const skuPhotoRef = useRef()
 
@@ -456,7 +458,8 @@ export default function Inventory({ data, updateData }) {
                   </tr>
                 ) : (
                   filteredSkuItems.map((item) => (
-                    <tr key={item.code}>
+                    <tr key={item.code} style={{ cursor: 'pointer' }}
+                      onClick={() => setSkuDetail(batches.find((b) => b.id === item.batchId) || null)}>
                       <td style={{ padding: '8px 10px' }}>
                         <div
                           onClick={() => handleSkuPhotoClick(item.code)}
@@ -500,16 +503,26 @@ export default function Inventory({ data, updateData }) {
                           {STATUS_LABEL[item.status]}
                         </span>
                       </td>
-                      <td style={{ padding: '8px 10px' }}>
-                        {item.status !== 'verkocht' && (
+                      <td style={{ padding: '8px 10px' }} onClick={(e) => e.stopPropagation()}>
+                        <div style={{ display: 'flex', gap: 4 }}>
                           <button
-                            className="btn btn-primary btn-sm"
-                            onClick={() => handleSkuSell(item)}
-                            style={{ fontSize: 11, padding: '4px 10px' }}
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => setSkuDetail(batches.find((b) => b.id === item.batchId) || null)}
+                            style={{ fontSize: 11, padding: '4px 8px' }}
+                            title="SKU details bekijken"
                           >
-                            Verkoop
+                            📊
                           </button>
-                        )}
+                          {item.status !== 'verkocht' && (
+                            <button
+                              className="btn btn-primary btn-sm"
+                              onClick={() => handleSkuSell(item)}
+                              style={{ fontSize: 11, padding: '4px 10px' }}
+                            >
+                              Verkoop
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -560,6 +573,15 @@ export default function Inventory({ data, updateData }) {
           remaining={getRemainingQty(liveBatch, sales)}
           onClose={() => setLiveBatch(null)}
           onSave={handleSetLive}
+        />
+      )}
+
+      {skuDetail && (
+        <SkuDetailModal
+          batch={skuDetail}
+          sales={sales}
+          suppliers={suppliers}
+          onClose={() => setSkuDetail(null)}
         />
       )}
 

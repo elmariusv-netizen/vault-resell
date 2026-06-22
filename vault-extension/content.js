@@ -1,443 +1,308 @@
 (function () {
   'use strict';
 
-  // ── Debug: runs synchronously the moment the script is injected ───────────
-  console.log('[Vault] content script injected on:', location.href);
+  console.log('[Vault] content script loaded on', location.href);
 
-  const PANEL_ID  = 'vault-resell-panel';
-  const DOT_ID    = 'vault-debug-dot';
-  const INDIGO    = '#4f46e5';
-  const GREEN     = '#16a34a';
-  const RED       = '#dc2626';
-  const DARK      = '#0f172a';
-  const SURFACE   = '#1e293b';
-  const BORDER    = '#334155';
+  // ── Constants ────────────────────────────────────────────────────────────
+  const DONE_ATTR  = 'data-vault-done';
+  const DOT_ID     = 'vault-debug-dot';
+  const BAR_ID     = 'vault-label-bar';
+  const INDIGO     = '#4f46e5';
+  const GREEN      = '#16a34a';
+  const RED        = '#dc2626';
 
-  // ── Red dot: proof the script is running (visible on every Vinted page) ──
+  // ── State ────────────────────────────────────────────────────────────────
+  let syncedIds     = new Set();    // transactionIds already in storage
+  let checkedOrders = new Map();   // key → order, for label printing
+  let scanActive    = false;
+
+  // ── Debug dot ────────────────────────────────────────────────────────────
   function injectDebugDot() {
     if (document.getElementById(DOT_ID)) return;
     const dot = document.createElement('div');
     dot.id = DOT_ID;
-    dot.title = 'Vault Resell Sync – actief';
+    dot.title = 'Vault Resell actief';
     Object.assign(dot.style, {
-      position:     'fixed',
-      bottom:       '8px',
-      right:        '8px',
-      width:        '12px',
-      height:       '12px',
-      borderRadius: '50%',
-      background:   RED,
-      zIndex:       '2147483647',
-      pointerEvents:'none',
-      boxShadow:    '0 0 0 2px #fff',
+      position: 'fixed', bottom: '6px', right: '6px',
+      width: '10px', height: '10px', borderRadius: '50%',
+      background: RED, zIndex: '2147483647',
+      pointerEvents: 'none', boxShadow: '0 0 0 2px #fff',
     });
     (document.body || document.documentElement).appendChild(dot);
-    console.log('[Vault] debug dot injected');
   }
 
-  // ── Page detection ────────────────────────────────────────────────────────
+  // ── Page detection ───────────────────────────────────────────────────────
   function isOrdersPage(url) {
-    // Matches any URL that contains order/bestelling/purchase/sale/transaction
     return /\/(my[-_\/]?(orders?|purchases?|sales?|transactions?|bestellingen?))/i.test(url);
   }
-
   function isLabelPage(url) {
     return /\/(label|print[-_]label|shipment|verzending|verzendbewijs)/i.test(url);
   }
 
-  // ── Floating panel ────────────────────────────────────────────────────────
-  function createPanel() {
-    if (document.getElementById(PANEL_ID)) {
-      console.log('[Vault] panel already exists, skipping');
-      return;
-    }
-    console.log('[Vault] creating panel');
-
-    const panel = document.createElement('div');
-    panel.id = PANEL_ID;
-
-    Object.assign(panel.style, {
-      position:   'fixed',
-      top:        '50%',
-      right:      '0',
-      transform:  'translateY(-50%)',
-      zIndex:     '2147483646',
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      fontSize:   '13px',
-      display:    'flex',
-      alignItems: 'center',
-    });
-
-    panel.innerHTML = `
-      <div id="vault-tab" title="Vault Resell Sync openen">🏠</div>
-      <div id="vault-body">
-        <div id="vault-header">
-          <span>🏠 Vault Resell Sync</span>
-          <button id="vault-close" title="Sluiten">✕</button>
-        </div>
-        <div id="vault-content">
-          <button id="vault-scan-btn">🔍 Scan bestellingen</button>
-          <div id="vault-status"></div>
-          <div id="vault-results"></div>
-        </div>
-      </div>
-    `;
-
-    stylePanel(panel);
-    document.body.appendChild(panel);
-
-    let open = false;
-    const body  = panel.querySelector('#vault-body');
-    const toggle = () => {
-      open = !open;
-      body.style.display = open ? 'flex' : 'none';
-      console.log('[Vault] panel', open ? 'opened' : 'closed');
-    };
-    panel.querySelector('#vault-tab').addEventListener('click', toggle);
-    panel.querySelector('#vault-close').addEventListener('click', toggle);
-
-    panel.querySelector('#vault-scan-btn').addEventListener('click', () => {
-      const status  = panel.querySelector('#vault-status');
-      const results = panel.querySelector('#vault-results');
-      status.textContent  = '⏳ Bezig met scannen…';
-      results.innerHTML   = '';
-      console.log('[Vault] scan started');
-
-      // Give the browser a tick to repaint the status text first
-      requestAnimationFrame(() => {
-        const orders = extractOrdersFromPage();
-        console.log('[Vault] scan found', orders.length, 'orders:', orders);
-        status.textContent = orders.length
-          ? `${orders.length} bestelling(en) gevonden`
-          : 'Geen bestellingen gevonden – scroll de pagina en scan opnieuw.';
-        renderResults(orders, results);
-      });
-    });
+  // ── Load synced IDs from storage ─────────────────────────────────────────
+  async function loadSyncedIds() {
+    const { syncedOrders = [] } = await chrome.storage.local.get(['syncedOrders']);
+    syncedIds = new Set(syncedOrders.map((o) => o.transactionId).filter(Boolean));
+    console.log('[Vault] loaded', syncedIds.size, 'synced IDs');
   }
 
-  function stylePanel(panel) {
-    const tab = panel.querySelector('#vault-tab');
-    Object.assign(tab.style, {
-      background:   INDIGO,
-      color:        '#fff',
-      writingMode:  'vertical-rl',
-      padding:      '14px 8px',
-      borderRadius: '8px 0 0 8px',
-      cursor:       'pointer',
-      fontSize:     '18px',
-      userSelect:   'none',
-      boxShadow:    '-2px 0 8px rgba(0,0,0,0.4)',
-      flexShrink:   '0',
-    });
-
-    const body = panel.querySelector('#vault-body');
-    Object.assign(body.style, {
-      width:        '300px',
-      maxHeight:    '80vh',
-      background:   DARK,
-      borderRadius: '12px 0 0 12px',
-      boxShadow:    '-4px 0 24px rgba(0,0,0,0.5)',
-      border:       `1px solid ${BORDER}`,
-      borderRight:  'none',
-      display:      'none',
-      flexDirection:'column',
-    });
-
-    const header = panel.querySelector('#vault-header');
-    Object.assign(header.style, {
-      background:   INDIGO,
-      color:        '#fff',
-      padding:      '12px 14px',
-      fontWeight:   '700',
-      fontSize:     '13px',
-      display:      'flex',
-      justifyContent:'space-between',
-      alignItems:   'center',
-      borderRadius: '12px 0 0 0',
-      flexShrink:   '0',
-    });
-
-    const closeBtn = panel.querySelector('#vault-close');
-    Object.assign(closeBtn.style, {
-      background:  'transparent',
-      border:      'none',
-      color:       '#fff',
-      cursor:      'pointer',
-      fontSize:    '14px',
-      padding:     '0 2px',
-      lineHeight:  '1',
-    });
-
-    const content = panel.querySelector('#vault-content');
-    Object.assign(content.style, {
-      padding:    '12px',
-      overflowY:  'auto',
-      maxHeight:  'calc(80vh - 44px)',
-    });
-
-    const scanBtn = panel.querySelector('#vault-scan-btn');
-    Object.assign(scanBtn.style, {
-      width:        '100%',
-      background:   INDIGO,
-      color:        '#fff',
-      border:       'none',
-      borderRadius: '8px',
-      padding:      '9px 0',
-      fontSize:     '13px',
-      fontWeight:   '600',
-      cursor:       'pointer',
-      marginBottom: '10px',
-    });
-
-    Object.assign(panel.querySelector('#vault-status').style, {
-      fontSize:     '11px',
-      color:        '#64748b',
-      marginBottom: '8px',
-      minHeight:    '16px',
-    });
-  }
-
-  // ── Order extraction ──────────────────────────────────────────────────────
-  function extractOrdersFromPage() {
-    const seen   = new Set();
-    const orders = [];
-
-    // Strategy 1 – transaction / item anchor links
-    const links = [
-      ...document.querySelectorAll(
-        'a[href*="/transaction"], a[href*="/transactions/"], a[href*="/items/"]'
-      ),
-    ];
-    console.log('[Vault] strategy-1 links found:', links.length);
-
-    links.forEach((link) => {
-      const href    = link.href;
-      const idMatch = href.match(/\/(?:transactions?|items)\/(\d+)/);
-      const key     = idMatch ? idMatch[1] : href;
-      if (seen.has(key)) return;
-      seen.add(key);
-      const card  = getCardContainer(link);
-      const order = parseCard(card, href, idMatch?.[1] ?? null);
-      if (order) orders.push(order);
-    });
-
-    // Strategy 2 – data-testid blocks
-    if (orders.length === 0) {
-      const candidates = new Set();
-      document.querySelectorAll('[data-testid]').forEach((el) => {
-        if (/transaction|order|purchase|sale|item/i.test(el.dataset.testid || '')) {
-          candidates.add(el);
-        }
-      });
-      console.log('[Vault] strategy-2 testid candidates:', candidates.size);
-      candidates.forEach((card) => {
-        const link    = card.querySelector('a[href]');
-        const href    = link?.href || location.href;
-        const idMatch = href.match(/\/(?:transactions?|items)\/(\d+)/);
-        const key     = idMatch ? idMatch[1] : card.textContent.slice(0, 40);
-        if (seen.has(key)) return;
-        seen.add(key);
-        const order = parseCard(card, href, idMatch?.[1] ?? null);
-        if (order) orders.push(order);
-      });
-    }
-
-    // Strategy 3 – any leaf element containing a € price
-    if (orders.length === 0) {
-      const priceEls = [...document.querySelectorAll('*')].filter((el) => {
-        if (el.children.length > 8) return false;
-        const t = el.textContent.trim();
-        return /€\s*\d/.test(t) && t.length < 400;
-      });
-      console.log('[Vault] strategy-3 price elements found:', priceEls.length);
-      priceEls.forEach((el) => {
-        const card  = getCardContainer(el);
-        const link  = card.querySelector('a[href]');
-        const href  = link?.href || location.href;
-        const key   = href + '|' + card.textContent.slice(0, 30);
-        if (seen.has(key)) return;
-        seen.add(key);
-        const order = parseCard(card, href, null);
-        if (order) orders.push(order);
-      });
-    }
-
-    return orders.slice(0, 50);
-  }
-
+  // ── DOM helpers ──────────────────────────────────────────────────────────
   function getCardContainer(el) {
     let node = el;
     for (let i = 0; i < 8; i++) {
       if (!node.parentElement || node.parentElement === document.body) break;
       node = node.parentElement;
       const tag = node.tagName?.toLowerCase();
-      if (['li', 'article', 'section'].includes(tag)) break;
+      if (['li', 'article'].includes(tag)) break;
       if (/item|card|row|transaction|order|purchase|sale|cell/i.test(node.className || '')) break;
     }
     return node;
   }
 
-  function parseCard(card, href, transactionId) {
-    if (!card) return null;
-    const text = (card.innerText || card.textContent || '').trim();
-    if (!text) return null;
+  function findOrderRows() {
+    const explicit = [
+      '[data-testid*="transaction"]', '[data-testid*="order"]', '[data-testid*="purchase"]',
+      '[class*="transaction--item"]', '[class*="transaction-item"]',
+      '[class*="order-item"]', '[class*="order-card"]', '[class*="sale-item"]',
+    ];
+    for (const sel of explicit) {
+      const els = [...document.querySelectorAll(sel)];
+      if (els.length > 0) { console.log('[Vault] rows via', sel, els.length); return els; }
+    }
+    // Fallback: parent containers of /transaction/ or /items/ links
+    const seen = new Set();
+    const rows = [];
+    document.querySelectorAll('a[href*="/transaction"], a[href*="/items/"]').forEach((a) => {
+      const c = getCardContainer(a);
+      if (!seen.has(c)) { seen.add(c); rows.push(c); }
+    });
+    console.log('[Vault] rows via link fallback:', rows.length);
+    return rows;
+  }
 
-    const priceMatch = text.match(/€\s*(\d+[,\.]\d{1,2})|(\d+[,\.]\d{1,2})\s*€/);
-    const rawPrice   = priceMatch ? (priceMatch[1] || priceMatch[2]) : null;
-    const price      = rawPrice ? parseFloat(rawPrice.replace(',', '.')) : null;
+  // ── Extract order data from a row element ─────────────────────────────────
+  const FLAG_MAP = {
+    '🇧🇪': 'BE', '🇳🇱': 'NL', '🇫🇷': 'FR', '🇩🇪': 'DE',
+    '🇬🇧': 'GB', '🇪🇸': 'ES', '🇮🇹': 'IT', '🇵🇱': 'PL',
+  };
+  const STATUS_RE = /^(alles|in behandeling|voltooid|geannuleerd|bestelling gepauzeerd|verzendlabel|de bestelling|betaald|verzonden|nieuw|verkocht|te koop|geleverd|afgerond|pending|bekijk|contact|meer laden|filters)/i;
 
-    const dateMatch = text.match(
-      /\b(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}|\d{1,2}\s+(?:jan|feb|mrt|apr|mei|jun|jul|aug|sep|okt|nov|dec)[a-z]*\.?\s*\d{0,4})\b/i
+  function extractOrder(row) {
+    const text = row.innerText || row.textContent || '';
+
+    // Transaction link & ID
+    const txLink  = row.querySelector('a[href*="/transaction"]');
+    const itemLink = row.querySelector('a[href*="/items/"]');
+    const anyLink  = txLink || itemLink;
+    const transactionId = (anyLink?.href || '').match(/\/(?:transaction[s]?|items)\/(\d+)/)?.[1] ?? null;
+
+    // Price
+    const pm = text.match(/€\s*(\d+[,\.]\d{1,2})|(\d+[,\.]\d{1,2})\s*€/);
+    const price = pm ? parseFloat((pm[1] || pm[2]).replace(',', '.')) : 0;
+
+    // Date
+    const dm = text.match(/\b(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}|\d{1,2}\s+(?:jan|feb|mrt|apr|mei|jun|jul|aug|sep|okt|nov|dec)[a-z]*\.?\s*\d{0,4})\b/i);
+    const date = dm ? dm[0].trim() : new Date().toLocaleDateString('nl-BE');
+
+    // Title
+    const lines = text.split('\n').map((l) => l.trim()).filter(
+      (l) => l.length > 10 && l.length < 120 &&
+        !/^€|\d+[,\.]\d+\s*€?$/.test(l) && !STATUS_RE.test(l)
     );
-    const date = dateMatch ? dateMatch[0].trim() : null;
-
-    const STATUS_RE = /^(alles|in behandeling|voltooid|geannuleerd|bestelling gepauzeerd|verzendlabel|de bestelling|betaald|verzonden|nieuw|verkocht|te koop|geleverd|afgerond|pending|bekijk|contact|meer laden|filters|sorteren|zoeken|inloggen|registreren)/i;
-    const lines = text
-      .split('\n')
-      .map((l) => l.trim())
-      .filter(
-        (l) =>
-          l.length > 10 &&
-          l.length < 120 &&
-          !/^€|^\d+[,\.]\d+\s*€?$/.test(l) &&
-          !STATUS_RE.test(l)
-      );
     const title = lines[0] || 'Onbekend item';
 
-    if (!price && !transactionId) return null;
+    // Buyer
+    const buyerEl = row.querySelector('[class*="user"], [class*="buyer"], [class*="username"]');
+    const buyer   = buyerEl?.textContent?.trim() || '';
+
+    // Country (flag emoji)
+    const flagMatch = text.match(/[\u{1F1E0}-\u{1F1FF}]{2}/u);
+    const country   = flagMatch ? (FLAG_MAP[flagMatch[0]] || '') : '';
+
+    // SKU (e.g. RIA001, IND012)
+    const skuMatch = text.match(/\b([A-Z]{2,4}\d{3,4})\b/);
+    const sku      = skuMatch ? skuMatch[1] : null;
+
+    // Label URL
+    const labelAnchor = row.querySelector('a[href*="label"], a[href*="verzend"], a[href*="shipment"]');
+    const labelUrl    = labelAnchor?.href ||
+      (transactionId ? `https://www.vinted.be/transaction/${transactionId}/label` : null);
 
     return {
       transactionId,
       title,
-      price:  price || 0,
-      date:   date || new Date().toLocaleDateString('nl-BE'),
-      url:    href,
+      price,
+      date,
+      buyer,
+      country,
+      sku,
+      labelUrl,
+      url: anyLink?.href || location.href,
     };
   }
 
-  // ── Render results inside panel ───────────────────────────────────────────
-  function renderResults(orders, container) {
-    orders.forEach((order) => {
-      const card = document.createElement('div');
-      Object.assign(card.style, {
-        background:   SURFACE,
-        borderRadius: '8px',
-        padding:      '10px',
-        marginBottom: '8px',
-        border:       `1px solid ${BORDER}`,
-      });
+  // ── Inject per-row UI ────────────────────────────────────────────────────
+  function injectRowUI(row, order) {
+    if (row.getAttribute(DONE_ATTR)) return;
+    row.setAttribute(DONE_ATTR, '1');
 
-      const titleEl = document.createElement('div');
-      titleEl.textContent = order.title;
-      Object.assign(titleEl.style, {
-        fontWeight:    '600',
-        color:         '#f1f5f9',
-        fontSize:      '12px',
-        marginBottom:  '3px',
-        whiteSpace:    'nowrap',
-        overflow:      'hidden',
-        textOverflow:  'ellipsis',
-        cursor:        order.url !== location.href ? 'pointer' : 'default',
-      });
-      if (order.url && order.url !== location.href) {
-        titleEl.title = 'Openen in nieuw tabblad';
-        titleEl.addEventListener('click', () => window.open(order.url, '_blank'));
-      }
+    const isSynced = order.transactionId && syncedIds.has(order.transactionId);
+    const key      = order.transactionId || (order.title + order.date);
 
-      const meta = document.createElement('div');
-      meta.textContent = [
-        order.price ? `€${order.price.toFixed(2).replace('.', ',')}` : null,
-        order.date,
-        order.transactionId ? `#${order.transactionId}` : null,
-      ].filter(Boolean).join(' · ');
-      Object.assign(meta.style, {
-        fontSize:     '11px',
-        color:        '#64748b',
-        marginBottom: '8px',
-      });
+    const wrap = document.createElement('div');
+    Object.assign(wrap.style, {
+      display: 'inline-flex', alignItems: 'center', gap: '5px',
+      margin: '4px 2px', position: 'relative', zIndex: '9998',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    });
 
-      const btn = document.createElement('button');
-      btn.textContent = '🏠 Sync naar Vault';
-      Object.assign(btn.style, {
-        width:        '100%',
-        background:   INDIGO,
-        color:        '#fff',
-        border:       'none',
-        borderRadius: '6px',
-        padding:      '6px 0',
-        fontSize:     '12px',
-        fontWeight:   '600',
-        cursor:       'pointer',
+    // Checkbox for label printing
+    const cb = document.createElement('input');
+    cb.type  = 'checkbox';
+    cb.title = 'Selecteer voor labels';
+    Object.assign(cb.style, { cursor: 'pointer', width: '14px', height: '14px', accentColor: INDIGO });
+    cb.addEventListener('change', () => {
+      cb.checked ? checkedOrders.set(key, order) : checkedOrders.delete(key);
+      updateLabelBar();
+    });
+
+    // Sync button or ✓ badge
+    let syncEl;
+    if (isSynced) {
+      syncEl = document.createElement('span');
+      syncEl.textContent = '✓';
+      syncEl.title = 'Al gesynchroniseerd met Vault';
+      Object.assign(syncEl.style, { color: GREEN, fontWeight: '700', fontSize: '14px' });
+    } else {
+      syncEl = document.createElement('button');
+      syncEl.textContent = 'Sync';
+      Object.assign(syncEl.style, {
+        background: INDIGO, color: '#fff', border: 'none', borderRadius: '5px',
+        padding: '3px 8px', fontSize: '11px', fontWeight: '600', cursor: 'pointer',
       });
-      btn.addEventListener('click', () => {
-        btn.textContent = '⏳ Bezig…';
-        btn.disabled = true;
-        chrome.runtime.sendMessage({ type: 'SYNC_ORDER', order }, (res) => {
-          if (res?.success) {
-            btn.textContent    = res.duplicate ? '✅ Al opgeslagen' : '✅ Gesynchroniseerd';
-            btn.style.background = GREEN;
-          } else {
-            btn.textContent    = '❌ Mislukt';
-            btn.style.background = RED;
-            setTimeout(() => {
-              btn.textContent    = '🏠 Sync naar Vault';
-              btn.style.background = INDIGO;
-              btn.disabled = false;
-            }, 2500);
+      syncEl.addEventListener('click', async (e) => {
+        e.preventDefault(); e.stopPropagation();
+        syncEl.textContent = '…'; syncEl.disabled = true;
+        const res = await new Promise((r) => chrome.runtime.sendMessage({ type: 'SYNC_ORDER', order }, r));
+        if (res?.success) {
+          syncEl.outerHTML = '<span style="color:' + GREEN + ';font-weight:700;font-size:14px" title="Gesynchroniseerd">✓</span>';
+          syncedIds.add(order.transactionId);
+        } else {
+          syncEl.textContent = '!'; syncEl.style.background = RED;
+          setTimeout(() => { syncEl.textContent = 'Sync'; syncEl.style.background = INDIGO; syncEl.disabled = false; }, 2000);
+        }
+      });
+    }
+
+    wrap.appendChild(cb);
+    wrap.appendChild(syncEl);
+
+    // Insert near action area or at end of row
+    const actions = row.querySelector('[class*="action"], [class*="button"], [class*="btn"]');
+    (actions || row).appendChild(wrap);
+  }
+
+  // ── Auto-scan & sync all orders ──────────────────────────────────────────
+  async function scanAndSync() {
+    if (scanActive) return;
+    scanActive = true;
+    try {
+      const rows = findOrderRows();
+      console.log('[Vault] scanning', rows.length, 'order rows');
+      for (const row of rows) {
+        const order = extractOrder(row);
+        // Auto-sync new orders silently
+        if (order.transactionId && !syncedIds.has(order.transactionId)) {
+          const res = await new Promise((r) =>
+            chrome.runtime.sendMessage({ type: 'SYNC_ORDER', order }, r)
+          );
+          if (res?.success && !res.duplicate) {
+            syncedIds.add(order.transactionId);
+            console.log('[Vault] auto-synced', order.transactionId, order.title);
           }
-        });
-      });
+        }
+        injectRowUI(row, order);
+      }
+    } finally {
+      scanActive = false;
+    }
+  }
 
-      card.appendChild(titleEl);
-      card.appendChild(meta);
-      card.appendChild(btn);
-      container.appendChild(card);
+  // ── Floating label-print bar ──────────────────────────────────────────────
+  function updateLabelBar() {
+    let bar = document.getElementById(BAR_ID);
+    const n = checkedOrders.size;
+    if (n === 0) { if (bar) bar.style.display = 'none'; return; }
+
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.id = BAR_ID;
+      Object.assign(bar.style, {
+        position: 'fixed', bottom: '0', left: '0', right: '0',
+        background: '#0f172a', borderTop: `2px solid ${INDIGO}`,
+        padding: '10px 20px', display: 'flex', alignItems: 'center',
+        justifyContent: 'space-between', zIndex: '2147483646',
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        boxShadow: '0 -4px 20px rgba(0,0,0,0.5)',
+      });
+      document.body.appendChild(bar);
+    }
+    bar.style.display = 'flex';
+    bar.innerHTML = `
+      <span style="color:#e2e8f0;font-size:13px;font-weight:600">${n} label${n > 1 ? 's' : ''} geselecteerd</span>
+      <button id="vault-print-btn" style="background:${INDIGO};color:#fff;border:none;border-radius:8px;padding:8px 18px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">
+        📥 Print labels (4×6)
+      </button>
+    `;
+    document.getElementById('vault-print-btn').addEventListener('click', printLabels);
+  }
+
+  async function printLabels() {
+    const btn = document.getElementById('vault-print-btn');
+    if (btn) { btn.textContent = '⏳ Bezig…'; btn.disabled = true; }
+
+    const orders    = [...checkedOrders.values()];
+    const labelUrls = orders.map((o) => o.labelUrl).filter(Boolean);
+    console.log('[Vault] printing labels:', labelUrls);
+
+    if (!labelUrls.length) {
+      alert('Geen label-URLs gevonden. Open elke bestelling om het label op te halen.');
+      if (btn) { btn.textContent = '📥 Print labels (4×6)'; btn.disabled = false; }
+      return;
+    }
+
+    chrome.runtime.sendMessage({ type: 'PRINT_LABELS', labelUrls }, (res) => {
+      if (res?.success) {
+        if (btn) btn.textContent = '✅ Gedownload!';
+        setTimeout(() => { if (btn) { btn.textContent = '📥 Print labels (4×6)'; btn.disabled = false; } }, 2500);
+      } else {
+        alert('PDF aanmaken mislukt: ' + (res?.error || 'onbekende fout'));
+        if (btn) { btn.textContent = '📥 Print labels (4×6)'; btn.disabled = false; }
+      }
     });
   }
 
   // ── Label page: floating download button ──────────────────────────────────
   function addLabelButton() {
     if (document.getElementById('vault-label-btn')) return;
-    console.log('[Vault] adding label download button');
-
     const btn = document.createElement('button');
     btn.id = 'vault-label-btn';
-    btn.textContent = '📥 Download 4x6';
+    btn.textContent = '📥 Download 4×6';
     Object.assign(btn.style, {
-      position:     'fixed',
-      bottom:       '30px',
-      right:        '30px',
-      zIndex:       '2147483647',
-      background:   INDIGO,
-      color:        '#fff',
-      border:       'none',
-      borderRadius: '10px',
-      padding:      '12px 22px',
-      fontSize:     '14px',
-      fontWeight:   '700',
-      cursor:       'pointer',
-      boxShadow:    '0 4px 16px rgba(79,70,229,0.5)',
-      fontFamily:   'inherit',
+      position: 'fixed', bottom: '28px', right: '28px', zIndex: '2147483647',
+      background: INDIGO, color: '#fff', border: 'none', borderRadius: '10px',
+      padding: '12px 22px', fontSize: '14px', fontWeight: '700', cursor: 'pointer',
+      boxShadow: '0 4px 16px rgba(79,70,229,0.5)',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     });
-
     btn.addEventListener('click', () => {
       const url = findLabelUrl();
-      console.log('[Vault] label URL found:', url);
       if (url) {
-        chrome.runtime.sendMessage({
-          type: 'DOWNLOAD_LABEL',
-          url,
-          filename: `label-vinted-${Date.now()}.pdf`,
-        });
-        btn.textContent    = '✅ Downloaden…';
-        btn.style.background = GREEN;
+        chrome.runtime.sendMessage({ type: 'DOWNLOAD_LABEL', url, filename: `label-${Date.now()}.pdf` });
+        btn.textContent = '✅ Downloaden…'; btn.style.background = GREEN;
       } else {
-        btn.textContent    = '❌ PDF niet gevonden';
-        btn.style.background = RED;
-        setTimeout(() => {
-          btn.textContent    = '📥 Download 4x6';
-          btn.style.background = INDIGO;
-        }, 2500);
+        btn.textContent = '❌ PDF niet gevonden'; btn.style.background = RED;
+        setTimeout(() => { btn.textContent = '📥 Download 4×6'; btn.style.background = INDIGO; }, 2500);
       }
     });
     document.body.appendChild(btn);
@@ -461,42 +326,46 @@
   }
 
   // ── Bootstrap ─────────────────────────────────────────────────────────────
-  let panelCreated = false;
-  let labelCreated = false;
+  let panelDone = false;
+  let labelDone = false;
 
-  function init() {
+  async function init() {
     const url = location.href;
-    console.log('[Vault] init() called for:', url);
-
-    // Red dot on every Vinted page
+    console.log('[Vault] init:', url);
     injectDebugDot();
 
-    if (isOrdersPage(url) && !panelCreated) {
-      panelCreated = true;
-      console.log('[Vault] orders page detected, creating panel');
-      createPanel();
+    if (isOrdersPage(url) && !panelDone) {
+      panelDone = true;
+      await loadSyncedIds();
+      // Wait for page content then scan; retry after 3 s for slow SPAs
+      setTimeout(() => scanAndSync(), 800);
+      setTimeout(() => scanAndSync(), 3000);
+      // Keep watching for lazy-loaded rows
+      const mo = new MutationObserver(() => scanAndSync());
+      mo.observe(document.body, { subtree: true, childList: true });
+      setTimeout(() => mo.disconnect(), 20000);
     }
 
-    if (isLabelPage(url) && !labelCreated) {
-      labelCreated = true;
-      addLabelButton();
+    if (isLabelPage(url) && !labelDone) {
+      labelDone = true;
+      setTimeout(addLabelButton, 800);
     }
   }
 
-  // SPA navigation watcher – runs immediately, no delay
+  // SPA navigation
   let lastUrl = location.href;
   new MutationObserver(() => {
-    const url = location.href;
-    if (url !== lastUrl) {
-      console.log('[Vault] URL changed:', lastUrl, '→', url);
-      lastUrl      = url;
-      panelCreated = false;
-      labelCreated = false;
-      // Small delay only to let the SPA render the new page skeleton
+    if (location.href !== lastUrl) {
+      console.log('[Vault] URL changed →', location.href);
+      lastUrl    = location.href;
+      panelDone  = false;
+      labelDone  = false;
+      checkedOrders.clear();
+      const bar = document.getElementById(BAR_ID);
+      if (bar) bar.style.display = 'none';
       setTimeout(init, 300);
     }
   }).observe(document, { subtree: true, childList: true });
 
-  // Run immediately — document_idle means DOM is already ready
   init();
 })();

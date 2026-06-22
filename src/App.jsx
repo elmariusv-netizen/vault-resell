@@ -81,6 +81,15 @@ export default function App() {
     })
   }, [activeUserId])
 
+  const handleUpdateSale = useCallback((updatedSale) => {
+    setData((prev) => {
+      if (!prev) return prev
+      const next = { ...prev, sales: prev.sales.map((s) => s.id === updatedSale.id ? updatedSale : s) }
+      saveData(next, activeUserId)
+      return next
+    })
+  }, [activeUserId])
+
   const handleDeleteSale = useCallback((saleId) => {
     setData((prev) => {
       if (!prev) return prev
@@ -193,7 +202,7 @@ export default function App() {
           {page === 'home'      && <Home {...props} theme={theme} />}
           {page === 'inventory' && <Inventory {...props} />}
           {page === 'new'       && <NewSKU {...props} />}
-          {page === 'verkopen'  && <Verkopen data={data} onDeleteSale={handleDeleteSale} updateData={updateData} />}
+          {page === 'verkopen'  && <Verkopen data={data} onDeleteSale={handleDeleteSale} onUpdateSale={handleUpdateSale} updateData={updateData} />}
           {page === 'stats'     && <Stats data={data} theme={theme} />}
           {page === 'settings'  && <Settings {...props} onExport={handleExport} activeUserId={activeUserId} />}
           {page === 'labels'    && <Labels data={data} />}

@@ -3,6 +3,7 @@ import {
   formatCurrency, formatDate, formatSkuRange, calcSaleProfit, normalizePlatform,
 } from '../utils/skuUtils'
 import SaleModal from '../components/SaleModal'
+import EditSaleModal from '../components/EditSaleModal'
 
 const SHORT = { 'Medeverkoper/Groothandel': 'B2B', 'Privé persoon': 'Privé' }
 const short = (p) => SHORT[p] || p
@@ -43,13 +44,14 @@ function markRegistered(syncedAt) {
   localStorage.setItem(REGISTERED_KEY, JSON.stringify([...reg]))
 }
 
-export default function Verkopen({ data, onDeleteSale, updateData }) {
+export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData }) {
   const { batches, sales, suppliers } = data
 
   const [search, setSearch] = useState('')
   const [filterPlatform, setFilterPlatform] = useState('all')
   const [filterMonth, setFilterMonth] = useState('all')
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
+  const [editSale, setEditSale] = useState(null)
 
   // ── Vinted Sync state ──────────────────────────────────────────────────
   const [vintedOrders, setVintedOrders] = useState([])
@@ -261,12 +263,12 @@ export default function Verkopen({ data, onDeleteSale, updateData }) {
                   <th>Prijs</th>
                   <th>Winst</th>
                   <th>Verzonden</th>
-                  <th style={{ width: 48 }} />
+                  <th style={{ width: 80 }} />
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((s) => (
-                  <tr key={s.id}>
+                  <tr key={s.id} style={{ cursor: 'pointer' }} onClick={() => setEditSale(s)}>
                     <td style={{ whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>
                       {formatDate(s.date)}
                     </td>
@@ -322,15 +324,25 @@ export default function Verkopen({ data, onDeleteSale, updateData }) {
                         ? <span style={{ fontSize: 11, color: 'var(--blue)', fontWeight: 600 }}>✓ {s.shippedDate ? formatDate(s.shippedDate) : 'ja'}</span>
                         : <span style={{ fontSize: 11, color: 'var(--text-3)' }}>—</span>}
                     </td>
-                    <td style={{ padding: '6px 10px' }}>
-                      <button
-                        className="btn btn-danger btn-sm btn-icon"
-                        onClick={() => setConfirmDeleteId(s.id)}
-                        title="Verwijder verkoop"
-                        style={{ fontSize: 13 }}
-                      >
-                        🗑
-                      </button>
+                    <td style={{ padding: '6px 10px' }} onClick={(e) => e.stopPropagation()}>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        <button
+                          className="btn btn-ghost btn-sm btn-icon"
+                          onClick={() => setEditSale(s)}
+                          title="Bewerk verkoop"
+                          style={{ fontSize: 13 }}
+                        >
+                          ✏️
+                        </button>
+                        <button
+                          className="btn btn-danger btn-sm btn-icon"
+                          onClick={() => setConfirmDeleteId(s.id)}
+                          title="Verwijder verkoop"
+                          style={{ fontSize: 13 }}
+                        >
+                          🗑
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -341,7 +353,7 @@ export default function Verkopen({ data, onDeleteSale, updateData }) {
           {/* Mobile cards */}
           <div className="sales-cards-mobile">
             {filtered.map((s) => (
-              <div key={s.id} className="sale-card-mobile">
+              <div key={s.id} className="sale-card-mobile" style={{ cursor: 'pointer' }} onClick={() => setEditSale(s)}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
                   {s.photo ? (
                     <img src={s.photo} alt="" style={{ width: 42, height: 42, borderRadius: 8, objectFit: 'cover', flexShrink: 0, border: '1px solid var(--border)' }} />
@@ -380,7 +392,14 @@ export default function Verkopen({ data, onDeleteSale, updateData }) {
                     )}
                   </div>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 10 }}>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 10 }} onClick={(e) => e.stopPropagation()}>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => setEditSale(s)}
+                    style={{ fontSize: 11 }}
+                  >
+                    ✏️ Bewerk
+                  </button>
                   <button
                     className="btn btn-danger btn-sm"
                     onClick={() => setConfirmDeleteId(s.id)}
@@ -393,6 +412,15 @@ export default function Verkopen({ data, onDeleteSale, updateData }) {
             ))}
           </div>
         </>
+      )}
+
+      {editSale && (
+        <EditSaleModal
+          data={data}
+          sale={editSale}
+          onClose={() => setEditSale(null)}
+          onSave={(updated) => { onUpdateSale(updated); setEditSale(null) }}
+        />
       )}
 
       {saleModalPrefill && (
