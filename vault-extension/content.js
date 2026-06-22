@@ -4,8 +4,6 @@
   console.log('[Vault] content script loaded on', location.href);
 
   // ── Constants ─────────────────────────────────────────────────────────────
-  const DONE_ATTR = 'data-vault-done';
-  const DOT_ID    = 'vault-debug-dot';
   const PANEL_ID  = 'vault-label-panel';
   const TOG_ID    = 'vault-panel-toggle';
   const INDIGO    = '#4f46e5';
@@ -24,27 +22,9 @@
     return `https://www.vinted.be/api/v2/transactions/${transactionId}/shipment/pdf_label`;
   }
 
-  // ── Debug dot ─────────────────────────────────────────────────────────────
-  function injectDebugDot() {
-    if (document.getElementById(DOT_ID)) return;
-    const dot = document.createElement('div');
-    dot.id = DOT_ID;
-    dot.title = 'Vault Resell actief';
-    Object.assign(dot.style, {
-      position: 'fixed', bottom: '6px', left: '6px',
-      width: '10px', height: '10px', borderRadius: '50%',
-      background: RED, zIndex: '2147483647',
-      pointerEvents: 'none', boxShadow: '0 0 0 2px #fff',
-    });
-    (document.body || document.documentElement).appendChild(dot);
-  }
-
   // ── Page detection ────────────────────────────────────────────────────────
   function isOrdersPage(url) {
     return /\/(my[-_\/]?(orders?|purchases?|sales?|transactions?|bestellingen?))/i.test(url);
-  }
-  function isLabelPage(url) {
-    return /\/(label|print[-_]label|shipment|verzending|verzendbewijs)/i.test(url);
   }
 
   // ── Load synced IDs from storage ──────────────────────────────────────────
@@ -157,52 +137,6 @@
     };
   }
 
-  // ── Inject per-row sync button ────────────────────────────────────────────
-  function injectRowUI(row, order) {
-    if (row.getAttribute(DONE_ATTR)) return;
-    row.setAttribute(DONE_ATTR, '1');
-
-    const isSynced = order.transactionId && syncedIds.has(order.transactionId);
-
-    const wrap = document.createElement('div');
-    Object.assign(wrap.style, {
-      display: 'inline-flex', alignItems: 'center', gap: '5px',
-      margin: '4px 2px', position: 'relative', zIndex: '9998',
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    });
-
-    let syncEl;
-    if (isSynced) {
-      syncEl = document.createElement('span');
-      syncEl.textContent = '✓';
-      syncEl.title = 'Al gesynchroniseerd met Vault';
-      Object.assign(syncEl.style, { color: GREEN, fontWeight: '700', fontSize: '14px' });
-    } else {
-      syncEl = document.createElement('button');
-      syncEl.textContent = 'Sync';
-      Object.assign(syncEl.style, {
-        background: INDIGO, color: '#fff', border: 'none', borderRadius: '5px',
-        padding: '3px 8px', fontSize: '11px', fontWeight: '600', cursor: 'pointer',
-      });
-      syncEl.addEventListener('click', async (e) => {
-        e.preventDefault(); e.stopPropagation();
-        syncEl.textContent = '…'; syncEl.disabled = true;
-        const res = await new Promise((r) => chrome.runtime.sendMessage({ type: 'SYNC_ORDER', order }, r));
-        if (res?.success) {
-          syncEl.outerHTML = '<span style="color:' + GREEN + ';font-weight:700;font-size:14px" title="Gesynchroniseerd">✓</span>';
-          syncedIds.add(order.transactionId);
-        } else {
-          syncEl.textContent = '!'; syncEl.style.background = RED;
-          setTimeout(() => { syncEl.textContent = 'Sync'; syncEl.style.background = INDIGO; syncEl.disabled = false; }, 2000);
-        }
-      });
-    }
-
-    wrap.appendChild(syncEl);
-    const actions = row.querySelector('[class*="action"], [class*="button"], [class*="btn"]');
-    (actions || row).appendChild(wrap);
-  }
-
   // ── Toggle button (floating, bottom-right) ────────────────────────────────
   function injectToggleButton() {
     if (document.getElementById(TOG_ID)) return;
@@ -211,10 +145,10 @@
     btn.textContent = '🏷';
     btn.title = 'Vault Labels openen';
     Object.assign(btn.style, {
-      position: 'fixed', bottom: '24px', right: '24px', zIndex: '2147483647',
-      background: INDIGO, color: '#fff', border: 'none', borderRadius: '50%',
-      width: '48px', height: '48px', fontSize: '22px', cursor: 'pointer',
-      boxShadow: '0 4px 16px rgba(79,70,229,0.5)',
+      position: 'fixed', bottom: '20px', right: '20px', zIndex: '2147483647',
+      background: GREEN, color: '#fff', border: 'none', borderRadius: '50%',
+      width: '50px', height: '50px', fontSize: '22px', cursor: 'pointer',
+      boxShadow: '0 4px 16px rgba(22,163,74,0.5)',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: '1',
     });
@@ -413,7 +347,6 @@
             console.log('[Vault] auto-synced', order.transactionId, order.title);
           }
         }
-        injectRowUI(row, order);
       }
       if (panelOpen) renderPanel();
     } finally {
@@ -421,57 +354,12 @@
     }
   }
 
-  // ── Label page: floating download button ──────────────────────────────────
-  function addLabelButton() {
-    if (document.getElementById('vault-label-btn')) return;
-    const btn = document.createElement('button');
-    btn.id = 'vault-label-btn';
-    btn.textContent = '📥 Download 4×6';
-    Object.assign(btn.style, {
-      position: 'fixed', bottom: '28px', right: '28px', zIndex: '2147483647',
-      background: INDIGO, color: '#fff', border: 'none', borderRadius: '10px',
-      padding: '12px 22px', fontSize: '14px', fontWeight: '700', cursor: 'pointer',
-      boxShadow: '0 4px 16px rgba(79,70,229,0.5)',
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    });
-    btn.addEventListener('click', () => {
-      const url = findLabelUrl();
-      if (url) {
-        chrome.runtime.sendMessage({ type: 'DOWNLOAD_LABEL', url, filename: `label-${Date.now()}.pdf` });
-        btn.textContent = '✅ Downloaden…'; btn.style.background = GREEN;
-      } else {
-        btn.textContent = '❌ PDF niet gevonden'; btn.style.background = RED;
-        setTimeout(() => { btn.textContent = '📥 Download 4×6'; btn.style.background = INDIGO; }, 2500);
-      }
-    });
-    document.body.appendChild(btn);
-  }
-
-  function findLabelUrl() {
-    for (const el of document.querySelectorAll('iframe')) {
-      if (/pdf|label/i.test(el.src)) return el.src;
-    }
-    for (const el of document.querySelectorAll('a')) {
-      if (/\.pdf|label/i.test(el.href)) return el.href;
-    }
-    try {
-      const data = window.__NEXT_DATA__ || window.__INITIAL_STATE__;
-      if (data) {
-        const m = JSON.stringify(data).match(/"(https?:[^"]+\.pdf[^"]*)"/);
-        if (m) return m[1];
-      }
-    } catch (_) { /* ignore */ }
-    return null;
-  }
-
   // ── Bootstrap ─────────────────────────────────────────────────────────────
   let panelDone = false;
-  let labelDone = false;
 
   async function init() {
     const url = location.href;
     console.log('[Vault] init:', url);
-    injectDebugDot();
 
     if (isOrdersPage(url) && !panelDone) {
       panelDone = true;
@@ -485,11 +373,6 @@
       const mo = new MutationObserver(() => scanAndSync());
       mo.observe(document.body, { subtree: true, childList: true });
       setTimeout(() => mo.disconnect(), 20000);
-    }
-
-    if (isLabelPage(url) && !labelDone) {
-      labelDone = true;
-      setTimeout(addLabelButton, 800);
     }
   }
 
@@ -509,7 +392,6 @@
       console.log('[Vault] URL changed →', location.href);
       lastUrl   = location.href;
       panelDone = false;
-      labelDone = false;
       panelOpen = false;
       allOrders = [];
       document.getElementById(PANEL_ID)?.remove();
