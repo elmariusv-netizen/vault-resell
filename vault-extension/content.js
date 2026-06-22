@@ -57,7 +57,10 @@
 
   function findOrderRows() {
     const explicit = [
-      // data-testid patterns (most stable across Vinted updates)
+      // Exact Vinted testids (confirmed on /my_orders)
+      '[data-testid="my-orders-item"]',
+      // Broader testid fallbacks
+      '[data-testid*="my-orders-item"]',
       '[data-testid*="sold-item"]',
       '[data-testid*="transaction-item"]',
       '[data-testid*="transaction"]',
@@ -151,11 +154,16 @@
     const dm = text.match(/\b(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}|\d{1,2}\s+(?:jan|feb|mrt|apr|mei|jun|jul|aug|sep|okt|nov|dec)[a-z]*\.?\s*\d{0,4})\b/i);
     const date = dm ? dm[0].trim() : new Date().toLocaleDateString('nl-BE');
 
-    const lines = text.split('\n').map((l) => l.trim()).filter(
-      (l) => l.length > 10 && l.length < 120 &&
-        !/^€|\d+[,\.]\d+\s*€?$/.test(l) && !STATUS_RE.test(l)
-    );
-    const title = lines[0] || 'Onbekend item';
+    // Use confirmed Vinted testids first, fall back to text heuristics
+    const titleEl = row.querySelector('[data-testid="my-orders-item--title"]');
+    const title   = titleEl?.textContent?.trim()
+      || (() => {
+        const lines = text.split('\n').map((l) => l.trim()).filter(
+          (l) => l.length > 10 && l.length < 120 &&
+            !/^€|\d+[,\.]\d+\s*€?$/.test(l) && !STATUS_RE.test(l)
+        );
+        return lines[0] || 'Onbekend item';
+      })();
 
     const buyerEl = row.querySelector('[class*="user"], [class*="buyer"], [class*="username"]');
     const buyer   = buyerEl?.textContent?.trim() || '';
@@ -166,9 +174,9 @@
     const skuMatch = text.match(/\b([A-Z]{2,4}\d{3,4})\b/);
     const sku      = skuMatch ? skuMatch[1] : null;
 
-    const imgEl = row.querySelector(
-      'img[src*="freetls.fastly.net"], img[src*="vinted-static"], img[src*="cloudfront"], img[src*="vinted.com"]'
-    );
+    // Use confirmed Vinted testid for photo, fall back to CDN src patterns
+    const imgEl = row.querySelector('[data-testid="my-orders-item-image--img"]')
+      || row.querySelector('img[src*="freetls.fastly.net"], img[src*="vinted-static"], img[src*="cloudfront"], img[src*="vinted.com"]');
     const photo = imgEl?.src || null;
 
     return {
