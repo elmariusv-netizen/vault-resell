@@ -78,12 +78,29 @@
   function parseItemsDoc(doc) {
     // 1. Try embedded Next.js JSON (most reliable)
     try {
-      const nd  = doc.getElementById('__NEXT_DATA__');
+      const nd = doc.getElementById('__NEXT_DATA__');
       if (nd) {
-        const pp  = JSON.parse(nd.textContent)?.props?.pageProps || {};
-        const raw = pp.items || pp.currentUserItems || pp.wardrobe?.items || pp.catalog?.items || [];
+        const json = JSON.parse(nd.textContent);
+        const pp   = json?.props?.pageProps || {};
+        console.log('[Vault] __NEXT_DATA__ pageProps keys:', Object.keys(pp));
+
+        // Walk all likely paths
+        const raw =
+          pp.items                  ||
+          pp.currentUserItems       ||
+          pp.wardrobe?.items        ||
+          pp.catalog?.items         ||
+          pp.profile?.items         ||
+          pp.user?.items            ||
+          pp.member?.items          ||
+          pp.closet?.items          ||
+          // Some versions nest under 'initialState'
+          json?.props?.initialState?.catalog?.items ||
+          json?.props?.initialState?.wardrobe?.items ||
+          [];
+
         if (raw.length) {
-          console.log('[Vault] listings from __NEXT_DATA__:', raw.length);
+          console.log('[Vault] listings from __NEXT_DATA__:', raw.length, 'keys:', Object.keys(raw[0] || {}));
           return raw.map(o => ({
             itemId: String(o.id || ''),
             title:  o.title || '?',
@@ -95,8 +112,9 @@
             url:    o.url || `https://www.vinted.be/items/${o.id}`,
           }));
         }
+        console.log('[Vault] __NEXT_DATA__ found but no items array. Full dump:', JSON.stringify(pp).slice(0, 800));
       }
-    } catch {}
+    } catch (e) { console.warn('[Vault] __NEXT_DATA__ error:', e.message); }
 
     // 2. DOM card fallback
     const cards = [...doc.querySelectorAll(
@@ -184,6 +202,7 @@
       buyer:   o.buyer?.login  || o.user?.login  || '',
       country: o.buyer?.country_iso_code || o.country_iso_code || '',
       date:    (o.created_at || o.updated_at || '').slice(0, 10),
+      status:  (o.status || o.shipment?.status || '').toLowerCase(),
       convId:  null,
     }));
     await cSet('v_sold', orders);
@@ -654,7 +673,14 @@
   async function tabLabels(content, footer) {
     await loadDlIds();
     const orders  = await getSold();
-    const pending = orders.filter(o => o.transactionId && !dlIds.has(o.transactionId));
+    // Only orders that haven't shipped yet — exclude anything confirmed dispatched
+    const SHIPPED = new Set(['shipped','delivered','completed','received','rated','cancelled','refunded']);
+    const pending = orders.filter(o =>
+      o.transactionId &&
+      !dlIds.has(o.transactionId) &&
+      !SHIPPED.has(o.status),
+    );
+    console.log('[Vault] labels pending:', pending.length, 'of', orders.length, 'total sold');
     content.innerHTML = '';
     footer.innerHTML  = '';
 

@@ -227,18 +227,27 @@ async function mergeAndDownloadLabels(labelUrls, transactionIds) {
           continue;
         }
 
-        // Embed page into merged PDF
+        // Embed page into merged PDF — Munbyn 4×6 thermal, no side margins
         const src = await PDFDocument.load(bytes, { ignoreEncryption: true });
         if (!src.getPageCount()) continue;
 
         const [embedded] = await merged.embedPages([src.getPages()[0]]);
         const { width: sw, height: sh } = embedded.size();
-        const scale = Math.min(PW / sw, PH / sh);
-        const page  = merged.addPage([PW, PH]);
+        const page = merged.addPage([PW, PH]);
+
+        // Scale to fill full 4" (288pt) width — no left/right margins.
+        // A4 (595pt) at this scale → height ≈ 407pt, fits in 6" (432pt) with ~25pt blank at bottom.
+        // Non-A4 source pages scale up/down to fill width the same way.
+        const scale  = PW / sw;
+        const drawW  = PW;
+        const drawH  = sh * scale;
+        // Align label content to top of thermal page
+        const drawY  = Math.max(0, PH - drawH);
         page.drawPage(embedded, {
-          x: (PW - sw * scale) / 2, y: (PH - sh * scale) / 2,
-          width: sw * scale, height: sh * scale,
+          x: 0, y: drawY,
+          width: drawW, height: Math.min(drawH, PH),
         });
+        console.log('[Vault] label page', txId, 'src', Math.round(sw), 'x', Math.round(sh), '→ draw', Math.round(drawW), 'x', Math.round(drawH), 'y=', Math.round(drawY));
 
         if (txId) successIds.push(txId);
 
