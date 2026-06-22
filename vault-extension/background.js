@@ -1,5 +1,25 @@
 importScripts('pdf-lib.min.js');
 
+// ── Vinted headers (service worker reads cookies via chrome.cookies) ───────
+async function getVintedHeaders() {
+  const getCookie = (name) => new Promise(resolve => {
+    chrome.cookies.get({ url: 'https://www.vinted.be', name }, c => {
+      resolve(c?.value || '');
+    });
+  });
+  const [csrf, anonId] = await Promise.all([
+    getCookie('_vinted_csrf_token'),
+    getCookie('_vinted_anon_id'),
+  ]);
+  console.log('[Vault] headers — csrf:', csrf ? csrf.slice(0, 12) + '…' : '(none)', 'anonId:', anonId ? anonId.slice(0, 8) + '…' : '(none)');
+  return {
+    'accept':       'application/json,text/plain,*/*,image/webp',
+    'locale':       'nl-BE',
+    'x-csrf-token': csrf,
+    'x-anon-id':    anonId,
+  };
+}
+
 // ── Supabase config ───────────────────────────────────────────────────────
 const SUPABASE_URL = 'https://dusffpxcheojvjwuqgwo.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_yQfFPaNA3hWHVWxqbagLrQ_U1oYPDxc';
@@ -179,8 +199,9 @@ async function updateDailyStats(order) {
 async function mergeAndDownloadLabels(labelUrls, transactionIds) {
   try {
     const { PDFDocument } = PDFLib;
-    const merged = await PDFDocument.create();
+    const merged  = await PDFDocument.create();
     const PW = 288, PH = 432; // 4×6 inches at 72 dpi
+    const headers = await getVintedHeaders();
 
     const { interceptedLabels = [] } = await chrome.storage.local.get(['interceptedLabels']);
     const existingIds = new Set(interceptedLabels.map((l) => l.orderId).filter(Boolean));
@@ -192,10 +213,11 @@ async function mergeAndDownloadLabels(labelUrls, transactionIds) {
       const url  = labelUrls[i];
       const txId = transactionIds[i] || null;
       try {
-        console.log('[Vault] fetching label for transaction', txId, url);
-        const resp = await fetch(url, { credentials: 'include' });
+        console.log('[Vault] fetching label txn', txId, url);
+        const resp = await fetch(url, { credentials: 'include', headers });
+        console.log('[Vault] label response:', resp.status, resp.statusText, 'content-type:', resp.headers.get('content-type'));
         if (!resp.ok) {
-          console.warn('[Vault] label fetch failed:', url, resp.status, resp.statusText);
+          console.warn('[Vault] label fetch FAILED:', resp.status, resp.statusText, url);
           continue;
         }
 
