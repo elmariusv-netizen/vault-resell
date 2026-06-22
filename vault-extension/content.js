@@ -230,12 +230,34 @@
             <span style="display:block;color:#64748b;font-size:11px;margin-top:2px">#${order.transactionId}${price ? ' · ' + price : ''}</span>
           </span>
           <span title="${done ? 'Label al gedownload' : 'Nog niet gedownload'}" style="color:${done ? GREEN : '#475569'};font-size:${done ? '17px' : '13px'};flex-shrink:0;line-height:1">${done ? '✓' : '⏳'}</span>
+          <button data-sync-idx="${i}" title="Sync naar Supabase" style="background:none;border:none;color:#475569;cursor:pointer;padding:2px 4px;font-size:14px;flex-shrink:0;line-height:1;border-radius:4px">☁</button>
         </label>
       `;
     }).join('');
 
     list.querySelectorAll('input[type=checkbox]').forEach((cb) => {
       cb.addEventListener('change', updateSelectedCount);
+    });
+
+    list.querySelectorAll('button[data-sync-idx]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const idx   = parseInt(btn.dataset.syncIdx, 10);
+        const order = withTx[idx];
+        if (!order) return;
+        btn.textContent = '⏳';
+        chrome.runtime.sendMessage({ type: 'SYNC_TO_SUPABASE', order }, (res) => {
+          if (res?.success) {
+            btn.textContent = '✓';
+            btn.style.color = GREEN;
+          } else {
+            btn.textContent = '!';
+            btn.style.color = RED;
+          }
+          setTimeout(() => { btn.textContent = '☁'; btn.style.color = '#475569'; }, 2500);
+        });
+      });
     });
 
     if (allBtn) allBtn.textContent = `Print alle labels (${withTx.length})`;

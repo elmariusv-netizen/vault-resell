@@ -4,6 +4,7 @@ import {
 } from '../utils/skuUtils'
 import SaleModal from '../components/SaleModal'
 import EditSaleModal from '../components/EditSaleModal'
+import { supabase } from '../utils/supabase'
 
 const SHORT = { 'Medeverkoper/Groothandel': 'B2B', 'Privé persoon': 'Privé' }
 const short = (p) => SHORT[p] || p
@@ -29,19 +30,36 @@ function parseVintedDate(str) {
   return new Date().toISOString().split('T')[0]
 }
 
-const SYNC_KEY       = 'vault-vinted-sync'
-const REGISTERED_KEY = 'vault-vinted-registered'
+function rowToOrder(row) {
+  return {
+    id:            row.id,
+    transactionId: row.transaction_id || row.id,
+    title:         row.title || 'Onbekend item',
+    price:         row.price || 0,
+    date:          row.synced_at?.split('T')[0] || new Date().toISOString().split('T')[0],
+    buyer:         row.buyer || '',
+    country:       row.country || '',
+    url:           row.item_url || '',
+    labelUrl:      row.label_url || '',
+    syncedAt:      row.synced_at,
+  }
+}
 
-function readVintedOrders() {
-  try { return JSON.parse(localStorage.getItem(SYNC_KEY) || '[]') } catch { return [] }
+async function fetchUnregisteredOrders() {
+  const { data, error } = await supabase
+    .from('vinted_orders')
+    .select('*')
+    .eq('registered_in_vault', false)
+    .order('synced_at', { ascending: false })
+  if (error) { console.warn('[Vault] Supabase fetch error:', error); return [] }
+  return (data || []).map(rowToOrder)
 }
-function readRegistered() {
-  try { return new Set(JSON.parse(localStorage.getItem(REGISTERED_KEY) || '[]')) } catch { return new Set() }
-}
-function markRegistered(syncedAt) {
-  const reg = readRegistered()
-  reg.add(syncedAt)
-  localStorage.setItem(REGISTERED_KEY, JSON.stringify([...reg]))
+
+async function markRegisteredInSupabase(orderId) {
+  await supabase
+    .from('vinted_orders')
+    .update({ registered_in_vault: true })
+    .eq('id', orderId)
 }
 
 export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData }) {
@@ -58,29 +76,25 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData 
   const [saleModalPrefill, setSaleModalPrefill] = useState(null)
 
   useEffect(() => {
-    const load = () => {
-      const all = readVintedOrders()
-      const registered = readRegistered()
-      setVintedOrders(all.filter((o) => !registered.has(o.syncedAt)))
-    }
-    load()
-    // Re-check when extension bridge writes (storage event from same-origin)
-    window.addEventListener('storage', load)
-    return () => window.removeEventListener('storage', load)
+    let cancelled = false
+    fetchUnregisteredOrders().then((orders) => {
+      if (!cancelled) setVintedOrders(orders)
+    })
+    return () => { cancelled = true }
   }, [])
 
   const openSaleModal = (order) => {
     setSaleModalPrefill({
-      buyer:  order.buyer !== 'Onbekende koper' ? order.buyer : '',
-      price:  order.price || '',
-      date:   parseVintedDate(order.date),
-      url:    order.url || '',
-      notes:  order.transactionId ? `Vinted #${order.transactionId}` : '',
-      _syncedAt: order.syncedAt,
+      buyer:      order.buyer !== 'Onbekende koper' ? order.buyer : '',
+      price:      order.price || '',
+      date:       parseVintedDate(order.date),
+      url:        order.url || '',
+      notes:      order.transactionId ? `Vinted #${order.transactionId}` : '',
+      _orderId:   order.id,
     })
   }
 
-  const handleSaleModalSave = (sale) => {
+  const handleSaleModalSave = async (sale) => {
     const updates = { sales: [...sales, sale] }
     if (sale.fromLive) {
       updates.batches = batches.map((b) =>
@@ -88,17 +102,16 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData 
       )
     }
     updateData(updates)
-    // Mark as registered so bridge.js filters it out on next push
-    if (saleModalPrefill?._syncedAt) {
-      markRegistered(saleModalPrefill._syncedAt)
-      setVintedOrders((prev) => prev.filter((o) => o.syncedAt !== saleModalPrefill._syncedAt))
+    if (saleModalPrefill?._orderId) {
+      await markRegisteredInSupabase(saleModalPrefill._orderId)
+      setVintedOrders((prev) => prev.filter((o) => o.id !== saleModalPrefill._orderId))
     }
     setSaleModalPrefill(null)
   }
 
-  const dismissVintedOrder = (syncedAt) => {
-    markRegistered(syncedAt)
-    setVintedOrders((prev) => prev.filter((o) => o.syncedAt !== syncedAt))
+  const dismissVintedOrder = async (orderId) => {
+    await markRegisteredInSupabase(orderId)
+    setVintedOrders((prev) => prev.filter((o) => o.id !== orderId))
   }
 
   const platforms = useMemo(() => {
@@ -172,7 +185,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData 
           <div>
             {vintedOrders.map((order) => (
               <div
-                key={order.syncedAt || order.transactionId}
+                key={order.id || order.transactionId}
                 style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}
               >
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -197,7 +210,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData 
                 </button>
                 <button
                   className="btn btn-ghost btn-sm btn-icon"
-                  onClick={() => dismissVintedOrder(order.syncedAt)}
+                  onClick={() => dismissVintedOrder(order.id)}
                   title="Verwijder uit lijst"
                   style={{ fontSize: 14, flexShrink: 0 }}
                 >

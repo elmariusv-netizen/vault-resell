@@ -1,5 +1,40 @@
 importScripts('pdf-lib.min.js');
 
+// ── Supabase config ───────────────────────────────────────────────────────
+const SUPABASE_URL = 'https://dusffpxcheojvjwuqgwo.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_yQfFPaNA3hWHVWxqbagLrQ_U1oYPDxc';
+
+async function syncToSupabase(order) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/vinted_orders`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'apikey': SUPABASE_KEY,
+        'Prefer': 'resolution=merge-duplicates',
+      },
+      body: JSON.stringify({
+        id:             order.transactionId,
+        transaction_id: order.transactionId,
+        title:          order.title,
+        price:          order.price || 0,
+        buyer:          order.buyer || '',
+        country:        order.country || '',
+        status:         order.status || 'synced',
+        item_url:       order.url || '',
+        label_url:      order.labelUrl || '',
+      }),
+    });
+    if (!res.ok) console.warn('[Vault] Supabase sync failed:', res.status, await res.text());
+    else console.log('[Vault] Supabase synced:', order.transactionId);
+    return res.ok;
+  } catch (e) {
+    console.error('[Vault] Supabase error:', e);
+    return false;
+  }
+}
+
 // ── Download interception ─────────────────────────────────────────────────
 chrome.downloads.onCreated.addListener((item) => {
   if (isVintedLabel(item)) interceptLabel(item);
@@ -74,6 +109,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     syncOrder(message.order).then(sendResponse);
     return true;
   }
+  if (message.type === 'SYNC_TO_SUPABASE') {
+    syncToSupabase(message.order).then((ok) => sendResponse({ success: ok }));
+    return true;
+  }
   if (message.type === 'PRINT_LABELS') {
     mergeAndDownloadLabels(message.labelUrls, message.transactionIds || []).then(sendResponse);
     return true;
@@ -113,6 +152,7 @@ async function syncOrder(order) {
     if (syncedOrders.length > 200) syncedOrders.splice(200);
     await chrome.storage.local.set({ syncedOrders });
     await updateDailyStats(order);
+    await syncToSupabase(order);
     return { success: true };
   } catch (err) {
     console.error('[Vault] sync error', err);

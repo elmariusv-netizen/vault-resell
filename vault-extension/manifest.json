@@ -8,6 +8,7 @@
     "https://*.vinted.be/*",
     "https://*.vinted.com/*",
     "https://*.vinted.nl/*",
+    "https://dusffpxcheojvjwuqgwo.supabase.co/*",
     "http://localhost:*/*",
     "http://127.0.0.1:*/*"
   ],
