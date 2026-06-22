@@ -13,16 +13,15 @@
   };
 
   // ── Constants ──────────────────────────────────────────────────────────────
-  const MY_LOGIN = 'elmariusv';
-  const OV_ID    = 'vault-overlay';
-  const BTN_ID   = 'vault-fab';
+  const MY_USER_ID = '48695306';
+  const OV_ID      = 'vault-overlay';
+  const BTN_ID     = 'vault-fab';
 
   // ── Runtime state ──────────────────────────────────────────────────────────
   let overlayOpen = false;
   let activeTab   = 'zoekertjes';
-  let myUserId    = null;
-  let syncedIds   = new Set();
-  let dlIds       = new Set();
+  let syncedIds = new Set();
+  let dlIds     = new Set();
 
   // In-memory cache (backed by chrome.storage.session where available)
   const mem = {};
@@ -63,33 +62,39 @@
     return r.json();
   }
 
-  async function getMyUserId() {
-    if (myUserId) return myUserId;
-    const cached = await cGet('v_uid');
-    if (cached) { myUserId = cached; return cached; }
-    const d = await vGet(`/api/v2/users?login=${MY_LOGIN}`);
-    const id = String(d.users?.[0]?.id || d.user?.id || '');
-    if (id) { myUserId = id; await cSet('v_uid', id); }
-    console.log('[Vault] user ID:', id);
-    return id;
-  }
-
+  // Try multiple endpoint variants until one returns items
   async function getListings() {
     const c = await cGet('v_list'); if (c) return c;
-    const uid = await getMyUserId();
-    if (!uid) throw new Error('Kan gebruiker niet vinden');
-    const d = await vGet(`/api/v2/users/${uid}/items?per_page=50&order=newest_first`);
-    console.log('[Vault] listings sample:', JSON.stringify(d.items?.[0] || {}).slice(0, 300));
-    const items = (d.items || []).map(o => ({
+
+    const endpoints = [
+      `/api/v2/users/${MY_USER_ID}/items?per_page=50&order=newest_first`,
+      `/api/v2/items?user_id=${MY_USER_ID}&per_page=50`,
+      `/api/v2/catalog/items?user_id=${MY_USER_ID}&per_page=50`,
+    ];
+
+    let raw = [];
+    for (const path of endpoints) {
+      try {
+        const d = await vGet(path);
+        raw = d.items || d.catalog_items || [];
+        console.log(`[Vault] listings via ${path}: ${raw.length} items`);
+        if (raw.length) break;
+      } catch (e) {
+        console.warn(`[Vault] listings endpoint failed (${path}):`, e.message);
+      }
+    }
+
+    const items = raw.map(o => ({
       itemId: String(o.id || ''),
       title:  o.title || '?',
       photo:  o.photos?.[0]?.url || o.photo?.url || null,
-      price:  parseFloat(o.price || 0),
-      views:  o.view_count || 0,
+      price:  parseFloat(o.price?.amount || o.price || 0),
+      views:  o.view_count || o.stats?.views || 0,
       status: o.status || 'active',
       date:   (o.created_at || '').slice(0, 10),
-      url:    `https://www.vinted.be/items/${o.id}`,
+      url:    o.url || `https://www.vinted.be/items/${o.id}`,
     }));
+
     await cSet('v_list', items);
     return items;
   }
