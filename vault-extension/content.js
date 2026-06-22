@@ -38,7 +38,7 @@
   // ── Page detection ────────────────────────────────────────────────────────
   function isOrdersPage(url) {
     // Matches any URL that contains order/bestelling/purchase/sale/transaction
-    return /\/(my[-\/]?(orders?|purchases?|sales?|transactions?|bestellingen?))/i.test(url);
+    return /\/(my[-_\/]?(orders?|purchases?|sales?|transactions?|bestellingen?))/i.test(url);
   }
 
   function isLabelPage(url) {
