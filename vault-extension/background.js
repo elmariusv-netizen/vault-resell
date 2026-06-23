@@ -151,10 +151,11 @@ async function interceptLabel(item) {
   }
 }
 
-// ── Listings via temporary tab ────────────────────────────────────────────
+// ── Listings via temporary tab (DOM scraping) ─────────────────────────────
 async function fetchListingsViaTab() {
   return new Promise((resolve) => {
-    chrome.tabs.create({ url: 'https://www.vinted.be/my/items#vault-headless', active: false }, (tab) => {
+    const url = 'https://www.vinted.be/member/48695306/items#vault-headless';
+    chrome.tabs.create({ url, active: false }, (tab) => {
       const tabId = tab.id;
       let resolved = false;
 
@@ -171,30 +172,32 @@ async function fetchListingsViaTab() {
         chrome.scripting.executeScript({
           target: { tabId },
           func: () => {
-            try {
-              const nd = document.getElementById('__NEXT_DATA__');
-              if (!nd) return { items: [], error: 'no __NEXT_DATA__' };
-              const json = JSON.parse(nd.textContent);
-              const pp = json?.props?.pageProps || {};
-              console.log('[Vault-tab] pageProps keys:', Object.keys(pp));
-              const raw =
-                pp.items                                   ||
-                pp.currentUserItems                        ||
-                pp.wardrobe?.items                         ||
-                pp.catalog?.items                          ||
-                pp.profile?.items                          ||
-                pp.user?.items                             ||
-                json?.props?.initialState?.catalog?.items  ||
-                json?.props?.initialState?.wardrobe?.items ||
-                [];
-              return { items: raw, pagePropsKeys: Object.keys(pp) };
-            } catch (e) {
-              return { items: [], error: e.message };
-            }
+            const cards = [...document.querySelectorAll('[data-testid="item-card"]')];
+            console.log('[Vault-tab] item-card elements found:', cards.length);
+            const items = cards.map(card => {
+              const link     = card.querySelector('a[href]');
+              const img      = card.querySelector('img');
+              const titleEl  = card.querySelector('[data-testid="item-card--title"]')
+                            || card.querySelector('h3, h2');
+              const priceEl  = card.querySelector('[data-testid="item-card--price"]')
+                            || card.querySelector('[class*="price" i]');
+              const href     = link?.href || '';
+              const itemId   = href.match(/\/(\d+)-/)?.[1]
+                            || href.match(/items\/(\d+)/)?.[1]
+                            || '';
+              const title    = titleEl?.textContent?.trim() || '?';
+              const price    = parseFloat(
+                (priceEl?.textContent || '').replace(/[^0-9.,]/g, '').replace(',', '.')
+              ) || 0;
+              const photo    = img?.src || img?.dataset?.src || null;
+              return { id: itemId, title, price, photo, url: href };
+            }).filter(o => o.id || o.title !== '?');
+            console.log('[Vault-tab] scraped', items.length, 'items:', items.map(o => o.title).join(', '));
+            return { items };
           },
         }, (results) => {
           const data = results?.[0]?.result || { items: [], error: 'no result' };
-          console.log('[Vault] tab listings:', data.items?.length, data.error || '', 'keys:', data.pagePropsKeys);
+          console.log('[Vault] tab listings scraped:', data.items?.length || 0, 'items', data.error || '');
           done(data);
         });
       }

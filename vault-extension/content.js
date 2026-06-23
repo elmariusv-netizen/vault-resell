@@ -183,7 +183,7 @@
           items = raw.map(o => ({
             itemId: String(o.id || ''),
             title:  o.title || '?',
-            photo:  hiPhoto(o.photos?.[0]?.url || o.photo?.url || null),
+            photo:  hiPhoto(o.photos?.[0]?.url || o.photo?.url || (typeof o.photo === 'string' ? o.photo : null)),
             price:  parseFloat(o.price?.amount || o.price || 0),
             views:  o.view_count || 0,
             status: o.status || 'active',
@@ -221,20 +221,6 @@
     return orders;
   }
 
-  async function getPurchased() {
-    const c = await cGet('v_buy'); if (c) return c;
-    const d = await vGet('/api/v2/my_orders?order_type=purchased&per_page=50');
-    const orders = (d.orders || d.transactions || []).map(o => ({
-      transactionId: String(o.transaction_id || o.id || ''),
-      title:  o.item?.title || o.title || '?',
-      photo:  o.item?.photos?.[0]?.url || o.item?.photo?.url || null,
-      price:  parseFloat(o.total_price || o.price || 0),
-      seller: o.seller?.login || o.user?.login || '',
-      date:   (o.created_at || '').slice(0, 10),
-    }));
-    await cSet('v_buy', orders);
-    return orders;
-  }
 
   async function getConversations() {
     const c = await cGet('v_convs'); if (c) return c;
@@ -522,7 +508,6 @@
     const TABS = [
       { id:'zoekertjes', label:'🏪 Listings'  },
       { id:'verkopen',   label:'📦 Verkopen'  },
-      { id:'aankopen',   label:'🛍 Aankopen'  },
       { id:'labels',     label:'🏷 Labels'    },
     ];
     TABS.forEach(({ id, label }) => {
@@ -564,7 +549,6 @@
     try {
       if (id === 'zoekertjes') await tabZoekertjes(content, footer);
       if (id === 'verkopen')   await tabVerkopen(content, footer);
-      if (id === 'aankopen')   await tabAankopen(content, footer);
       if (id === 'labels')     await tabLabels(content, footer);
     } catch (err) {
       console.error('[Vault]', err);
@@ -680,99 +664,50 @@
     footer.append(selAll, syncBtn);
   }
 
-  // ── Tab: Aankopen ──────────────────────────────────────────────────────────
-  async function tabAankopen(content, footer) {
-    const orders = await getPurchased();
-    content.innerHTML = '';
-    if (!orders.length) { content.appendChild(emptyState('🛍', 'Geen aankopen', 'Nog geen aankopen gevonden.')); return; }
-
-    content.appendChild(sectionHead('Aankopen', `${orders.length} orders`));
-    const rows = orders.map((o, i) => {
-      const sub = [o.seller ? `@${o.seller}` : '', fmtD(o.date)].filter(Boolean).join(' · ');
-      return rowDiv([photoThumb(o.photo), textStack(o.title, sub), priceTag(o.price)], i < orders.length - 1);
-    });
-    content.appendChild(cardWrap(rows));
-  }
-
   // ── Tab: Labels ────────────────────────────────────────────────────────────
   async function tabLabels(content, footer) {
     await loadDlIds();
-    const orders  = await getSold();
-    // Status comes as Dutch text from Vinted, e.g. "Verzendlabel is naar de verkoper gestuurd."
-    // SHOW  → status contains "label" (label sent/ready)
-    // HIDE  → status contains "verzonden"/"geleverd"/"voltooid"/"cancelled"/"refunded" OR
-    //          the order has already been downloaded
-    const isShipped = s => /verzond|geleverd|voltooid|completed|delivered|shipped|cancelled|refunded/i.test(s || '');
-    const needsLabel = s => /label/i.test(s || '');
+    const orders = await getSold();
 
-    // Show orders that need a label AND haven't been shipped yet
-    const pending = orders.filter(o =>
-      o.transactionId &&
-      !dlIds.has(o.transactionId) &&
-      (needsLabel(o.status) || (!isShipped(o.status) && o.status !== '')),
+    // Only orders where Vinted sent a shipping label to the seller
+    const labelOrders = orders.filter(o =>
+      o.transactionId && /verzendlabel/i.test(o.status || '')
     );
-    console.log('[Vault] labels pending:', pending.length, 'of', orders.length,
-      '— statuses:', [...new Set(orders.map(o => o.status))].join(' | '));
+    console.log('[Vault] label orders:', labelOrders.length, 'of', orders.length,
+      '— statussen:', [...new Set(orders.map(o => o.status || '(leeg)'))].join(' | '));
+
     content.innerHTML = '';
     footer.innerHTML  = '';
 
-    if (!pending.length) {
-      content.appendChild(emptyState('✅', 'Alle labels geprint', 'Geen openstaande labels.'));
+    if (!labelOrders.length) {
+      content.appendChild(emptyState('📭', 'Geen labels beschikbaar',
+        'Geen orders met "Verzendlabel is naar de verkoper gestuurd." gevonden.'));
       return;
     }
 
-    // Show skeleton + status while scanning chats
-    content.appendChild(sectionHead('Labels', `${pending.length} te downloaden`));
-    const scanMsg = el('div', `font-size:12px;color:${D.sub};margin-bottom:14px`,
-      '🔍 Gesprekken scannen op labels…');
-    content.appendChild(scanMsg);
-    content.appendChild(skeletonList(Math.min(pending.length, 6)));
+    content.appendChild(sectionHead('Labels', `${labelOrders.length} beschikbaar`));
 
-    // Scan all conversations for label PDFs
-    const chatLabels = await scanConvsForLabels(pending);
-
-    // Build final label map: prefer chat URL, fall back to direct API endpoint
-    const labelMap = new Map();
-    for (const o of pending) {
-      const chat = chatLabels.get(o.transactionId);
-      labelMap.set(o.transactionId, chat
-        ? { url: chat.url,               source: 'chat' }
-        : { url: labelUrl(o.transactionId), source: 'api'  });
-    }
-
-    const chatCount = [...labelMap.values()].filter(v => v.source === 'chat').length;
-
-    // Re-render with results
-    content.innerHTML = '';
-    content.appendChild(sectionHead('Labels', `${pending.length} te downloaden`));
-
-    if (chatCount > 0) {
-      content.appendChild(el('div',
-        `font-size:12px;color:#15803d;background:#f0fdf4;padding:8px 12px;border-radius:8px;margin-bottom:14px`,
-        `✓ ${chatCount} label${chatCount > 1 ? 's' : ''} gevonden in chat gesprekken`));
-    }
-
-    const rows = pending.map((o, i) => {
-      const info    = labelMap.get(o.transactionId);
-      const srcPill = info?.source === 'chat'
-        ? pill('💬 chat', '#4f46e5', '#ede9fe')
-        : pill('API', '#9ca3af', '#f3f4f6');
-      const dlBtn = btn('⬇ 4×6', `background:${D.badge};color:#374151;flex-shrink:0`);
-      dlBtn.addEventListener('click', () => doDownloadLabel(dlBtn, o, info?.url));
+    const dlBtns = new Map();
+    const rows = labelOrders.map((o, i) => {
+      const printed = dlIds.has(o.transactionId);
+      const dlBtn = btn(
+        printed ? '✓ Geprint' : '⬇ 4×6',
+        printed
+          ? `background:#dcfce7;color:#15803d;flex-shrink:0`
+          : `background:${D.badge};color:#374151;flex-shrink:0`,
+      );
+      dlBtn.addEventListener('click', () => doDownloadLabel(dlBtn, o, null));
+      dlBtns.set(o.transactionId, dlBtn);
       const sub = [o.buyer ? `@${o.buyer}` : '', fmtD(o.date)].filter(Boolean).join(' · ');
       return rowDiv(
-        [photoThumb(o.photo), textStack(o.title, sub), srcPill, priceTag(o.price), dlBtn],
-        i < pending.length - 1,
+        [photoThumb(o.photo), textStack(o.title, sub), priceTag(o.price), dlBtn],
+        i < labelOrders.length - 1,
       );
     });
     content.appendChild(cardWrap(rows));
 
-    const printAll = btn(`🖨 Print alle ${pending.length} labels`, `background:${D.accent};color:#fff;flex:1`);
-    printAll.addEventListener('click', () => {
-      const urls = pending.map(o => labelMap.get(o.transactionId)?.url).filter(Boolean);
-      const ids  = pending.map(o => o.transactionId);
-      batchPrint(pending, urls, ids, printAll, content, footer);
-    });
+    const printAll = btn(`🖨 Print alle ${labelOrders.length} labels`, `background:${D.accent};color:#fff;flex:1`);
+    printAll.addEventListener('click', () => batchPrint(labelOrders, printAll, dlBtns));
     footer.appendChild(printAll);
   }
 
@@ -826,38 +761,21 @@
     }
   }
 
-  async function batchPrint(orders, urls, ids, printBtn, content, footer) {
-    printBtn.disabled = true; printBtn.textContent = `⏳ Ophalen ${ids.length} labels…`;
-    const downloaded = [];
-    for (let i = 0; i < ids.length; i++) {
-      try {
-        const dataUrl = await fetchLabelFromProxy(ids[i]);
-        await sendMsg({ type: 'DOWNLOAD_LABEL', url: dataUrl, filename: `label-${ids[i]}-4x6.pdf` });
-        dlIds.add(ids[i]);
-        downloaded.push(ids[i]);
-        printBtn.textContent = `⏳ ${downloaded.length}/${ids.length} opgehaald…`;
-      } catch (e) {
-        console.warn('[Vault] proxy batch mislukt txn', ids[i], e.message);
-      }
+  async function batchPrint(orders, printBtn, dlBtns) {
+    printBtn.disabled = true;
+    printBtn.textContent = `⏳ 0/${orders.length} verwerkt…`;
+    let done = 0;
+    for (const o of orders) {
+      const b = dlBtns.get(o.transactionId);
+      if (b) await doDownloadLabel(b, o, null);
+      done++;
+      printBtn.textContent = `⏳ ${done}/${orders.length} verwerkt…`;
     }
-    if (downloaded.length) {
-      toast(`✅ ${downloaded.length} labels gedownload als 4×6 PDF`);
-      mem['v_sold'] = null;
-      await tabLabels(content, footer);
-    } else {
-      // Alle proxy pogingen mislukt — val terug op background merge
-      printBtn.textContent = `⏳ Fallback…`;
-      const res = await sendMsg({ type: 'PRINT_LABELS', labelUrls: urls, transactionIds: ids }, 120000);
-      if (res?.success) {
-        (res.downloadedIds || ids).forEach(id => dlIds.add(id));
-        toast(`✅ ${orders.length} labels gedownload als 4×6 PDF`);
-        mem['v_sold'] = null;
-        await tabLabels(content, footer);
-      } else {
-        toast('Label download mislukt: ' + (res?.error || 'onbekende fout'), false);
-        printBtn.disabled = false; printBtn.textContent = `🖨 Print alle ${orders.length} labels`;
-      }
-    }
+    printBtn.disabled = false;
+    printBtn.style.background = '#dcfce7';
+    printBtn.style.color = '#15803d';
+    printBtn.textContent = `✅ ${orders.length} labels verwerkt`;
+    toast(`✅ ${orders.length} labels gedownload als 4×6 PDF`);
   }
 
   // ── Floating V button ──────────────────────────────────────────────────────
