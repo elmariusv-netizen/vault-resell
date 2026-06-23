@@ -55,15 +55,18 @@
 
   // ── API ────────────────────────────────────────────────────────────────────
   function getVintedHeaders() {
-    const csrf = document.cookie.match(/(?:^|;\s*)_vinted_csrf_token=([^;]+)/)?.[1]
-      || document.querySelector('meta[name="csrf-token"]')?.content
+    const csrf = document.querySelector('meta[name="csrf-token"]')?.content
+      || document.cookie.match(/(?:^|;\s*)_csrf_token=([^;]+)/)?.[1]
+      || document.cookie.match(/(?:^|;\s*)_vinted_csrf_token=([^;]+)/)?.[1]
       || '';
-    const anonId = document.cookie.match(/(?:^|;\s*)_vinted_anon_id=([^;]+)/)?.[1] || '';
+    const anonId = document.cookie.match(/(?:^|;\s*)anon_id=([^;]+)/)?.[1]
+      || document.cookie.match(/(?:^|;\s*)_vinted_anon_id=([^;]+)/)?.[1]
+      || '';
     return {
-      'accept':        'application/json,text/plain,*/*,image/webp',
-      'locale':        'nl-BE',
-      'x-csrf-token':  csrf,
-      'x-anon-id':     anonId,
+      'accept':            'application/json, text/plain, */*',
+      'x-csrf-token':      csrf,
+      'x-anon-id':         anonId,
+      'x-requested-with':  'XMLHttpRequest',
     };
   }
 
@@ -151,29 +154,45 @@
     }).filter(o => o.itemId);
   }
 
+  function mapWardrobeItem(o) {
+    return {
+      itemId: String(o.id || ''),
+      title:  o.title || '?',
+      photo:  hiPhoto(o.photos?.[0]?.url || o.photo?.url || null),
+      price:  parseFloat(o.price?.amount || o.price || 0),
+      views:  o.view_count || 0,
+      status: o.status || 'active',
+      date:   (o.created_at || '').slice(0, 10),
+      url:    o.url || `https://www.vinted.be/items/${o.id}`,
+    };
+  }
+
   async function getListings() {
     const c = await cGet('v_list'); if (c) return c;
-
     let items = [];
 
-    // 1. If already on /my/items — scrape live DOM immediately
-    if (/\/my\/items/i.test(location.pathname)) {
-      items = parseItemsDoc(document);
-      console.log('[Vault] listings from live /my/items:', items.length);
-    }
+    // 1. Wardrobe API (Vintedge approach — authenticated JSON, paginated)
+    try {
+      const userD  = await vGet('/api/v2/users/current');
+      const userId = userD.user?.id;
+      console.log('[Vault] current userId:', userId);
+      if (userId) {
+        let page = 1, totalPages = 1;
+        while (page <= totalPages && page <= 10) {
+          const d   = await vGet(`/api/v2/wardrobe/${userId}/items?page=${page}&per_page=50`);
+          const raw = d.items || [];
+          console.log('[Vault] wardrobe page', page, '/', totalPages, '—', raw.length, 'items');
+          if (!raw.length) break;
+          items.push(...raw.map(mapWardrobeItem));
+          totalPages = d.pagination?.total_pages || 1;
+          if (page >= totalPages) break;
+          page++;
+        }
+        console.log('[Vault] wardrobe total:', items.length, 'items');
+      }
+    } catch (e) { console.warn('[Vault] wardrobe API mislukt:', e.message); }
 
-    // 2. Fetch /my/items as authenticated HTML page
-    if (!items.length) {
-      try {
-        const r = await fetch('https://www.vinted.be/my/items', {
-          credentials: 'include', headers: getVintedHeaders(),
-        });
-        if (r.ok) items = parseItemsDoc(new DOMParser().parseFromString(await r.text(), 'text/html'));
-        console.log('[Vault] listings from fetched /my/items:', items.length);
-      } catch (e) { console.warn('[Vault] /my/items fetch failed:', e.message); }
-    }
-
-    // 3. Tab-based fallback — background opens /my/items tab, reads __NEXT_DATA__, closes it
+    // 2. Tab DOM-scraping fallback (background opens member profile page)
     if (!items.length) {
       try {
         const result = await sendMsg({ type: 'FETCH_LISTINGS' }, 30000);
@@ -183,7 +202,7 @@
           items = raw.map(o => ({
             itemId: String(o.id || ''),
             title:  o.title || '?',
-            photo:  hiPhoto(o.photos?.[0]?.url || o.photo?.url || (typeof o.photo === 'string' ? o.photo : null)),
+            photo:  hiPhoto(typeof o.photo === 'string' ? o.photo : (o.photos?.[0]?.url || o.photo?.url || null)),
             price:  parseFloat(o.price?.amount || o.price || 0),
             views:  o.view_count || 0,
             status: o.status || 'active',
@@ -191,7 +210,7 @@
             url:    o.url || `https://www.vinted.be/items/${o.id}`,
           }));
         }
-      } catch (e) { console.warn('[Vault] tab listings fallback error:', e.message); }
+      } catch (e) { console.warn('[Vault] tab listings fallback mislukt:', e.message); }
     }
 
     await cSet('v_list', items);
@@ -200,22 +219,32 @@
 
   async function getSold() {
     const c = await cGet('v_sold'); if (c) return c;
-    const d = await vGet('/api/v2/my_orders?order_type=sold&per_page=100');
-    console.log('[Vault] sold response keys:', Object.keys(d));
-    const raw = d.orders || d.transactions || d.my_orders || [];
-    console.log('[Vault] sold count:', raw.length);
-    if (raw[0]) console.log('[Vault] sold[0] keys:', Object.keys(raw[0]), JSON.stringify(raw[0]).slice(0, 500));
-    const orders = raw.map(o => ({
-      transactionId: String(o.transaction_id || o.id || ''),
-      itemId:  String(o.item?.id || ''),
-      title:   o.item?.title || o.title || '?',
-      photo:   hiPhoto(o.item?.photos?.[0]?.url || o.item?.photo?.url || null),
-      price:   parseFloat(o.total_price || o.item?.price_numeric || o.price || 0),
-      buyer:   o.buyer?.login  || o.user?.login  || '',
-      country: o.buyer?.country_iso_code || o.country_iso_code || '',
-      date:    (o.created_at || o.updated_at || '').slice(0, 10),
-      status:  (o.status || o.shipment?.status || '').toLowerCase(),
-      convId:  null,
+
+    // Vintedge approach: type=sold&status=all, paginated per 20
+    let all = [];
+    for (let page = 1; page <= 20; page++) {
+      const d = await vGet(`/api/v2/my_orders?type=sold&status=all&per_page=20&page=${page}`);
+      const raw = d.my_orders || d.orders || d.transactions || [];
+      console.log('[Vault] sold page', page, ':', raw.length, 'orders, keys:', Object.keys(d));
+      if (page === 1 && raw[0]) console.log('[Vault] sold[0]:', JSON.stringify(raw[0]).slice(0, 500));
+      if (!raw.length) break;
+      all.push(...raw);
+      if (!d.pagination || d.pagination.current_page >= d.pagination.total_pages) break;
+    }
+    console.log('[Vault] sold total:', all.length);
+
+    const orders = all.map(o => ({
+      transactionId:         String(o.transaction_id || o.id || ''),
+      itemId:                String(o.item?.id || ''),
+      title:                 o.item?.title || o.title || '?',
+      photo:                 hiPhoto(o.item?.photos?.[0]?.url || o.item?.photo?.url || (typeof o.photo === 'object' ? o.photo?.url : null) || null),
+      price:                 parseFloat(o.total_price || o.item?.price_numeric || o.price || 0),
+      buyer:                 o.buyer?.login || o.user?.login || '',
+      country:               o.buyer?.country_iso_code || o.country_iso_code || '',
+      date:                  (o.created_at || o.updated_at || '').slice(0, 10),
+      status:                o.status || '',              // original case, e.g. "Verzendlabel is naar de verkoper gestuurd."
+      transactionUserStatus: o.transaction_user_status ?? null,  // 'needs_action' = label beschikbaar
+      convId:                null,
     }));
     await cSet('v_sold', orders);
     return orders;
@@ -669,12 +698,15 @@
     await loadDlIds();
     const orders = await getSold();
 
-    // Only orders where Vinted sent a shipping label to the seller
+    // needs_action = API signal (Vintedge approach), verzendlabel = Dutch status string fallback
     const labelOrders = orders.filter(o =>
-      o.transactionId && /verzendlabel/i.test(o.status || '')
+      o.transactionId && (
+        o.transactionUserStatus === 'needs_action' ||
+        /verzendlabel/i.test(o.status || '')
+      )
     );
     console.log('[Vault] label orders:', labelOrders.length, 'of', orders.length,
-      '— statussen:', [...new Set(orders.map(o => o.status || '(leeg)'))].join(' | '));
+      '— statussen:', [...new Set(orders.map(o => `${o.status}|${o.transactionUserStatus}`))].join(' · '));
 
     content.innerHTML = '';
     footer.innerHTML  = '';
@@ -713,23 +745,56 @@
 
   const PROXY_URL = 'https://vault-resell.vercel.app/api/label';
 
+  // Vintedge approach: transaction → shipment ID → presigned label URL
+  async function fetchLabelViaShipment(txId) {
+    const h = { ...getVintedHeaders() };
+
+    // Step 1: get shipment ID from transaction
+    const txResp = await fetch(`https://www.vinted.be/api/v2/transactions/${txId}`, {
+      credentials: 'include', headers: h,
+    });
+    if (!txResp.ok) throw new Error(`transaction ${txResp.status}`);
+    const tx = await txResp.json();
+    const shipmentId = tx.transaction?.shipment?.id;
+    if (!shipmentId) throw new Error(`geen shipmentId in transaction ${txId}`);
+    console.log('[Vault] shipmentId:', shipmentId, 'for txn', txId);
+
+    // Step 2: get presigned label URL from shipment
+    const lblResp = await fetch(`https://www.vinted.be/api/v2/shipments/${shipmentId}/label_url`, {
+      credentials: 'include', headers: h,
+    });
+    if (!lblResp.ok) throw new Error(`label_url ${lblResp.status}`);
+    const { label_url } = await lblResp.json();
+    if (!label_url) throw new Error(`geen label_url voor shipment ${shipmentId}`);
+    console.log('[Vault] presigned label URL:', label_url.slice(0, 80));
+    return label_url;
+  }
+
   async function fetchLabelFromProxy(txId) {
+    // Primary: get presigned URL via shipment API (no cookie needed for presigned URLs)
+    let body    = { transaction_id: txId };
+    let headers = { 'Content-Type': 'application/json', 'x-vinted-cookie': document.cookie };
+
+    try {
+      const labelUrl = await fetchLabelViaShipment(txId);
+      body    = { label_url: labelUrl };
+      headers = { 'Content-Type': 'application/json' }; // presigned = no auth needed
+      console.log('[Vault] proxy: using presigned URL path');
+    } catch (e) {
+      console.warn('[Vault] shipment API mislukt, cookie fallback:', e.message);
+    }
+
     const resp = await fetch(PROXY_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type':    'application/json',
-        'x-vinted-cookie': document.cookie,
-      },
-      body: JSON.stringify({ transaction_id: txId }),
+      method: 'POST', headers, body: JSON.stringify(body),
     });
     console.log('[Vault] proxy status:', resp.status, 'txn:', txId);
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
       throw new Error(`proxy ${resp.status}: ${err.error || resp.statusText}`);
     }
-    const buf    = await resp.arrayBuffer();
-    const bytes  = new Uint8Array(buf);
-    let binary   = '';
+    const buf   = await resp.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    let binary  = '';
     for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
     return 'data:application/pdf;base64,' + btoa(binary);
   }
