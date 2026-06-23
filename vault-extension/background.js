@@ -1,5 +1,31 @@
 importScripts('pdf-lib.min.js');
 
+// ── Vercel proxy voor label fetch + crop ──────────────────────────────────
+const LABEL_PROXY = 'https://vault-resell.vercel.app/api/label';
+
+async function fetchLabelViaProxy(txId) {
+  const cookies = await new Promise(resolve =>
+    chrome.cookies.getAll({ domain: 'vinted.be' }, resolve)
+  );
+  const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+  console.log('[Vault] proxy fetch txn', txId, '— cookies:', cookies.length);
+
+  const resp = await fetch(`${LABEL_PROXY}?transaction_id=${txId}`, {
+    method: 'POST',
+    headers: { 'x-vinted-cookie': cookieStr },
+  });
+  console.log('[Vault] proxy response:', resp.status, resp.statusText, 'txn:', txId);
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(`proxy ${resp.status}: ${err.error || resp.statusText}`);
+  }
+  const buf   = await resp.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  let binary  = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary); // base64 van reeds gecropte 4×6 PDF
+}
+
 // ── Vinted headers (service worker reads cookies via chrome.cookies) ───────
 async function getVintedHeaders() {
   const getCookie = (name) => new Promise(resolve => {
@@ -125,8 +151,79 @@ async function interceptLabel(item) {
   }
 }
 
+// ── Listings via temporary tab ────────────────────────────────────────────
+async function fetchListingsViaTab() {
+  return new Promise((resolve) => {
+    chrome.tabs.create({ url: 'https://www.vinted.be/my/items#vault-headless', active: false }, (tab) => {
+      const tabId = tab.id;
+      let resolved = false;
+
+      function done(data) {
+        if (resolved) return;
+        resolved = true;
+        chrome.tabs.onUpdated.removeListener(onUpdated);
+        chrome.tabs.remove(tabId, () => {});
+        resolve(data);
+      }
+
+      function onUpdated(id, info) {
+        if (id !== tabId || info.status !== 'complete') return;
+        chrome.scripting.executeScript({
+          target: { tabId },
+          func: () => {
+            try {
+              const nd = document.getElementById('__NEXT_DATA__');
+              if (!nd) return { items: [], error: 'no __NEXT_DATA__' };
+              const json = JSON.parse(nd.textContent);
+              const pp = json?.props?.pageProps || {};
+              console.log('[Vault-tab] pageProps keys:', Object.keys(pp));
+              const raw =
+                pp.items                                   ||
+                pp.currentUserItems                        ||
+                pp.wardrobe?.items                         ||
+                pp.catalog?.items                          ||
+                pp.profile?.items                          ||
+                pp.user?.items                             ||
+                json?.props?.initialState?.catalog?.items  ||
+                json?.props?.initialState?.wardrobe?.items ||
+                [];
+              return { items: raw, pagePropsKeys: Object.keys(pp) };
+            } catch (e) {
+              return { items: [], error: e.message };
+            }
+          },
+        }, (results) => {
+          const data = results?.[0]?.result || { items: [], error: 'no result' };
+          console.log('[Vault] tab listings:', data.items?.length, data.error || '', 'keys:', data.pagePropsKeys);
+          done(data);
+        });
+      }
+
+      chrome.tabs.onUpdated.addListener(onUpdated);
+      setTimeout(() => done({ items: [], error: 'timeout' }), 15000);
+    });
+  });
+}
+
+// ── Fetch label bytes via content script in an existing Vinted tab ────────
+function fetchBytesViaTab(tabId, url) {
+  return new Promise((resolve) => {
+    chrome.tabs.sendMessage(tabId, { type: 'FETCH_LABEL_BYTES', url }, (resp) => {
+      if (chrome.runtime.lastError || !resp?.ok) {
+        resolve(null);
+      } else {
+        resolve(resp.data);
+      }
+    });
+  });
+}
+
 // ── Message handlers ──────────────────────────────────────────────────────
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'FETCH_LISTINGS') {
+    fetchListingsViaTab().then(sendResponse);
+    return true;
+  }
   if (message.type === 'SYNC_ORDER') {
     syncOrder(message.order).then(sendResponse);
     return true;
@@ -136,7 +233,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
   if (message.type === 'PRINT_LABELS') {
-    mergeAndDownloadLabels(message.labelUrls, message.transactionIds || []).then(sendResponse);
+    const tabId = sender.tab?.id || null;
+    mergeAndDownloadLabels(message.labelUrls, message.transactionIds || [], tabId).then(sendResponse);
     return true;
   }
   if (message.type === 'DOWNLOAD_LABEL') {
@@ -193,92 +291,101 @@ async function updateDailyStats(order) {
   await chrome.storage.local.set({ dailyStats });
 }
 
-// ── PDF merge via real Vinted API ─────────────────────────────────────────
-// Fetches each label from https://www.vinted.be/api/v2/transactions/{id}/shipment/pdf_label
-// using the user's session cookie (credentials: 'include'), merges into one 4×6 thermal PDF.
-async function mergeAndDownloadLabels(labelUrls, transactionIds) {
+// ── PDF merge — proxy (1) → content script (2) → direct fetch (3) ────────
+async function mergeAndDownloadLabels(labelUrls, transactionIds, tabId) {
   try {
     const { PDFDocument } = PDFLib;
     const merged  = await PDFDocument.create();
-    const PW = 288, PH = 432; // 4×6 inches at 72 dpi
+    const PW = 288, PH = 432;
     const headers = await getVintedHeaders();
 
     const { interceptedLabels = [] } = await chrome.storage.local.get(['interceptedLabels']);
     const existingIds = new Set(interceptedLabels.map((l) => l.orderId).filter(Boolean));
 
-    const successIds  = [];
-    const newLabels   = [];
+    const successIds = [];
+    const newLabels  = [];
 
     for (let i = 0; i < labelUrls.length; i++) {
       const url  = labelUrls[i];
       const txId = transactionIds[i] || null;
       try {
-        console.log('[Vault] fetching label txn', txId, url);
-        const resp = await fetch(url, { credentials: 'include', headers });
-        console.log('[Vault] label response:', resp.status, resp.statusText, 'content-type:', resp.headers.get('content-type'));
-        if (!resp.ok) {
-          console.warn('[Vault] label fetch FAILED:', resp.status, resp.statusText, url);
-          continue;
+        let b64        = null;
+        let alreadyCropped = false;
+
+        // 1. Vercel proxy — stuurt cookies mee, retourneert al gecropte 4×6 PDF
+        if (txId) {
+          try {
+            b64 = await fetchLabelViaProxy(txId);
+            alreadyCropped = true;
+          } catch (e) {
+            console.warn('[Vault] proxy mislukt, fallback voor txn', txId, '—', e.message);
+          }
         }
 
-        const bytes = new Uint8Array(await resp.arrayBuffer());
-        if (bytes.length < 100) {
-          console.warn('[Vault] label response too small, likely not a PDF:', url);
-          continue;
+        // 2. Content script in zendende tab (heeft sessie-cookies)
+        if (!b64 && tabId) {
+          b64 = await fetchBytesViaTab(tabId, url);
+          if (b64) console.log('[Vault] label via content script, txn', txId);
         }
 
-        // Embed page into merged PDF — Munbyn 4×6 thermal, no side margins
+        // 3. Directe fetch (service worker, beperkte cookie-toegang)
+        if (!b64) {
+          console.log('[Vault] directe fetch fallback txn', txId);
+          const resp = await fetch(url, { credentials: 'include', headers });
+          console.log('[Vault] directe fetch response:', resp.status, resp.statusText);
+          if (!resp.ok) { console.warn('[Vault] directe fetch FAILED:', resp.status, url); continue; }
+          const raw = new Uint8Array(await resp.arrayBuffer());
+          let bin = '';
+          for (let j = 0; j < raw.length; j++) bin += String.fromCharCode(raw[j]);
+          b64 = btoa(bin);
+        }
+
+        if (!b64) continue;
+
+        const binary = atob(b64);
+        const bytes  = new Uint8Array(binary.length);
+        for (let j = 0; j < binary.length; j++) bytes[j] = binary.charCodeAt(j);
+
+        if (bytes.length < 100) { console.warn('[Vault] label te klein, skip txn:', txId); continue; }
+
         const src = await PDFDocument.load(bytes, { ignoreEncryption: true });
         if (!src.getPageCount()) continue;
 
-        const [embedded] = await merged.embedPages([src.getPages()[0]]);
-        const { width: sw, height: sh } = embedded.size();
-        const page = merged.addPage([PW, PH]);
+        const srcPage = src.getPages()[0];
+        const { width: sw, height: sh } = srcPage.getSize();
+        console.log('[Vault] label size:', Math.round(sw), 'x', Math.round(sh), alreadyCropped ? '(pre-cropped)' : '(A4)', 'txn:', txId);
 
-        // Scale to fill full 4" (288pt) width — no left/right margins.
-        // A4 (595pt) at this scale → height ≈ 407pt, fits in 6" (432pt) with ~25pt blank at bottom.
-        // Non-A4 source pages scale up/down to fill width the same way.
-        const scale  = PW / sw;
-        const drawW  = PW;
-        const drawH  = sh * scale;
-        // Align label content to top of thermal page
-        const drawY  = Math.max(0, PH - drawH);
-        page.drawPage(embedded, {
-          x: 0, y: drawY,
-          width: drawW, height: Math.min(drawH, PH),
-        });
-        console.log('[Vault] label page', txId, 'src', Math.round(sw), 'x', Math.round(sh), '→ draw', Math.round(drawW), 'x', Math.round(drawH), 'y=', Math.round(drawY));
+        // Proxy retourneert al gecropte 4×6 — embed volledig. Anders crop top-helft van A4.
+        const embedded = alreadyCropped
+          ? await merged.embedPage(srcPage)
+          : await merged.embedPage(srcPage, { left: 0, bottom: sh * 0.5, right: sw, top: sh });
+        const page = merged.addPage([PW, PH]);
+        page.drawPage(embedded, { x: 0, y: 0, width: PW, height: PH });
+        console.log('[Vault] label page', txId, '→ 4×6, ok');
 
         if (txId) successIds.push(txId);
 
-        // Save to interceptedLabels if not already stored
         if (txId && !existingIds.has(txId)) {
-          let binary = '';
-          for (let j = 0; j < bytes.length; j++) binary += String.fromCharCode(bytes[j]);
           newLabels.push({
             id:         Date.now().toString() + Math.random().toString(36).slice(2, 6),
             filename:   `label-${txId}.pdf`,
             url,
             orderId:    txId,
             capturedAt: new Date().toISOString(),
-            dataUrl:    'data:application/pdf;base64,' + btoa(binary),
+            dataUrl:    'data:application/pdf;base64,' + b64,
             size:       bytes.length,
           });
           existingIds.add(txId);
         }
       } catch (e) {
-        console.error('[Vault] error processing label:', url, e);
+        console.error('[Vault] error processing label txn:', txId, e);
       }
     }
 
     if (!merged.getPageCount()) {
-      return {
-        success: false,
-        error: 'Geen labels konden worden opgehaald. Controleer of je bent ingelogd op Vinted.',
-      };
+      return { success: false, error: 'Geen labels konden worden opgehaald. Controleer of je bent ingelogd op Vinted.' };
     }
 
-    // Persist newly fetched labels
     if (newLabels.length) {
       for (const lbl of newLabels) interceptedLabels.unshift(lbl);
       if (interceptedLabels.length > 30) interceptedLabels.splice(30);
@@ -286,16 +393,13 @@ async function mergeAndDownloadLabels(labelUrls, transactionIds) {
       console.log('[Vault] saved', newLabels.length, 'new labels to storage');
     }
 
-    // Download merged PDF
     const pdfBytes = await merged.save();
-    let binary = '';
-    for (let i = 0; i < pdfBytes.length; i++) binary += String.fromCharCode(pdfBytes[i]);
-    const dataUrl = 'data:application/pdf;base64,' + btoa(binary);
-
+    let bin = '';
+    for (let i = 0; i < pdfBytes.length; i++) bin += String.fromCharCode(pdfBytes[i]);
     await chrome.downloads.download({
-      url: dataUrl,
+      url:      'data:application/pdf;base64,' + btoa(bin),
       filename: `vault-labels-${Date.now()}.pdf`,
-      saveAs: false,
+      saveAs:   false,
     });
 
     return { success: true, downloadedIds: successIds };

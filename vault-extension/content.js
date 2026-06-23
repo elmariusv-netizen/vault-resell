@@ -173,15 +173,25 @@
       } catch (e) { console.warn('[Vault] /my/items fetch failed:', e.message); }
     }
 
-    // 3. Public profile page fallback
+    // 3. Tab-based fallback — background opens /my/items tab, reads __NEXT_DATA__, closes it
     if (!items.length) {
       try {
-        const r = await fetch('https://www.vinted.be/member/48695306/items', {
-          credentials: 'include', headers: getVintedHeaders(),
-        });
-        if (r.ok) items = parseItemsDoc(new DOMParser().parseFromString(await r.text(), 'text/html'));
-        console.log('[Vault] listings from profile page:', items.length);
-      } catch (e) { console.warn('[Vault] profile page fetch failed:', e.message); }
+        const result = await sendMsg({ type: 'FETCH_LISTINGS' }, 30000);
+        console.log('[Vault] listings via tab:', result?.items?.length || 0, result?.error || '');
+        const raw = result?.items || [];
+        if (raw.length) {
+          items = raw.map(o => ({
+            itemId: String(o.id || ''),
+            title:  o.title || '?',
+            photo:  hiPhoto(o.photos?.[0]?.url || o.photo?.url || null),
+            price:  parseFloat(o.price?.amount || o.price || 0),
+            views:  o.view_count || 0,
+            status: o.status || 'active',
+            date:   (o.created_at || '').slice(0, 10),
+            url:    o.url || `https://www.vinted.be/items/${o.id}`,
+          }));
+        }
+      } catch (e) { console.warn('[Vault] tab listings fallback error:', e.message); }
     }
 
     await cSet('v_list', items);
@@ -766,34 +776,87 @@
     footer.appendChild(printAll);
   }
 
+  const PROXY_URL = 'https://vault-resell.vercel.app/api/label';
+
+  async function fetchLabelFromProxy(txId) {
+    const resp = await fetch(PROXY_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type':    'application/json',
+        'x-vinted-cookie': document.cookie,
+      },
+      body: JSON.stringify({ transaction_id: txId }),
+    });
+    console.log('[Vault] proxy status:', resp.status, 'txn:', txId);
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(`proxy ${resp.status}: ${err.error || resp.statusText}`);
+    }
+    const buf    = await resp.arrayBuffer();
+    const bytes  = new Uint8Array(buf);
+    let binary   = '';
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    return 'data:application/pdf;base64,' + btoa(binary);
+  }
+
   async function doDownloadLabel(dlBtn, order, url) {
-    dlBtn.textContent = '⏳ Croppen…'; dlBtn.disabled = true;
-    const res = await sendMsg({
-      type: 'PRINT_LABELS',
-      labelUrls: [url || labelUrl(order.transactionId)],
-      transactionIds: [order.transactionId],
-    }, 30000);
-    if (res?.success) {
+    dlBtn.textContent = '⏳ Ophalen…'; dlBtn.disabled = true;
+    try {
+      const dataUrl = await fetchLabelFromProxy(order.transactionId);
+      await sendMsg({ type: 'DOWNLOAD_LABEL', url: dataUrl, filename: `label-${order.transactionId}-4x6.pdf` });
       dlIds.add(order.transactionId);
       dlBtn.textContent = '✓ Klaar';
       dlBtn.style.background = '#dcfce7'; dlBtn.style.color = '#15803d';
-    } else {
-      dlBtn.textContent = '✗ Opnieuw'; dlBtn.disabled = false;
-      dlBtn.style.background = '#fee2e2'; dlBtn.style.color = '#dc2626';
+    } catch (e) {
+      console.warn('[Vault] proxy mislukt, fallback naar background:', e.message);
+      dlBtn.textContent = '⏳ Fallback…';
+      const res = await sendMsg({
+        type: 'PRINT_LABELS',
+        labelUrls: [url || labelUrl(order.transactionId)],
+        transactionIds: [order.transactionId],
+      }, 30000);
+      if (res?.success) {
+        dlIds.add(order.transactionId);
+        dlBtn.textContent = '✓ Klaar';
+        dlBtn.style.background = '#dcfce7'; dlBtn.style.color = '#15803d';
+      } else {
+        dlBtn.textContent = '✗ Opnieuw'; dlBtn.disabled = false;
+        dlBtn.style.background = '#fee2e2'; dlBtn.style.color = '#dc2626';
+      }
     }
   }
 
   async function batchPrint(orders, urls, ids, printBtn, content, footer) {
-    printBtn.disabled = true; printBtn.textContent = `⏳ Laden ${urls.length} labels…`;
-    const res = await sendMsg({ type: 'PRINT_LABELS', labelUrls: urls, transactionIds: ids }, 120000);
-    if (res?.success) {
-      (res.downloadedIds || ids).forEach(id => dlIds.add(id));
-      toast(`✅ ${orders.length} labels gedownload als 4×6 PDF`);
+    printBtn.disabled = true; printBtn.textContent = `⏳ Ophalen ${ids.length} labels…`;
+    const downloaded = [];
+    for (let i = 0; i < ids.length; i++) {
+      try {
+        const dataUrl = await fetchLabelFromProxy(ids[i]);
+        await sendMsg({ type: 'DOWNLOAD_LABEL', url: dataUrl, filename: `label-${ids[i]}-4x6.pdf` });
+        dlIds.add(ids[i]);
+        downloaded.push(ids[i]);
+        printBtn.textContent = `⏳ ${downloaded.length}/${ids.length} opgehaald…`;
+      } catch (e) {
+        console.warn('[Vault] proxy batch mislukt txn', ids[i], e.message);
+      }
+    }
+    if (downloaded.length) {
+      toast(`✅ ${downloaded.length} labels gedownload als 4×6 PDF`);
       mem['v_sold'] = null;
       await tabLabels(content, footer);
     } else {
-      toast('Label download mislukt: ' + (res?.error || 'onbekende fout'), false);
-      printBtn.disabled = false; printBtn.textContent = `🖨 Print alle ${orders.length} labels`;
+      // Alle proxy pogingen mislukt — val terug op background merge
+      printBtn.textContent = `⏳ Fallback…`;
+      const res = await sendMsg({ type: 'PRINT_LABELS', labelUrls: urls, transactionIds: ids }, 120000);
+      if (res?.success) {
+        (res.downloadedIds || ids).forEach(id => dlIds.add(id));
+        toast(`✅ ${orders.length} labels gedownload als 4×6 PDF`);
+        mem['v_sold'] = null;
+        await tabLabels(content, footer);
+      } else {
+        toast('Label download mislukt: ' + (res?.error || 'onbekende fout'), false);
+        printBtn.disabled = false; printBtn.textContent = `🖨 Print alle ${orders.length} labels`;
+      }
     }
   }
 
@@ -841,3 +904,23 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
 })();
+
+// ── Label bytes fetcher — called by background via FETCH_LABEL_BYTES ──────
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.type === 'FETCH_LABEL_BYTES') {
+    fetch(msg.url, { credentials: 'include' })
+      .then(r => {
+        if (!r.ok) { sendResponse({ ok: false, status: r.status }); return null; }
+        return r.arrayBuffer();
+      })
+      .then(buf => {
+        if (!buf) return;
+        const bytes = new Uint8Array(buf);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        sendResponse({ ok: true, data: btoa(binary) });
+      })
+      .catch(e => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
+});

@@ -9,7 +9,13 @@
       "Bash(git add *)",
       "Bash(git commit *)",
       "Bash(git push *)",
-      "Bash(npm uninstall *)"
+      "Bash(npm uninstall *)",
+      "PowerShell(git *)",
+      "PowerShell(Get-ChildItem \"C:\\\\Users\\\\Marius\\\\vault-resell\\\\vault-extension\" -Recurse | Where-Object { !$_.PSIsContainer } | Select-Object FullName)",
+      "Bash(node *)",
+      "Bash(git fetch *)",
+      "Bash(git checkout *)",
+      "Bash(npm install *)"
     ]
   }
 }
