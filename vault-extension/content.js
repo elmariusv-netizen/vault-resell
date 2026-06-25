@@ -351,7 +351,24 @@
     return found;
   }
 
-  // Enrich sold orders with buyer + date from conversations (run async after first render)
+  // Haal foto op via conversation detail als o.photo leeg is
+  async function fetchPhotoFromConversation(convId) {
+    try {
+      const d = await vGet(`/api/v2/conversations/${convId}`);
+      const conv = d.conversation || d;
+      const item = conv.item || conv.context_item || {};
+      const url  = item.photos?.[0]?.full_size_url || item.photos?.[0]?.url
+                || item.photo?.full_size_url || item.photo?.url
+                || item.thumbnail_url || null;
+      if (url) console.log(`[Vault] foto via conv ${convId}:`, url.slice(0, 60));
+      return url ? hiPhoto(url) : null;
+    } catch (e) {
+      console.warn(`[Vault] conv foto mislukt ${convId}:`, e.message);
+      return null;
+    }
+  }
+
+  // Enrich sold orders with buyer, date, convId and missing photos from conversations
   async function enrichSold(orders) {
     let threads;
     try { threads = await getConversations(); } catch { return; }
@@ -360,9 +377,15 @@
     for (const o of orders) {
       const t = byItemId.get(o.itemId);
       if (!t) continue;
-      if (!o.buyer   && t.with_user?.login) { o.buyer  = t.with_user.login; changed = true; }
-      if (!o.date    && t.created_at)        { o.date   = t.created_at.slice(0, 10); changed = true; }
-      if (!o.convId)                          { o.convId = t.id; changed = true; }
+      if (!o.buyer  && t.with_user?.login) { o.buyer  = t.with_user.login; changed = true; }
+      if (!o.date   && t.created_at)       { o.date   = t.created_at.slice(0, 10); changed = true; }
+      if (!o.convId)                       { o.convId = t.id; changed = true; }
+
+      // Foto ophalen via conversation detail als die nog leeg is
+      if (!o.photo && o.convId) {
+        const photo = await fetchPhotoFromConversation(o.convId);
+        if (photo) { o.photo = photo; changed = true; }
+      }
     }
     if (changed) await cSet('v_sold_v2', orders);
   }
@@ -705,7 +728,6 @@
     drawVerkopen(content, orders);
     drawVerkopenFooter(footer, orders);
 
-    autoSync(orders);
     enrichSold(orders).then(() => {
       if (activeTab === 'verkopen') drawVerkopen(content, orders);
     });
