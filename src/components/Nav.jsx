@@ -8,7 +8,7 @@ const NAV_LINKS = [
   { id: 'settings',  label: 'Instellingen', icon: '⚙' },
 ]
 
-const BOTTOM_TABS = ['home', 'inventory', 'new', 'verkopen', 'settings']
+const BOTTOM_TABS = ['home', 'new', 'labels', 'verkopen', 'settings']
 
 export default function Nav({ currentPage, onNavigate, theme, onToggleTheme, userName }) {
   return (
