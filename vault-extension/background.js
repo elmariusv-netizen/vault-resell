@@ -63,7 +63,7 @@ async function syncToSupabase(order) {
     item_url:        order.item_url || order.url || '',
     label_url:       order.labelUrl || '',
     photo_url:       order.photo || '',
-    photo_urls:      order.photo_urls   || null,
+    photo_urls:      order.photo_urls || (order.photo ? JSON.stringify([order.photo]) : null),
     description:     order.description  || null,
     shipping_method: order.shipping_method || null,
     tracking_code:   order.tracking_code   || null,
