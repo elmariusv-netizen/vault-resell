@@ -244,19 +244,28 @@
     }
     console.log('[Vault] getSold: totaal opgehaald:', all.length, 'orders');
 
-    const orders = all.map(o => ({
-      transactionId:         String(o.transaction_id || o.id || ''),
-      itemId:                String(o.item?.id || ''),
-      title:                 o.item?.title || o.title || '?',
-      photo:                 hiPhoto(o.item?.photos?.[0]?.url || o.item?.photo?.url || (typeof o.photo === 'object' ? o.photo?.url : null) || null),
-      price:                 parseFloat(o.total_price || o.item?.price_numeric || o.price || 0),
-      buyer:                 o.buyer?.login || o.user?.login || '',
-      country:               o.buyer?.country_iso_code || o.country_iso_code || '',
-      date:                  (o.created_at || o.updated_at || '').slice(0, 10),
-      status:                o.status || '',              // original case, e.g. "Verzendlabel is naar de verkoper gestuurd."
-      transactionUserStatus: o.transaction_user_status ?? null,  // 'needs_action' = label beschikbaar
-      convId:                null,
-    }));
+    const orders = all.map(o => {
+      const photo = hiPhoto(
+        o.photo?.full_size_url || o.photo?.url ||
+        o.item?.photos?.[0]?.full_size_url || o.item?.photos?.[0]?.url ||
+        o.item?.photo?.full_size_url || o.item?.photo?.url ||
+        o.photo_url || null
+      );
+      console.log(`[Vault] photo txn ${o.transaction_id || o.id}:`, o.photo?.full_size_url || o.photo?.url || o.photo_url || '(leeg)');
+      return {
+        transactionId:         String(o.transaction_id || o.id || ''),
+        itemId:                String(o.item?.id || ''),
+        title:                 o.item?.title || o.title || '?',
+        photo,
+        price:                 parseFloat(o.total_price || o.item?.price_numeric || o.price || 0),
+        buyer:                 o.buyer?.login || o.user?.login || '',
+        country:               o.buyer?.country_iso_code || o.country_iso_code || '',
+        date:                  (o.created_at || o.updated_at || '').slice(0, 10),
+        status:                o.status || '',
+        transactionUserStatus: o.transaction_user_status ?? null,
+        convId:                null,
+      };
+    });
     await cSet('v_sold_v2', orders);
     return orders;
   }
