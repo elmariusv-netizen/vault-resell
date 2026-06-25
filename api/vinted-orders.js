@@ -9,8 +9,10 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'x-vinted-cookie header ontbreekt. Koppel eerst je Vinted account in Instellingen.' });
   }
 
-  // Extract CSRF token from the cookie string if present
-  const csrfToken = cookie.match(/_vinted_csrf_token=([^;]+)/)?.[1] || '';
+  const csrfToken = cookie.match(/XSRF-TOKEN=([^;]+)/)?.[1]
+    || cookie.match(/_vinted_csrf_token=([^;]+)/)?.[1]
+    || cookie.match(/csrf[_-]token=([^;]+)/i)?.[1]
+    || '';
 
   try {
     const vintedRes = await fetch(

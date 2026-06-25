@@ -70,9 +70,18 @@ function VintedKoppeling({ vintedCookie, onSave, activeUserId }) {
   const STEPS = [
     <span>Ga naar <strong>vinted.be</strong> en log in op je account</span>,
     <span>Druk op <Kbd>F12</Kbd> om DevTools te openen</span>,
-    <span>Klik op het tabblad <strong>Application</strong> (of <strong>Toepassing</strong>)</span>,
-    <span>Links: <strong>Storage</strong> → <strong>Cookies</strong> → <strong>https://www.vinted.be</strong></span>,
-    <span>Zoek <Mono>_vinted_fr_session</Mono> en kopieer de volledige <strong>Value</strong></span>,
+    <span>Klik op het tabblad <strong>Console</strong></span>,
+    <span>
+      Plak dit commando en druk op <Kbd>Enter</Kbd> — het kopieert alle cookies naar je klembord:
+      <br />
+      <code style={{
+        display: 'block', marginTop: 6, padding: '7px 10px',
+        background: 'var(--bg-3, rgba(0,0,0,0.08))', borderRadius: 6,
+        fontFamily: 'monospace', fontSize: 13, color: 'var(--text)',
+        userSelect: 'all', cursor: 'text',
+      }}>copy(document.cookie)</code>
+    </span>,
+    <span>Plak het resultaat hieronder — dit bevat automatisch de XSRF-TOKEN en alle andere vereiste cookies</span>,
   ]
 
   return (
@@ -147,12 +156,12 @@ function VintedKoppeling({ vintedCookie, onSave, activeUserId }) {
           {/* Textarea */}
           <div>
             <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: 6 }}>
-              Plak hier de waarde van _vinted_fr_session
+              Plak hier de volledige cookie string (resultaat van copy(document.cookie))
             </label>
             <textarea
               value={cookieInput}
               onChange={(e) => { setCookieInput(e.target.value); setError('') }}
-              placeholder="eyJfcmFpbHMiOiJJQ0..."
+              placeholder="_vinted_fr_session=eyJ...; XSRF-TOKEN=abc123; ..."
               rows={4}
               spellCheck={false}
               autoComplete="off"
