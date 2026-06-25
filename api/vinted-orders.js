@@ -9,11 +9,6 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'x-vinted-cookie header ontbreekt. Koppel eerst je Vinted account in Instellingen.' });
   }
 
-  const csrfToken = cookie.match(/XSRF-TOKEN=([^;]+)/)?.[1]
-    || cookie.match(/_vinted_csrf_token=([^;]+)/)?.[1]
-    || cookie.match(/csrf[_-]token=([^;]+)/i)?.[1]
-    || '';
-
   try {
     const vintedRes = await fetch(
       'https://www.vinted.be/api/v2/my_orders?type=sold&status=all&per_page=50',
@@ -25,7 +20,7 @@ export default async function handler(req, res) {
           'Accept-Language': 'nl-BE,nl;q=0.9',
           'Accept-Encoding': 'gzip, deflate, br',
           'Referer': 'https://www.vinted.be/my_orders',
-          'x-csrf-token': csrfToken,
+          'X-Requested-With': 'XMLHttpRequest',
           'sec-fetch-dest': 'empty',
           'sec-fetch-mode': 'cors',
           'sec-fetch-site': 'same-origin',
@@ -37,19 +32,18 @@ export default async function handler(req, res) {
       const rawBody = await vintedRes.text();
       console.error('[vinted-orders] status:', vintedRes.status);
       console.error('[vinted-orders] response headers:', JSON.stringify(Object.fromEntries(vintedRes.headers)));
-      console.error('[vinted-orders] response body:', rawBody.slice(0, 500));
-      console.error('[vinted-orders] cookie preview:', cookie.slice(0, 80));
-      console.error('[vinted-orders] csrf found:', !!csrfToken);
+      console.error('[vinted-orders] response body (volledig):', rawBody);
+      console.error('[vinted-orders] cookie preview:', cookie.slice(0, 120));
 
       if (vintedRes.status === 401 || vintedRes.status === 403) {
         return res.status(401).json({
           error: 'Sessie verlopen. Kopieer je cookie opnieuw in Instellingen.',
-          debug: { status: vintedRes.status, body: rawBody.slice(0, 200) },
+          debug: { status: vintedRes.status, body: rawBody.slice(0, 500) },
         });
       }
       return res.status(vintedRes.status).json({
         error: `Vinted API fout: ${vintedRes.status}`,
-        debug: { body: rawBody.slice(0, 200) },
+        debug: { body: rawBody.slice(0, 500) },
       });
     }
 
