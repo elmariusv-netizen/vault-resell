@@ -13,6 +13,7 @@ import {
   getUsers, saveUsers, getActiveUserId, setActiveUserId, hasLegacyData,
 } from './utils/storage'
 import { getRemainingQty } from './utils/skuUtils'
+import { supabase } from './utils/supabase'
 
 function validateData(loaded) {
   if (!loaded?.batches || !loaded?.sales) return loaded
@@ -37,6 +38,7 @@ export default function App() {
   const [backupMeta, setBackupMeta] = useState(null)
   const [bannerDismissed, setBannerDismissed] = useState(false)
   const [ready, setReady] = useState(false)
+  const [vintedCookie, setVintedCookie] = useState(() => localStorage.getItem('vault-vinted-cookie') || null)
 
   useEffect(() => {
     const savedTheme = localStorage.getItem('vault-theme') || 'light'
@@ -62,6 +64,21 @@ export default function App() {
       if (validated !== raw) saveData(validated, activeUserId)
       setData(validated)
     }
+  }, [activeUserId])
+
+  useEffect(() => {
+    if (!activeUserId) return
+    supabase
+      .from('user_settings')
+      .select('vinted_cookie')
+      .eq('user_id', activeUserId)
+      .maybeSingle()
+      .then(({ data: row }) => {
+        if (row?.vinted_cookie) {
+          setVintedCookie(row.vinted_cookie)
+          localStorage.setItem('vault-vinted-cookie', row.vinted_cookie)
+        }
+      })
   }, [activeUserId])
 
   const toggleTheme = useCallback(() => {
@@ -202,10 +219,10 @@ export default function App() {
           {page === 'home'      && <Home {...props} theme={theme} />}
           {page === 'inventory' && <Inventory {...props} />}
           {page === 'new'       && <NewSKU {...props} />}
-          {page === 'verkopen'  && <Verkopen data={data} onDeleteSale={handleDeleteSale} onUpdateSale={handleUpdateSale} updateData={updateData} />}
+          {page === 'verkopen'  && <Verkopen data={data} onDeleteSale={handleDeleteSale} onUpdateSale={handleUpdateSale} updateData={updateData} vintedCookie={vintedCookie} />}
           {page === 'stats'     && <Stats data={data} theme={theme} />}
-          {page === 'settings'  && <Settings {...props} onExport={handleExport} activeUserId={activeUserId} />}
-          {page === 'labels'    && <Labels data={data} />}
+          {page === 'settings'  && <Settings {...props} onExport={handleExport} activeUserId={activeUserId} vintedCookie={vintedCookie} onVintedCookieChange={setVintedCookie} />}
+          {page === 'labels'    && <Labels data={data} vintedCookie={vintedCookie} />}
         </main>
       </div>
     </div>

@@ -1,8 +1,191 @@
 import { useState, useRef } from 'react'
 import { genId, getNextSkuLabel, formatSku, formatDate } from '../utils/skuUtils'
 import { clearData } from '../utils/storage'
+import { supabase } from '../utils/supabase'
 
 const COLORS = ['#00ff88', '#4fc3f7', '#ce93d8', '#ffb74d', '#80cbc4', '#ff7043', '#f06292', '#aed581', '#ffd60a', '#3ecfff']
+
+function Kbd({ children }) {
+  return (
+    <kbd style={{
+      fontFamily: 'monospace', fontSize: 11, padding: '1px 7px', borderRadius: 4,
+      background: 'var(--bg-3, rgba(0,0,0,0.07))', border: '1px solid var(--border)',
+      color: 'var(--text-2)', display: 'inline-block',
+    }}>{children}</kbd>
+  )
+}
+
+function Mono({ children }) {
+  return (
+    <code style={{
+      fontFamily: 'monospace', fontSize: 12, padding: '1px 6px', borderRadius: 4,
+      background: 'rgba(79,70,229,0.1)', color: '#818cf8',
+    }}>{children}</code>
+  )
+}
+
+function VintedKoppeling({ vintedCookie, onSave, activeUserId }) {
+  const [open, setOpen]           = useState(false)
+  const [cookieInput, setCookieInput] = useState('')
+  const [saving, setSaving]       = useState(false)
+  const [error, setError]         = useState('')
+
+  const isConnected = !!vintedCookie
+  const masked = vintedCookie
+    ? vintedCookie.slice(0, 8) + '••••••••••••' + vintedCookie.slice(-4)
+    : ''
+
+  const close = () => { setOpen(false); setCookieInput(''); setError('') }
+
+  const handleSave = async () => {
+    const val = cookieInput.trim()
+    if (!val) return
+    setSaving(true)
+    setError('')
+    try {
+      const { error: e } = await supabase
+        .from('user_settings')
+        .upsert({ user_id: activeUserId, vinted_cookie: val }, { onConflict: 'user_id' })
+      if (e) throw e
+      localStorage.setItem('vault-vinted-cookie', val)
+      onSave(val)
+      close()
+    } catch (e) {
+      setError(e.message || 'Opslaan mislukt. Bestaat de user_settings tabel al in Supabase?')
+    }
+    setSaving(false)
+  }
+
+  const handleDisconnect = async () => {
+    try {
+      await supabase
+        .from('user_settings')
+        .upsert({ user_id: activeUserId, vinted_cookie: null }, { onConflict: 'user_id' })
+    } catch {}
+    localStorage.removeItem('vault-vinted-cookie')
+    onSave(null)
+    close()
+  }
+
+  const STEPS = [
+    <span>Ga naar <strong>vinted.be</strong> en log in op je account</span>,
+    <span>Druk op <Kbd>F12</Kbd> om DevTools te openen</span>,
+    <span>Klik op het tabblad <strong>Application</strong> (of <strong>Toepassing</strong>)</span>,
+    <span>Links: <strong>Storage</strong> → <strong>Cookies</strong> → <strong>https://www.vinted.be</strong></span>,
+    <span>Zoek <Mono>_vinted_fr_session</Mono> en kopieer de volledige <strong>Value</strong></span>,
+  ]
+
+  return (
+    <div className="glass-card">
+      {/* Header row */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+        <div style={{
+          width: 42, height: 42, borderRadius: 12, flexShrink: 0,
+          background: isConnected ? 'rgba(0,255,136,0.1)' : 'var(--bg-2)',
+          border: `1px solid ${isConnected ? 'rgba(0,255,136,0.3)' : 'var(--border)'}`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22,
+        }}>
+          🛒
+        </div>
+
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: 15 }}>Vinted koppeling</div>
+          <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2, fontFamily: isConnected ? 'monospace' : 'inherit' }}>
+            {isConnected ? masked : 'Niet gekoppeld — voeg je sessie-cookie toe om listings en labels te activeren'}
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, flexShrink: 0, alignItems: 'center' }}>
+          {isConnected && !open && (
+            <span style={{
+              fontSize: 11, fontWeight: 700, color: 'var(--green)',
+              background: 'rgba(0,255,136,0.1)', border: '1px solid rgba(0,255,136,0.25)',
+              padding: '3px 10px', borderRadius: 100,
+            }}>✓ Actief</span>
+          )}
+          {isConnected ? (
+            <>
+              <button className="btn btn-ghost btn-sm" onClick={() => open ? close() : setOpen(true)}>
+                {open ? 'Sluiten' : 'Vervang'}
+              </button>
+              <button className="btn btn-danger btn-sm" onClick={handleDisconnect}>Ontkoppel</button>
+            </>
+          ) : (
+            <button className="btn btn-primary btn-sm" onClick={() => setOpen(true)} disabled={open}>
+              Koppel Vinted account
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Expandable form */}
+      {open && (
+        <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {/* Step-by-step instructions */}
+          <div style={{
+            background: 'var(--bg-2)', border: '1px solid var(--border)',
+            borderRadius: 'var(--r-lg)', padding: '14px 16px',
+          }}>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 10, color: 'var(--text)' }}>
+              Hoe je de sessie-cookie kopieert:
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+              {STEPS.map((step, i) => (
+                <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', fontSize: 13, color: 'var(--text-2)', lineHeight: 1.6 }}>
+                  <span style={{
+                    width: 20, height: 20, borderRadius: '50%', flexShrink: 0, marginTop: 1,
+                    background: 'rgba(79,70,229,0.12)', color: '#818cf8',
+                    fontSize: 11, fontWeight: 800,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>{i + 1}</span>
+                  <span>{step}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Textarea */}
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', display: 'block', marginBottom: 6 }}>
+              Plak hier de waarde van _vinted_fr_session
+            </label>
+            <textarea
+              value={cookieInput}
+              onChange={(e) => { setCookieInput(e.target.value); setError('') }}
+              placeholder="eyJfcmFpbHMiOiJJQ0..."
+              rows={4}
+              spellCheck={false}
+              autoComplete="off"
+              style={{
+                width: '100%', fontFamily: 'monospace', fontSize: 12, resize: 'vertical',
+                padding: '10px 12px', boxSizing: 'border-box', lineHeight: 1.5,
+              }}
+            />
+          </div>
+
+          {error && (
+            <div style={{
+              fontSize: 12, color: 'var(--red)', lineHeight: 1.6,
+              background: 'rgba(239,68,68,0.08)', padding: '8px 12px', borderRadius: 8,
+              border: '1px solid rgba(239,68,68,0.15)',
+            }}>{error}</div>
+          )}
+
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button className="btn btn-secondary btn-sm" onClick={close}>Annuleer</button>
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={handleSave}
+              disabled={!cookieInput.trim() || saving}
+            >
+              {saving ? 'Opslaan…' : 'Opslaan'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 function SupplierModal({ supplier, onClose, onSave }) {
   const [prefix, setPrefix] = useState(supplier?.prefix || '')
@@ -91,7 +274,7 @@ function formatSize(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
 }
 
-export default function Settings({ data, updateData, onExport, activeUserId }) {
+export default function Settings({ data, updateData, onExport, activeUserId, vintedCookie, onVintedCookieChange }) {
   const { suppliers, batches, sales } = data
   const documents = data.documents || []
 
@@ -342,6 +525,13 @@ export default function Settings({ data, updateData, onExport, activeUserId }) {
             </div>
           )}
         </div>
+
+        {/* Vinted koppeling */}
+        <VintedKoppeling
+          vintedCookie={vintedCookie}
+          onSave={onVintedCookieChange}
+          activeUserId={activeUserId}
+        />
 
         {/* Data management */}
         <div className="glass-card">
