@@ -45,14 +45,13 @@ function rowToOrder(row) {
   }
 }
 
-async function fetchUnregisteredOrders() {
+async function fetchAllVintedOrders() {
   const { data, error } = await supabase
     .from('vinted_orders')
     .select('*')
-    .eq('registered_in_vault', false)
     .order('synced_at', { ascending: false })
   if (error) { console.warn('[Vault] Supabase fetch error:', error); return [] }
-  return (data || []).map(rowToOrder)
+  return data || []
 }
 
 async function markRegisteredInSupabase(orderId) {
@@ -60,6 +59,96 @@ async function markRegisteredInSupabase(orderId) {
     .from('vinted_orders')
     .update({ registered_in_vault: true })
     .eq('id', orderId)
+}
+
+const COUNTRY_FLAGS = { BE:'🇧🇪',NL:'🇳🇱',FR:'🇫🇷',DE:'🇩🇪',ES:'🇪🇸',IT:'🇮🇹',PL:'🇵🇱',CZ:'🇨🇿',PT:'🇵🇹',SE:'🇸🇪',FI:'🇫🇮',LT:'🇱🇹',LV:'🇱🇻',EE:'🇪🇪' }
+
+function getStatusBadge(status, labelAvailable) {
+  const s = (status || '').toLowerCase()
+  if (labelAvailable || s.includes('verzendlabel'))
+    return { label: 'Label gereed', color: '#d97706', bg: 'rgba(245,158,11,0.12)' }
+  if (s.includes('geleverd') || s.includes('delivered') || s.includes('ontvangen'))
+    return { label: 'Geleverd', color: '#16a34a', bg: 'rgba(22,163,74,0.1)' }
+  if (s.includes('verzond') || s.includes('shipped') || s.includes('transit') || s.includes('onderweg'))
+    return { label: 'Onderweg', color: '#2563eb', bg: 'rgba(37,99,235,0.1)' }
+  if (s.includes('complet') || s.includes('voltooid') || s.includes('closed') || s.includes('afgerond'))
+    return { label: 'Voltooid', color: '#16a34a', bg: 'rgba(22,163,74,0.1)' }
+  if (s.includes('cancel') || s.includes('geannul'))
+    return { label: 'Geannuleerd', color: '#dc2626', bg: 'rgba(220,38,38,0.1)' }
+  if (status) return { label: status.length > 32 ? status.slice(0, 32) + '…' : status, color: '#6b7280', bg: 'rgba(107,114,128,0.08)' }
+  return null
+}
+
+function InlineInput({ value, onSave, placeholder, prefix = '', width = 90, type = 'text' }) {
+  const [val, setVal] = useState(value ?? '')
+  useEffect(() => setVal(value ?? ''), [value])
+  const save = () => { if (String(val) !== String(value ?? '')) onSave(val) }
+  return (
+    <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+      {prefix && (
+        <span style={{ position: 'absolute', left: 7, fontSize: 11, color: 'var(--text-3)', pointerEvents: 'none', userSelect: 'none' }}>
+          {prefix}
+        </span>
+      )}
+      <input
+        type={type} value={val}
+        onChange={e => setVal(e.target.value)}
+        onBlur={save}
+        onKeyDown={e => e.key === 'Enter' && e.target.blur()}
+        placeholder={placeholder}
+        style={{ width, fontSize: 12, padding: `4px 8px 4px ${prefix ? 18 : 8}px`, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', outline: 'none', fontFamily: 'inherit' }}
+      />
+    </div>
+  )
+}
+
+function VintedOrderRow({ order, isLast, onSave, onRegister, onDismiss }) {
+  const badge = getStatusBadge(order.status, order.label_available)
+  const flag  = COUNTRY_FLAGS[order.country] || ''
+  const date  = order.sale_date || order.synced_at?.split('T')[0] || ''
+  const fmtPrice = v => v > 0 ? `€${Number(v).toFixed(2).replace('.', ',')}` : '—'
+
+  return (
+    <div style={{ padding: '12px 16px', borderBottom: isLast ? 'none' : '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+      {order.photo_url ? (
+        <img src={order.photo_url} alt="" style={{ width: 48, height: 48, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }} />
+      ) : (
+        <div style={{ width: 48, height: 48, borderRadius: 8, background: 'var(--bg-3,var(--bg))', border: '1px solid var(--border)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22 }}>📦</div>
+      )}
+      <div style={{ flex: 1, minWidth: 140 }}>
+        <div style={{ fontWeight: 500, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 260 }}>{order.title}</div>
+        <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {order.buyer && <span>@{order.buyer}</span>}
+          {order.country && <span>{flag} {order.country}</span>}
+          {date && <span>{date}</span>}
+        </div>
+        {badge && (
+          <span style={{ display: 'inline-block', marginTop: 4, fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: badge.bg, color: badge.color }}>{badge.label}</span>
+        )}
+      </div>
+      <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--green)', flexShrink: 0 }}>{fmtPrice(order.price)}</div>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+        <InlineInput
+          value={order.cost_price != null ? String(order.cost_price) : ''}
+          onSave={v => onSave(order.id, 'cost_price', v ? parseFloat(v) : null)}
+          placeholder="Inkoop €" prefix="€" width={76} type="number"
+        />
+        <InlineInput
+          value={order.sku_ref || ''}
+          onSave={v => onSave(order.id, 'sku_ref', v || null)}
+          placeholder="SKU" width={80}
+        />
+      </div>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+        {order.registered_in_vault ? (
+          <span style={{ fontSize: 11, color: 'var(--green)', fontWeight: 600, whiteSpace: 'nowrap' }}>✓ Geregistreerd</span>
+        ) : (
+          <button className="btn btn-primary btn-sm" onClick={onRegister} style={{ fontSize: 11 }}>+ Registreer</button>
+        )}
+        <button className="btn btn-ghost btn-sm btn-icon" onClick={onDismiss} title="Verwijder uit lijst" style={{ fontSize: 14 }}>×</button>
+      </div>
+    </div>
+  )
 }
 
 export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData }) {
@@ -71,26 +160,33 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData 
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
   const [editSale, setEditSale] = useState(null)
 
-  // ── Vinted Sync state ──────────────────────────────────────────────────
-  const [vintedOrders, setVintedOrders] = useState([])
+  // ── Vinted Orders state ────────────────────────────────────────────────
+  const [vtOrders, setVtOrders] = useState([])
+  const [vtLoading, setVtLoading] = useState(true)
+  const [vtError, setVtError] = useState(null)
   const [saleModalPrefill, setSaleModalPrefill] = useState(null)
 
   useEffect(() => {
     let cancelled = false
-    fetchUnregisteredOrders().then((orders) => {
-      if (!cancelled) setVintedOrders(orders)
-    })
+    fetchAllVintedOrders()
+      .then(rows => { if (!cancelled) { setVtOrders(rows); setVtLoading(false) } })
+      .catch(e => { if (!cancelled) { setVtError(e.message); setVtLoading(false) } })
     return () => { cancelled = true }
   }, [])
 
-  const openSaleModal = (order) => {
+  const saveVtField = async (id, field, value) => {
+    await supabase.from('vinted_orders').update({ [field]: value }).eq('id', id)
+    setVtOrders(prev => prev.map(o => o.id === id ? { ...o, [field]: value } : o))
+  }
+
+  const openSaleModal = (row) => {
     setSaleModalPrefill({
-      buyer:      order.buyer !== 'Onbekende koper' ? order.buyer : '',
-      price:      order.price || '',
-      date:       parseVintedDate(order.date),
-      url:        order.url || '',
-      notes:      order.transactionId ? `Vinted #${order.transactionId}` : '',
-      _orderId:   order.id,
+      buyer:    row.buyer && row.buyer !== 'Onbekende koper' ? row.buyer : '',
+      price:    row.price || '',
+      date:     parseVintedDate(row.sale_date || row.synced_at?.split('T')[0] || ''),
+      url:      row.item_url || '',
+      notes:    row.transaction_id ? `Vinted #${row.transaction_id}` : '',
+      _orderId: row.id,
     })
   }
 
@@ -104,14 +200,14 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData 
     updateData(updates)
     if (saleModalPrefill?._orderId) {
       await markRegisteredInSupabase(saleModalPrefill._orderId)
-      setVintedOrders((prev) => prev.filter((o) => o.id !== saleModalPrefill._orderId))
+      setVtOrders(prev => prev.map(o => o.id === saleModalPrefill._orderId ? { ...o, registered_in_vault: true } : o))
     }
     setSaleModalPrefill(null)
   }
 
   const dismissVintedOrder = async (orderId) => {
     await markRegisteredInSupabase(orderId)
-    setVintedOrders((prev) => prev.filter((o) => o.id !== orderId))
+    setVtOrders(prev => prev.filter(o => o.id !== orderId))
   }
 
   const platforms = useMemo(() => {
@@ -172,55 +268,43 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData 
         </div>
       </div>
 
-      {/* ── Vinted Sync ── */}
-      {vintedOrders.length > 0 && (
-        <div style={{ marginBottom: 20, background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
-          <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontSize: 16 }}>🔄</span>
-            <span style={{ fontWeight: 700, fontSize: 14 }}>Vinted Sync</span>
-            <span style={{ fontSize: 12, color: 'var(--text-3)', background: 'var(--bg-3,var(--bg))', padding: '1px 7px', borderRadius: 20 }}>
-              {vintedOrders.length}
+      {/* ── Vinted Orders ── */}
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+          <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>Vinted Orders</h2>
+          {!vtLoading && (
+            <span style={{ fontSize: 12, color: 'var(--text-3)', background: 'var(--bg-2)', padding: '1px 8px', borderRadius: 20 }}>
+              {vtOrders.length}
             </span>
+          )}
+        </div>
+        {vtLoading ? (
+          <div style={{ padding: 20, background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
+            Laden…
           </div>
-          <div>
-            {vintedOrders.map((order) => (
-              <div
-                key={order.id || order.transactionId}
-                style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}
-              >
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 500, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {order.title}
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
-                    {order.date}
-                    {order.buyer && order.buyer !== 'Onbekende koper' && ` · ${order.buyer}`}
-                    {order.transactionId && ` · #${order.transactionId}`}
-                  </div>
-                </div>
-                <div style={{ fontWeight: 700, color: 'var(--green)', flexShrink: 0, fontSize: 14 }}>
-                  {order.price > 0 ? `€${Number(order.price).toFixed(2).replace('.', ',')}` : '—'}
-                </div>
-                <button
-                  className="btn btn-primary btn-sm"
-                  onClick={() => openSaleModal(order)}
-                  style={{ flexShrink: 0, fontSize: 11 }}
-                >
-                  + Registreer als verkoop
-                </button>
-                <button
-                  className="btn btn-ghost btn-sm btn-icon"
-                  onClick={() => dismissVintedOrder(order.id)}
-                  title="Verwijder uit lijst"
-                  style={{ fontSize: 14, flexShrink: 0 }}
-                >
-                  ×
-                </button>
-              </div>
+        ) : vtError ? (
+          <div style={{ padding: 16, background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, color: 'var(--red)', fontSize: 13 }}>
+            Fout: {vtError}
+          </div>
+        ) : vtOrders.length === 0 ? (
+          <div style={{ padding: 24, background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
+            Nog geen orders gesynchroniseerd via de Chrome extensie.
+          </div>
+        ) : (
+          <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
+            {vtOrders.map((order, i) => (
+              <VintedOrderRow
+                key={order.id}
+                order={order}
+                isLast={i === vtOrders.length - 1}
+                onSave={saveVtField}
+                onRegister={() => openSaleModal(order)}
+                onDismiss={() => dismissVintedOrder(order.id)}
+              />
             ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       <div className="filters">
         <input

@@ -17,3 +17,6 @@ CREATE TABLE IF NOT EXISTS vinted_orders (
 -- Run these if the table already exists:
 ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS photo_url TEXT;
 ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS sale_date DATE;
+ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS label_available BOOLEAN DEFAULT FALSE;
+ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS cost_price DECIMAL;
+ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS sku_ref TEXT;
