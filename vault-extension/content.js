@@ -249,6 +249,7 @@
         date:                  (o.created_at || o.updated_at || '').slice(0, 10),
         status:                o.status || '',
         transactionUserStatus: o.transaction_user_status ?? null,
+        conversationId:        String(o.conversation_id || o.thread_id || ''),
         convId:                null,
       };
     });
@@ -354,25 +355,18 @@
     }
   }
 
-  // Enrich sold orders with buyer, date, convId and missing photos from conversations
+  // Enrich sold orders: foto ophalen via conversationId voor orders zonder foto (max 20)
   async function enrichSold(orders) {
-    let threads;
-    try { threads = await getConversations(); } catch { return; }
-    const byItemId = new Map(threads.filter(t => t.item?.id).map(t => [String(t.item.id), t]));
-    let changed = false;
-    for (const o of orders) {
-      const t = byItemId.get(o.itemId);
-      if (!t) continue;
-      if (!o.buyer  && t.with_user?.login) { o.buyer  = t.with_user.login; changed = true; }
-      if (!o.date   && t.created_at)       { o.date   = t.created_at.slice(0, 10); changed = true; }
-      if (!o.convId)                       { o.convId = t.id; changed = true; }
+    const noPhoto = orders.filter(o => !o.photo && (o.conversationId || o.convId)).slice(0, 20);
+    if (!noPhoto.length) return;
 
-      // Foto ophalen via conversation detail als die nog leeg is
-      if (!o.photo && o.convId) {
-        const photo = await fetchPhotoFromConversation(o.convId);
-        if (photo) { o.photo = photo; changed = true; }
-      }
-    }
+    console.log(`[Vault] enrichSold: foto ophalen voor ${noPhoto.length} orders via conversationId`);
+    let changed = false;
+    await Promise.all(noPhoto.map(async o => {
+      const id = o.conversationId || o.convId;
+      const photo = await fetchPhotoFromConversation(id);
+      if (photo) { o.photo = photo; changed = true; }
+    }));
     if (changed) await cSet('v_sold_v2', orders);
   }
 
