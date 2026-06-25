@@ -9,7 +9,8 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'x-vinted-cookie header ontbreekt. Koppel eerst je Vinted account in Instellingen.' });
   }
 
-  const ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+  // Extract CSRF token from the cookie string if present
+  const csrfToken = cookie.match(/_vinted_csrf_token=([^;]+)/)?.[1] || '';
 
   try {
     const vintedRes = await fetch(
@@ -17,21 +18,37 @@ export default async function handler(req, res) {
       {
         headers: {
           'Cookie': cookie,
-          'User-Agent': ua,
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
           'Accept': 'application/json, text/plain, */*',
-          'Accept-Language': 'nl-BE,nl;q=0.9,en;q=0.8',
-          'X-Requested-With': 'XMLHttpRequest',
-          'Referer': 'https://www.vinted.be/',
+          'Accept-Language': 'nl-BE,nl;q=0.9',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Referer': 'https://www.vinted.be/my_orders',
+          'x-csrf-token': csrfToken,
+          'sec-fetch-dest': 'empty',
+          'sec-fetch-mode': 'cors',
+          'sec-fetch-site': 'same-origin',
         },
       }
     );
 
     if (!vintedRes.ok) {
-      console.error('[vinted-orders] Vinted status:', vintedRes.status);
+      const rawBody = await vintedRes.text();
+      console.error('[vinted-orders] status:', vintedRes.status);
+      console.error('[vinted-orders] response headers:', JSON.stringify(Object.fromEntries(vintedRes.headers)));
+      console.error('[vinted-orders] response body:', rawBody.slice(0, 500));
+      console.error('[vinted-orders] cookie preview:', cookie.slice(0, 80));
+      console.error('[vinted-orders] csrf found:', !!csrfToken);
+
       if (vintedRes.status === 401 || vintedRes.status === 403) {
-        return res.status(401).json({ error: 'Sessie verlopen. Kopieer je cookie opnieuw in Instellingen.' });
+        return res.status(401).json({
+          error: 'Sessie verlopen. Kopieer je cookie opnieuw in Instellingen.',
+          debug: { status: vintedRes.status, body: rawBody.slice(0, 200) },
+        });
       }
-      return res.status(vintedRes.status).json({ error: `Vinted API fout: ${vintedRes.status}` });
+      return res.status(vintedRes.status).json({
+        error: `Vinted API fout: ${vintedRes.status}`,
+        debug: { body: rawBody.slice(0, 200) },
+      });
     }
 
     const data = await vintedRes.json();
