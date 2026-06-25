@@ -262,18 +262,19 @@
 
   // ── Transaction detail — beschrijving, alle foto's, tracking, verzendmethode ──
   async function fetchTransactionDetail(transactionId) {
-    try {
+    const TIMEOUT_MS = 5000;
+    const timedOut   = new Promise(res => setTimeout(() => res(null), TIMEOUT_MS));
+
+    const work = (async () => {
       const d   = await vGet(`/api/v2/transactions/${transactionId}`);
       const tx  = d.transaction || d;
       const itm = tx.item      || {};
       const shp = tx.shipment  || {};
       const buy = tx.buyer     || tx.user || {};
-
       const photos = (itm.photos || [])
         .map(p => hiPhoto(p.url || p.thumbnail_url || ''))
         .filter(Boolean);
-
-      const detail = {
+      return {
         description:     (itm.description || '').slice(0, 2000),
         photo_urls:      JSON.stringify(photos),
         item_url:        itm.url || (itm.id ? `https://www.vinted.be/items/${itm.id}` : ''),
@@ -281,12 +282,32 @@
         tracking_code:   shp.tracking_code || shp.label?.tracking_code || '',
         buyer_name:      buy.real_name || '',
       };
-      console.log(`[Vault] detail txn ${transactionId}: ${photos.length} foto's, tracking="${detail.tracking_code}", carrier="${detail.shipping_method}"`);
-      return detail;
+    })();
+
+    try {
+      const result = await Promise.race([work, timedOut]);
+      if (!result) {
+        console.warn(`[Vault] detail timeout ${TIMEOUT_MS}ms txn ${transactionId}`);
+        return {};
+      }
+      console.log(`[Vault] detail txn ${transactionId}: ${JSON.parse(result.photo_urls || '[]').length} foto's, tracking="${result.tracking_code}"`);
+      return result;
     } catch (e) {
       console.warn(`[Vault] detail fetch mislukt txn ${transactionId}:`, e.message);
       return {};
     }
+  }
+
+  // Haal details op in parallelle batches van BATCH_SIZE tegelijk
+  async function fetchDetailsInBatches(orders, BATCH_SIZE, onProgress) {
+    const details = new Array(orders.length);
+    for (let i = 0; i < orders.length; i += BATCH_SIZE) {
+      const slice = orders.slice(i, i + BATCH_SIZE);
+      if (onProgress) onProgress(i, Math.min(i + BATCH_SIZE, orders.length), orders.length);
+      const batchResults = await Promise.all(slice.map(o => fetchTransactionDetail(o.transactionId)));
+      batchResults.forEach((d, j) => { details[i + j] = d; });
+    }
+    return details;
   }
 
   async function getConversations() {
@@ -407,12 +428,14 @@
     const overgeslagen = orders.length - nieuw.length;
     console.log(`[Vault] autoSync: ${orders.length} orders — ${overgeslagen} al gesync, ${nieuw.length} nieuw`);
 
+    // Detail fetches in batches van 5 parallel, daarna sequentieel synchen
+    console.log(`[Vault] autoSync: details ophalen in batches van 5…`);
+    const details = await fetchDetailsInBatches(nieuw, 5);
+    const enrichedNew = nieuw.map((o, i) => ({ ...o, ...details[i], labelUrl: labelUrl(o.transactionId) }));
+
     let ok = 0, fail = 0;
-    for (const o of nieuw) {
-      console.log(`[Vault] autoSync: detail + sync txn ${o.transactionId} — "${o.title}"`);
-      const detail   = await fetchTransactionDetail(o.transactionId);
-      const enriched = { ...o, ...detail, labelUrl: labelUrl(o.transactionId) };
-      const res = await sendMsg({ type: 'SYNC_ORDER', order: enriched });
+    for (const o of enrichedNew) {
+      const res = await sendMsg({ type: 'SYNC_ORDER', order: o });
       if (res?.success && !res.duplicate) {
         syncedIds.add(o.transactionId);
         ok++;
@@ -739,17 +762,24 @@
       console.log(`[Vault] sync-knop: ${targets.length} orders te sturen`);
       syncBtn.disabled = true;
 
-      // Sequentieel i.p.v. Promise.all — voorkomt service worker time-outs bij 100+ orders
+      // Fase 1: details in batches van 5 parallel — Fase 2: Supabase sequentieel
       (async () => {
         let ok = 0, fail = 0;
-        for (let i = 0; i < targets.length; i++) {
-          const o = targets[i];
-          syncBtn.textContent = `⏳ ${i + 1}/${targets.length} — detail ophalen…`;
-          console.log(`[Vault] sync ${i + 1}/${targets.length}: txn ${o.transactionId} — "${o.title}"`);
-          const detail   = await fetchTransactionDetail(o.transactionId);
-          const enriched = { ...o, ...detail };
-          syncBtn.textContent = `⏳ ${i + 1}/${targets.length} — Supabase…`;
-          const res = await sendMsg({ type: 'SYNC_TO_SUPABASE', order: enriched }, 20000);
+
+        // Fase 1: detail fetches
+        const enriched = new Array(targets.length);
+        await fetchDetailsInBatches(targets, 5, (from, to, total) => {
+          syncBtn.textContent = `⏳ ${from + 1}–${to}/${total} — detail ophalen…`;
+        }).then(details => {
+          targets.forEach((o, i) => { enriched[i] = { ...o, ...details[i] }; });
+        });
+
+        // Fase 2: Supabase sync sequentieel
+        for (let i = 0; i < enriched.length; i++) {
+          const o = enriched[i];
+          syncBtn.textContent = `⏳ ${i + 1}/${enriched.length} — Supabase sync…`;
+          console.log(`[Vault] sync ${i + 1}/${enriched.length}: txn ${o.transactionId} — "${o.title}"`);
+          const res = await sendMsg({ type: 'SYNC_TO_SUPABASE', order: o }, 20000);
           if (res?.success) {
             ok++;
             console.log(`[Vault] sync ✓ txn ${o.transactionId} (HTTP ${res.status})`);
