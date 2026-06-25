@@ -20,6 +20,11 @@ ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS sale_date DATE;
 ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS label_available BOOLEAN DEFAULT FALSE;
 ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS cost_price DECIMAL;
 ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS sku_ref TEXT;
+ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS photo_urls TEXT;
+ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS description TEXT;
+ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS shipping_method TEXT;
+ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS tracking_code TEXT;
+ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS buyer_name TEXT;
 
 -- RLS policies — vereist zodat de Chrome extensie kan schrijven
 -- Voer dit uit als de tabel leeg blijft na sync:

@@ -260,6 +260,34 @@
     return orders;
   }
 
+  // ── Transaction detail — beschrijving, alle foto's, tracking, verzendmethode ──
+  async function fetchTransactionDetail(transactionId) {
+    try {
+      const d   = await vGet(`/api/v2/transactions/${transactionId}`);
+      const tx  = d.transaction || d;
+      const itm = tx.item      || {};
+      const shp = tx.shipment  || {};
+      const buy = tx.buyer     || tx.user || {};
+
+      const photos = (itm.photos || [])
+        .map(p => hiPhoto(p.url || p.thumbnail_url || ''))
+        .filter(Boolean);
+
+      const detail = {
+        description:     (itm.description || '').slice(0, 2000),
+        photo_urls:      JSON.stringify(photos),
+        item_url:        itm.url || (itm.id ? `https://www.vinted.be/items/${itm.id}` : ''),
+        shipping_method: shp.carrier_name || tx.shipping_rate?.shipping_carrier?.title || '',
+        tracking_code:   shp.tracking_code || shp.label?.tracking_code || '',
+        buyer_name:      buy.real_name || '',
+      };
+      console.log(`[Vault] detail txn ${transactionId}: ${photos.length} foto's, tracking="${detail.tracking_code}", carrier="${detail.shipping_method}"`);
+      return detail;
+    } catch (e) {
+      console.warn(`[Vault] detail fetch mislukt txn ${transactionId}:`, e.message);
+      return {};
+    }
+  }
 
   async function getConversations() {
     const c = await cGet('v_convs'); if (c) return c;
@@ -381,11 +409,14 @@
 
     let ok = 0, fail = 0;
     for (const o of nieuw) {
-      const res = await sendMsg({ type: 'SYNC_ORDER', order: { ...o, labelUrl: labelUrl(o.transactionId) } });
+      console.log(`[Vault] autoSync: detail + sync txn ${o.transactionId} — "${o.title}"`);
+      const detail   = await fetchTransactionDetail(o.transactionId);
+      const enriched = { ...o, ...detail, labelUrl: labelUrl(o.transactionId) };
+      const res = await sendMsg({ type: 'SYNC_ORDER', order: enriched });
       if (res?.success && !res.duplicate) {
         syncedIds.add(o.transactionId);
         ok++;
-        console.log(`[Vault] autoSync ✓ txn ${o.transactionId} — "${o.title}"`);
+        console.log(`[Vault] autoSync ✓ txn ${o.transactionId}`);
       } else {
         fail++;
         console.warn(`[Vault] autoSync ✗ txn ${o.transactionId}`, res);
@@ -713,9 +744,12 @@
         let ok = 0, fail = 0;
         for (let i = 0; i < targets.length; i++) {
           const o = targets[i];
-          syncBtn.textContent = `⏳ ${i + 1}/${targets.length} bezig…`;
+          syncBtn.textContent = `⏳ ${i + 1}/${targets.length} — detail ophalen…`;
           console.log(`[Vault] sync ${i + 1}/${targets.length}: txn ${o.transactionId} — "${o.title}"`);
-          const res = await sendMsg({ type: 'SYNC_TO_SUPABASE', order: o }, 20000);
+          const detail   = await fetchTransactionDetail(o.transactionId);
+          const enriched = { ...o, ...detail };
+          syncBtn.textContent = `⏳ ${i + 1}/${targets.length} — Supabase…`;
+          const res = await sendMsg({ type: 'SYNC_TO_SUPABASE', order: enriched }, 20000);
           if (res?.success) {
             ok++;
             console.log(`[Vault] sync ✓ txn ${o.transactionId} (HTTP ${res.status})`);

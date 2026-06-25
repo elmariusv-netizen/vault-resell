@@ -88,13 +88,14 @@ const SIZES = ['xxxl','xxl','xl','xs','xxs','3xl','2xl','one size',
                '50','48','46','44','42','40','38','36','34','32','30',
                '27','28','29','31','33','s','m','l']
 
-function suggestSku(title) {
-  if (!title) return ''
-  // Bestaand SKU-patroon: 2-4 hoofdletters + 3-6 cijfers
-  const existing = title.match(/\b([A-Z]{2,4}\d{3,6})\b/)
+function suggestSku(title, description) {
+  const combined = `${title || ''} ${description || ''}`
+  if (!combined.trim()) return ''
+  // Bestaand SKU-patroon: 2-4 hoofdletters + 3-6 cijfers — zoek ook in beschrijving
+  const existing = combined.match(/\b([A-Z]{2,4}\d{3,6})\b/)
   if (existing) return existing[1]
 
-  const t = title.toLowerCase()
+  const t = combined.toLowerCase()
   let brand = '', color = '', size = ''
 
   for (const [name, code] of BRANDS_MAP) {
@@ -153,29 +154,63 @@ function InlineInput({ value, onSave, placeholder, prefix = '', width = 90, type
   )
 }
 
-// ── Foto hover popup (fixed overlay) ──────────────────────────────────────
-function PhotoPopup({ src, onClose }) {
+// ── Foto popup met meerdere foto's + navigatie ─────────────────────────────
+function PhotoPopup({ urls, onClose }) {
+  const list = Array.isArray(urls) ? urls.filter(Boolean) : [urls].filter(Boolean)
+  const [idx, setIdx] = useState(0)
+  const prev = () => setIdx(i => Math.max(0, i - 1))
+  const next = () => setIdx(i => Math.min(list.length - 1, i + 1))
+
   useEffect(() => {
-    const close = e => { if (e.key === 'Escape') onClose() }
-    window.addEventListener('keydown', close)
-    return () => window.removeEventListener('keydown', close)
-  }, [onClose])
-  if (!src) return null
+    const onKey = e => {
+      if (e.key === 'Escape')     onClose()
+      if (e.key === 'ArrowLeft')  prev()
+      if (e.key === 'ArrowRight') next()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose, list.length])
+
+  if (!list.length) return null
+  const cur = list[Math.min(idx, list.length - 1)]
+
+  const navBtn = (label, onClick, disabled) => (
+    <button
+      onClick={e => { e.stopPropagation(); onClick() }}
+      disabled={disabled}
+      style={{
+        position: 'absolute', top: '50%', transform: 'translateY(-50%)',
+        background: 'rgba(255,255,255,0.15)', border: 'none', color: '#fff',
+        borderRadius: '50%', width: 44, height: 44, fontSize: 26, cursor: 'pointer',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        opacity: disabled ? 0.2 : 1, transition: 'opacity 0.15s',
+        [label === '‹' ? 'left' : 'right']: 16,
+      }}
+    >{label}</button>
+  )
+
   return (
     <div
       onClick={onClose}
       style={{
         position: 'fixed', inset: 0, zIndex: 9998,
-        background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)',
+        background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(6px)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         cursor: 'zoom-out',
       }}
     >
       <img
-        src={src} alt=""
+        src={cur} alt=""
         onClick={e => e.stopPropagation()}
-        style={{ maxWidth: 'min(520px,90vw)', maxHeight: '85vh', borderRadius: 16, objectFit: 'contain', boxShadow: '0 32px 80px rgba(0,0,0,0.6)', cursor: 'default' }}
+        style={{ maxWidth: 'min(520px,90vw)', maxHeight: '82vh', borderRadius: 16, objectFit: 'contain', boxShadow: '0 32px 80px rgba(0,0,0,0.6)', cursor: 'default' }}
       />
+      {list.length > 1 && navBtn('‹', prev, idx === 0)}
+      {list.length > 1 && navBtn('›', next, idx === list.length - 1)}
+      {list.length > 1 && (
+        <div style={{ position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)', color: '#fff', fontSize: 12, background: 'rgba(0,0,0,0.5)', padding: '3px 12px', borderRadius: 20, pointerEvents: 'none' }}>
+          {idx + 1} / {list.length}
+        </div>
+      )}
     </div>
   )
 }
@@ -190,6 +225,10 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick }) {
   const date      = order.sale_date || order.synced_at?.split('T')[0] || ''
   const profit    = order.cost_price != null ? (Number(order.price) - Number(order.cost_price)) : null
   const fmtE      = v => `€${Number(v).toFixed(2).replace('.', ',')}`
+
+  const photoUrls = (() => { try { return JSON.parse(order.photo_urls || '[]') } catch { return [] } })()
+  const allPhotos = photoUrls.length ? photoUrls : (order.photo_url ? [order.photo_url] : [])
+  const mainPhoto = allPhotos[0] || null
 
   const downloadLabel = async () => {
     if (!vintedCookie) { alert('Geen Vinted cookie — koppel je account in Instellingen.'); return }
@@ -226,15 +265,20 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick }) {
     >
       <div className="modal" style={{ maxWidth: 500, padding: 0, overflow: 'hidden' }}>
         {/* Foto header */}
-        {order.photo_url && (
+        {mainPhoto && (
           <div
-            onClick={() => onPhotoClick(order.photo_url)}
+            onClick={() => onPhotoClick(allPhotos)}
             style={{ position: 'relative', width: '100%', height: 220, cursor: 'zoom-in', background: 'var(--bg-2)', overflow: 'hidden' }}
           >
             <img
-              src={order.photo_url} alt=""
+              src={mainPhoto} alt=""
               style={{ width: '100%', height: '100%', objectFit: 'cover' }}
             />
+            {allPhotos.length > 1 && (
+              <span style={{ position: 'absolute', top: 12, left: 12, background: 'rgba(0,0,0,0.55)', color: '#fff', fontSize: 11, padding: '3px 10px', borderRadius: 20 }}>
+                {allPhotos.length} foto's
+              </span>
+            )}
             <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to bottom, transparent 60%, rgba(0,0,0,0.5))', pointerEvents: 'none' }} />
             <button
               onClick={e => { e.stopPropagation(); onClose() }}
@@ -245,7 +289,7 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick }) {
 
         <div style={{ padding: 24 }}>
           {/* Header close als geen foto */}
-          {!order.photo_url && (
+          {!mainPhoto && (
             <div className="modal-header" style={{ marginBottom: 16 }}>
               <h2 style={{ fontSize: 16 }}>Order details</h2>
               <button className="modal-close" onClick={onClose}>×</button>
@@ -258,22 +302,37 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick }) {
           {/* Meta grid */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px', marginBottom: 16 }}>
             {[
-              ['Koper', order.buyer ? `@${order.buyer}${order.country ? ` · ${flag} ${order.country}` : ''}` : '—'],
+              ['Koper', order.buyer_name
+                ? `${order.buyer_name}${order.buyer ? ` (@${order.buyer})` : ''}`
+                : order.buyer ? `@${order.buyer}` : '—'],
+              ['Land', order.country ? `${flag} ${order.country}` : '—'],
               ['Datum', date || '—'],
               ['Verkoopprijs', order.price > 0 ? fmtE(order.price) : '—'],
               ['Inkoopprijs', order.cost_price != null ? fmtE(order.cost_price) : '—'],
               profit != null ? ['Winst', fmtE(profit)] : null,
               order.sku_ref ? ['SKU', order.sku_ref] : null,
+              order.shipping_method ? ['Verzendmethode', order.shipping_method] : null,
+              order.tracking_code ? ['Tracking', order.tracking_code] : null,
             ].filter(Boolean).map(([label, val]) => (
               <div key={label}>
                 <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 2 }}>{label}</div>
                 <div style={{
                   fontSize: 13, fontWeight: 600,
                   color: label === 'Winst' ? (profit >= 0 ? 'var(--green)' : 'var(--red)') : 'var(--text)',
+                  fontFamily: label === 'Tracking' ? 'monospace' : 'inherit',
+                  wordBreak: 'break-all',
                 }}>{val}</div>
               </div>
             ))}
           </div>
+
+          {/* Beschrijving */}
+          {order.description && (
+            <div style={{ marginBottom: 16, padding: '10px 12px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8 }}>
+              <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 4 }}>Beschrijving</div>
+              <div style={{ fontSize: 12, color: 'var(--text-2)', lineHeight: 1.6, maxHeight: 100, overflowY: 'auto', whiteSpace: 'pre-line' }}>{order.description}</div>
+            </div>
+          )}
 
           {/* Status badge */}
           {badge && (
@@ -318,23 +377,33 @@ function VintedOrderRow({ order, isLast, onSave, onRegister, onDismiss, onPhotoC
   const flag      = COUNTRY_FLAGS[order.country] || ''
   const date      = order.sale_date || order.synced_at?.split('T')[0] || ''
   const fmtPrice  = v => v > 0 ? `€${Number(v).toFixed(2).replace('.', ',')}` : '—'
-  const suggested = !order.sku_ref ? suggestSku(order.title) : ''
+  const suggested = !order.sku_ref ? suggestSku(order.title, order.description) : ''
+
+  const photoUrls = (() => { try { return JSON.parse(order.photo_urls || '[]') } catch { return [] } })()
+  const allPhotos = photoUrls.length ? photoUrls : (order.photo_url ? [order.photo_url] : [])
 
   return (
     <div style={{ padding: '12px 16px', borderBottom: isLast ? 'none' : '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
 
       {/* Foto met hover → popup */}
       <div
-        style={{ flexShrink: 0, cursor: order.photo_url ? 'zoom-in' : 'default' }}
-        onClick={() => order.photo_url && onPhotoClick(order.photo_url)}
+        style={{ flexShrink: 0, cursor: allPhotos.length ? 'zoom-in' : 'default' }}
+        onClick={() => allPhotos.length && onPhotoClick(allPhotos)}
       >
-        {order.photo_url ? (
-          <img
-            src={order.photo_url} alt=""
-            style={{ width: 48, height: 48, borderRadius: 8, objectFit: 'cover', display: 'block', transition: 'transform 0.15s', ':hover': { transform: 'scale(1.05)' } }}
-            onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.08)'; e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.25)' }}
-            onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = 'none' }}
-          />
+        {allPhotos.length ? (
+          <div style={{ position: 'relative' }}>
+            <img
+              src={allPhotos[0]} alt=""
+              style={{ width: 48, height: 48, borderRadius: 8, objectFit: 'cover', display: 'block', transition: 'transform 0.15s' }}
+              onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.08)'; e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.25)' }}
+              onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = 'none' }}
+            />
+            {allPhotos.length > 1 && (
+              <span style={{ position: 'absolute', bottom: 2, right: 2, background: 'rgba(0,0,0,0.65)', color: '#fff', fontSize: 9, borderRadius: 4, padding: '1px 4px', lineHeight: 1.4 }}>
+                {allPhotos.length}
+              </span>
+            )}
+          </div>
         ) : (
           <div style={{ width: 48, height: 48, borderRadius: 8, background: 'var(--bg-3,var(--bg))', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22 }}>📦</div>
         )}
@@ -418,7 +487,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
   const [vtLoading, setVtLoading] = useState(true)
   const [vtError, setVtError]     = useState(null)
   const [saleModalPrefill, setSaleModalPrefill] = useState(null)
-  const [photoPopup, setPhotoPopup]   = useState(null)   // url | null
+  const [photoPopup, setPhotoPopup]   = useState(null)   // string[] | null
   const [orderDetail, setOrderDetail] = useState(null)   // row | null
 
   useEffect(() => {
@@ -769,7 +838,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
       )}
 
       {photoPopup && (
-        <PhotoPopup src={photoPopup} onClose={() => setPhotoPopup(null)} />
+        <PhotoPopup urls={photoPopup} onClose={() => setPhotoPopup(null)} />
       )}
 
       {orderDetail && (
@@ -777,7 +846,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
           order={orderDetail}
           onClose={() => setOrderDetail(null)}
           vintedCookie={vintedCookie}
-          onPhotoClick={(url) => { setOrderDetail(null); setPhotoPopup(url) }}
+          onPhotoClick={(urls) => { setOrderDetail(null); setPhotoPopup(urls) }}
         />
       )}
 
