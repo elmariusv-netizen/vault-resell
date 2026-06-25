@@ -78,8 +78,8 @@ async function syncToSupabase(order) {
     status:          order.status || '',
     item_url:        order.item_url || order.url || '',
     label_url:       order.labelUrl || '',
-    photo_url:       order.photo || order.photo_url || null,
-    photo_urls:      order.photo_urls || (order.photo ? JSON.stringify([order.photo]) : null),
+    photo_url:       order.photo || order.photo_url || order.photo_uri || null,
+    photo_urls:      order.photo_urls || (order.photo ? JSON.stringify([order.photo]) : (order.photo_url ? JSON.stringify([order.photo_url]) : null)),
     description:     order.description  || null,
     shipping_method: order.shipping_method || null,
     tracking_code:   order.tracking_code   || null,
@@ -90,6 +90,8 @@ async function syncToSupabase(order) {
 
   console.log(`[Vault] syncToSupabase → POST ${endpoint}`);
   console.log(`[Vault] payload txn=${order.transactionId} title="${order.title}" price=${payload.price} buyer="${payload.buyer}"`);
+  console.log(`[Vault] sync photo — order.photo: ${order.photo?.slice(0,60) || '(leeg)'} | order.photo_url: ${order.photo_url?.slice(0,60) || '(leeg)'}`);
+  console.log(`[Vault] sync photo_url:`, payload.photo_url?.slice(0, 60) || '(leeg)');
 
   try {
     const res = await fetch(endpoint, {
