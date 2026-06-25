@@ -221,28 +221,14 @@
     const c = await cGet('v_sold_v2');
     if (c) { console.log('[Vault] getSold: cache —', c.length, 'orders'); return c; }
 
-    const PER_PAGE = 100;
-    let all = [];
-    for (let page = 1; page <= 20; page++) {
-      console.log(`[Vault] getSold: pagina ${page} ophalen…`);
-      const d = await vGet(`/api/v2/my_orders?order_type=sold&per_page=${PER_PAGE}&page=${page}`);
-      const raw = d.my_orders || d.orders || d.transactions || [];
-      const pag = d.pagination || {};
-      console.log(`[Vault] getSold pagina ${page}: ${raw.length} orders — API pag ${pag.current_page}/${pag.total_pages}, totaal: ${pag.total_count ?? '?'}`);
-      if (page === 1 && raw[0]) {
-        console.log('[Vault] sold[0] keys:', Object.keys(raw[0]).join(', '));
-        console.log('[Vault] sold[0]:', JSON.stringify(raw[0]).slice(0, 200));
-      }
-      if (!raw.length) { console.log('[Vault] getSold: lege pagina, stop'); break; }
-      all.push(...raw);
-      const atLastPage = pag.total_pages && pag.current_page >= pag.total_pages;
-      const partialPage = raw.length < PER_PAGE;
-      if (atLastPage || partialPage) {
-        console.log(`[Vault] getSold: stop — ${atLastPage ? 'laatste API-pagina' : 'gedeeltelijke pagina'}`);
-        break;
-      }
+    console.log('[Vault] getSold: ophalen…');
+    const d   = await vGet('/api/v2/my_orders?order_type=sold&per_page=100&page=1');
+    const all = d.my_orders || d.orders || d.transactions || [];
+    console.log('[Vault] getSold: ontvangen:', all.length, 'orders');
+    if (all[0]) {
+      console.log('[Vault] sold[0] keys:', Object.keys(all[0]).join(', '));
+      console.log('[Vault] sold[0]:', JSON.stringify(all[0]).slice(0, 200));
     }
-    console.log('[Vault] getSold: totaal opgehaald:', all.length, 'orders');
 
     const orders = all.map(o => {
       const photo = hiPhoto(
