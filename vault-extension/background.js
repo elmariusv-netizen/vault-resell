@@ -52,6 +52,22 @@ const SUPABASE_KEY = 'sb_publishable_yQfFPaNA3hWHVWxqbagLrQ_U1oYPDxc';
 
 async function syncToSupabase(order) {
   const endpoint = `${SUPABASE_URL}/rest/v1/vinted_orders`;
+
+  // Geannuleerde orders verwijderen uit Supabase
+  if (/geannuleerd|cancel/i.test(order.status || '')) {
+    console.log(`[Vault] geannuleerd — verwijder txn ${order.transactionId} uit Supabase`);
+    try {
+      const res = await fetch(`${endpoint}?id=eq.${encodeURIComponent(order.transactionId)}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${SUPABASE_KEY}`, 'apikey': SUPABASE_KEY },
+      });
+      console.log(`[Vault] DELETE ${res.status} txn ${order.transactionId}`);
+      return { success: true, deleted: true, status: res.status };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  }
+
   const payload = {
     id:              order.transactionId,
     transaction_id:  order.transactionId,

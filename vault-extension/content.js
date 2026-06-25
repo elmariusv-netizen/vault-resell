@@ -539,6 +539,48 @@
     return d;
   }
 
+  // ── Landesvlaggen ──────────────────────────────────────────────────────────
+  const FLAGS = {
+    BE:'🇧🇪',NL:'🇳🇱',FR:'🇫🇷',DE:'🇩🇪',ES:'🇪🇸',IT:'🇮🇹',PL:'🇵🇱',
+    CZ:'🇨🇿',PT:'🇵🇹',SE:'🇸🇪',FI:'🇫🇮',LT:'🇱🇹',LV:'🇱🇻',EE:'🇪🇪',
+    GB:'🇬🇧',AT:'🇦🇹',SK:'🇸🇰',HU:'🇭🇺',RO:'🇷🇴',HR:'🇭🇷',DK:'🇩🇰',
+  };
+
+  // ── Maat/kleur/stof uit titel ───────────────────────────────────────────────
+  function extractMeta(title) {
+    const t = (title || '').toLowerCase();
+    const tags = [];
+
+    const sizeM = t.match(/\b(xxxl|xxl|3xl|2xl|xl|xs|xxs|one\s*size|[3-5][0-9]|(?<![a-z])[sml](?![a-z]))\b/);
+    if (sizeM) tags.push(sizeM[0].toUpperCase().replace(' ', ''));
+
+    const COLORS = [
+      ['zwart','Zwart'],['black','Zwart'],['wit','Wit'],['white','Wit'],
+      ['blauw','Blauw'],['blue','Blauw'],['navy','Navy'],['rood','Rood'],['red','Rood'],
+      ['roze','Roze'],['pink','Roze'],['groen','Groen'],['green','Groen'],
+      ['grijs','Grijs'],['grey','Grijs'],['gray','Grijs'],['beige','Beige'],
+      ['bruin','Bruin'],['brown','Bruin'],['geel','Geel'],['yellow','Geel'],
+      ['oranje','Oranje'],['orange','Oranje'],['paars','Paars'],['purple','Paars'],
+      ['bordeaux','Bordeaux'],['camel','Camel'],['creme','Crème'],['cream','Crème'],
+      ['olijf','Olijf'],['khaki','Khaki'],['kaki','Khaki'],['ecru','Ecru'],
+    ];
+    for (const [w, label] of COLORS) { if (t.includes(w)) { tags.push(label); break; } }
+
+    const FABRICS = [
+      ['katoen','Katoen'],['cotton','Katoen'],['polyester','Polyester'],
+      ['wol','Wol'],['wool','Wol'],['denim','Denim'],['spijkerstof','Denim'],
+      ['leer','Leer'],['leather','Leer'],['velvet','Velvet'],['fluweel','Velvet'],
+      ['linnen','Linnen'],['linen','Linnen'],['zijde','Zijde'],['silk','Zijde'],
+      ['fleece','Fleece'],['nylon','Nylon'],['suède','Suède'],['suede','Suède'],
+      ['corduroy','Corduroy'],['ribfluweel','Corduroy'],
+    ];
+    for (const [w, label] of FABRICS) { if (t.includes(w)) { tags.push(label); break; } }
+
+    return tags;
+  }
+
+  const isCancelled = o => /geannuleerd|cancel/i.test(o.status || '');
+
   // ── Overlay shell ──────────────────────────────────────────────────────────
   function buildOverlay() {
     if (document.getElementById(OV_ID)) return;
@@ -645,18 +687,24 @@
 
   // ── Tab: Verkopen ──────────────────────────────────────────────────────────
   async function tabVerkopen(content, footer) {
-    const orders = await getSold();
+    const allOrders = await getSold();
+    const orders = allOrders.filter(o => !isCancelled(o));
     content.innerHTML = '';
     if (!orders.length) { content.appendChild(emptyState('📦', 'Geen verkopen', 'Nog geen verkopen gevonden.')); return; }
 
     drawVerkopen(content, orders);
     drawVerkopenFooter(footer, orders);
 
-    // Background: auto-sync + enrich from conversations
     autoSync(orders);
     enrichSold(orders).then(() => {
       if (activeTab === 'verkopen') drawVerkopen(content, orders);
     });
+  }
+
+  function updateSyncBtnLabel() {
+    const n = document.querySelectorAll('#vlt-content [data-idx]:checked').length;
+    const b = document.getElementById('vlt-sync');
+    if (b) b.textContent = n > 0 ? `☁ Sync ${n} geselecteerde` : '☁ Sync geselecteerde';
   }
 
   function drawVerkopen(content, orders) {
@@ -667,20 +715,75 @@
     wrap.appendChild(sectionHead('Verkopen', `${orders.length} orders`));
 
     const rows = orders.map((o, i) => {
-      const cb = document.createElement('input');
-      Object.assign(cb, { type: 'checkbox' });
-      cb.dataset.idx = i;
-      Object.assign(cb.style, { cursor:'pointer', accentColor: D.accent, flexShrink:'0', width:'15px', height:'15px', margin:'0' });
-      cb.addEventListener('change', () => {
-        const n = content.querySelectorAll('[data-idx]:checked').length;
-        const b = document.getElementById('vlt-sync');
-        if (b) b.textContent = n > 0 ? `☁ Sync (${n} geselecteerd)` : '☁ Sync alle naar Vault';
-      });
+      // Foto's — o.photo is enkelvoudig; strip wordt uitgebreid als photo_urls beschikbaar komt
+      const photos = [];
+      if (o.photo) photos.push(o.photo);
 
-      const sub = [o.buyer ? `@${o.buyer}` : '', o.country, fmtD(o.date)].filter(Boolean).join(' · ');
+      // Grote hoofdfoto
+      const photoCol = el('div', 'flex-shrink:0');
+      if (photos.length) {
+        const img = document.createElement('img');
+        img.src = photos[0]; img.loading = 'lazy';
+        img.style.cssText = 'width:72px;height:72px;border-radius:10px;object-fit:cover;display:block';
+        img.onerror = () => img.style.visibility = 'hidden';
+        photoCol.appendChild(img);
+
+        // Kleine thumbnails voor extra foto's
+        if (photos.length > 1) {
+          const strip = el('div', 'display:flex;gap:3px;margin-top:3px');
+          photos.slice(1, 4).forEach(src => {
+            const t = document.createElement('img');
+            t.src = src; t.loading = 'lazy';
+            t.style.cssText = 'width:21px;height:21px;border-radius:4px;object-fit:cover';
+            strip.appendChild(t);
+          });
+          photoCol.appendChild(strip);
+        }
+      } else {
+        photoCol.appendChild(el('div',
+          'width:72px;height:72px;border-radius:10px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:24px',
+          '📦'));
+      }
+
+      // Info kolom
+      const tags = extractMeta(o.title);
+      const flag = FLAGS[o.country] || '';
+      const subParts = [
+        o.buyer ? `@${o.buyer}` : '',
+        flag && o.country ? `${flag} ${o.country}` : (o.country || ''),
+        fmtD(o.date),
+      ].filter(Boolean);
+
+      const infoCol = el('div', 'flex:1;min-width:0');
+      const titleDiv = el('div',
+        `font-size:13px;font-weight:600;color:${D.text};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3`,
+        esc(o.title));
+      infoCol.appendChild(titleDiv);
+
+      if (tags.length) {
+        const chipWrap = el('div', 'display:flex;gap:4px;flex-wrap:wrap;margin-top:5px');
+        tags.forEach(tag => {
+          chipWrap.appendChild(el('span',
+            `font-size:10px;font-weight:500;padding:2px 7px;border-radius:20px;background:#f3f4f6;color:#374151;white-space:nowrap`,
+            esc(tag)));
+        });
+        infoCol.appendChild(chipWrap);
+      }
+
+      const subDiv = el('div',
+        `font-size:11px;color:${D.sub};margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis`,
+        esc(subParts.join(' · ')));
+      infoCol.appendChild(subDiv);
+
+      // Checkbox — standaard NIET aangevinkt
+      const cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.dataset.idx = i; cb.checked = false;
+      Object.assign(cb.style, { cursor:'pointer', accentColor:D.accent, flexShrink:'0', width:'16px', height:'16px', margin:'0' });
+      cb.addEventListener('change', updateSyncBtnLabel);
+
       const lbl = document.createElement('label');
-      lbl.style.cssText = `display:flex;align-items:center;gap:13px;padding:12px 16px;cursor:pointer;${i < orders.length - 1 ? 'border-bottom:1px solid #f9fafb;' : ''}`;
-      lbl.append(cb, photoThumb(o.photo), textStack(o.title, sub), priceTag(o.price));
+      lbl.style.cssText = `display:flex;align-items:center;gap:12px;padding:12px 16px;cursor:pointer;${i < orders.length - 1 ? 'border-bottom:1px solid #f9fafb;' : ''}`;
+      lbl.append(photoCol, infoCol, priceTag(o.price), cb);
       return lbl;
     });
 
@@ -690,31 +793,40 @@
 
   function drawVerkopenFooter(footer, orders) {
     footer.innerHTML = '';
-    const selAll = btn('Alles', `background:${D.badge};color:#374151;flex-shrink:0`);
+
+    const selAll = btn('☑ Alles', `background:${D.badge};color:#374151;flex-shrink:0`);
     selAll.addEventListener('click', () => {
       document.querySelectorAll('#vlt-content [data-idx]').forEach(cb => { cb.checked = true; });
-      const b = document.getElementById('vlt-sync');
-      if (b) b.textContent = `☁ Sync (${orders.length} geselecteerd)`;
+      updateSyncBtnLabel();
     });
 
-    const syncBtn = btn('☁ Sync alle naar Vault', `background:${D.accent};color:#fff;flex:1`);
+    const deselAll = btn('☐ Geen', `background:${D.badge};color:#374151;flex-shrink:0`);
+    deselAll.addEventListener('click', () => {
+      document.querySelectorAll('#vlt-content [data-idx]').forEach(cb => { cb.checked = false; });
+      updateSyncBtnLabel();
+    });
+
+    const syncBtn = btn('☁ Sync geselecteerde', `background:${D.accent};color:#fff;flex:1`);
     syncBtn.id = 'vlt-sync';
     syncBtn.addEventListener('click', () => {
-      const checked = [...document.querySelectorAll('#vlt-content [data-idx]:checked')]
-        .map(cb => orders[parseInt(cb.dataset.idx, 10)]).filter(o => o?.transactionId);
-      const targets = checked.length ? checked : orders.filter(o => o.transactionId);
-      if (!targets.length) return;
+      const targets = [...document.querySelectorAll('#vlt-content [data-idx]:checked')]
+        .map(cb => orders[parseInt(cb.dataset.idx, 10)])
+        .filter(o => o?.transactionId);
+
+      if (!targets.length) {
+        toast('Vink eerst orders aan om te synchroniseren', false);
+        return;
+      }
+
       console.log(`[Vault] sync-knop: ${targets.length} orders te sturen`);
       syncBtn.disabled = true;
 
       (async () => {
         let ok = 0, fail = 0;
 
-        // Verrijk met conversation data (buyer, date, convId) via enrichSold
         syncBtn.textContent = `⏳ Conversaties ophalen…`;
         try { await enrichSold(targets); } catch (e) { console.warn('[Vault] enrichSold skip:', e.message); }
 
-        // Sequentieel naar Supabase
         for (let i = 0; i < targets.length; i++) {
           const o = targets[i];
           syncBtn.textContent = `⏳ ${i + 1}/${targets.length} — sync…`;
@@ -733,11 +845,11 @@
           ? `✓ ${ok} orders gesynchroniseerd`
           : `✓ ${ok}/${targets.length} — ${fail} mislukt`);
         syncBtn.disabled = false;
-        syncBtn.textContent = '☁ Sync alle naar Vault';
+        updateSyncBtnLabel();
       })();
     });
 
-    footer.append(selAll, syncBtn);
+    footer.append(selAll, deselAll, syncBtn);
   }
 
   // ── Tab: Labels ────────────────────────────────────────────────────────────
