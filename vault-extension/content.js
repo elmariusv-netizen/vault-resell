@@ -218,20 +218,30 @@
   }
 
   async function getSold() {
-    const c = await cGet('v_sold'); if (c) return c;
+    const c = await cGet('v_sold');
+    if (c) { console.log('[Vault] getSold: cache —', c.length, 'orders'); return c; }
 
-    // Vintedge approach: type=sold&status=all, paginated per 20
+    // per_page=50: Vinted caps total_pages at ~5, so 50×5 = 250 vs 20×5 = 100
+    const PER_PAGE = 50;
     let all = [];
     for (let page = 1; page <= 20; page++) {
-      const d = await vGet(`/api/v2/my_orders?type=sold&status=all&per_page=20&page=${page}`);
+      console.log(`[Vault] getSold: pagina ${page} ophalen…`);
+      const d = await vGet(`/api/v2/my_orders?type=sold&status=all&per_page=${PER_PAGE}&page=${page}`);
       const raw = d.my_orders || d.orders || d.transactions || [];
-      console.log('[Vault] sold page', page, ':', raw.length, 'orders, keys:', Object.keys(d));
-      if (page === 1 && raw[0]) console.log('[Vault] sold[0]:', JSON.stringify(raw[0]).slice(0, 500));
-      if (!raw.length) break;
+      const pag = d.pagination || {};
+      console.log(`[Vault] getSold pagina ${page}: ${raw.length} orders — API pag ${pag.current_page}/${pag.total_pages}, totaal: ${pag.total_count ?? '?'}`);
+      if (page === 1 && raw[0]) console.log('[Vault] sold[0] keys:', Object.keys(raw[0]).join(', '));
+      if (!raw.length) { console.log('[Vault] getSold: lege pagina, stop'); break; }
       all.push(...raw);
-      if (!d.pagination || d.pagination.current_page >= d.pagination.total_pages) break;
+      // Stop als API zegt dat we op de laatste pagina zitten OF als we minder dan een volle pagina kregen
+      const atLastPage = pag.total_pages && pag.current_page >= pag.total_pages;
+      const partialPage = raw.length < PER_PAGE;
+      if (atLastPage || partialPage) {
+        console.log(`[Vault] getSold: stop — ${atLastPage ? 'laatste API-pagina' : 'gedeeltelijke pagina'}`);
+        break;
+      }
     }
-    console.log('[Vault] sold total:', all.length);
+    console.log('[Vault] getSold: totaal opgehaald:', all.length, 'orders');
 
     const orders = all.map(o => ({
       transactionId:         String(o.transaction_id || o.id || ''),
@@ -364,11 +374,24 @@
   async function autoSync(orders) {
     const { syncedOrders = [] } = await chrome.storage.local.get(['syncedOrders']);
     syncedIds = new Set(syncedOrders.map(o => o.transactionId).filter(Boolean));
-    for (const o of orders) {
-      if (!o.transactionId || syncedIds.has(o.transactionId)) continue;
+
+    const nieuw    = orders.filter(o => o.transactionId && !syncedIds.has(o.transactionId));
+    const overgeslagen = orders.length - nieuw.length;
+    console.log(`[Vault] autoSync: ${orders.length} orders — ${overgeslagen} al gesync, ${nieuw.length} nieuw`);
+
+    let ok = 0, fail = 0;
+    for (const o of nieuw) {
       const res = await sendMsg({ type: 'SYNC_ORDER', order: { ...o, labelUrl: labelUrl(o.transactionId) } });
-      if (res?.success && !res.duplicate) syncedIds.add(o.transactionId);
+      if (res?.success && !res.duplicate) {
+        syncedIds.add(o.transactionId);
+        ok++;
+        console.log(`[Vault] autoSync ✓ txn ${o.transactionId} — "${o.title}"`);
+      } else {
+        fail++;
+        console.warn(`[Vault] autoSync ✗ txn ${o.transactionId}`, res);
+      }
     }
+    console.log(`[Vault] autoSync klaar: ${ok} gesync, ${fail} mislukt`);
   }
 
   async function loadDlIds() {
@@ -682,12 +705,32 @@
         .map(cb => orders[parseInt(cb.dataset.idx, 10)]).filter(o => o?.transactionId);
       const targets = checked.length ? checked : orders.filter(o => o.transactionId);
       if (!targets.length) return;
-      syncBtn.disabled = true; syncBtn.textContent = `⏳ Syncing ${targets.length}…`;
-      Promise.all(targets.map(o => sendMsg({ type: 'SYNC_TO_SUPABASE', order: o }))).then(rs => {
-        const ok = rs.filter(r => r?.success).length;
-        toast(`✓ ${ok}/${targets.length} orders gesynchroniseerd`);
-        syncBtn.disabled = false; syncBtn.textContent = '☁ Sync alle naar Vault';
-      });
+      console.log(`[Vault] sync-knop: ${targets.length} orders te sturen`);
+      syncBtn.disabled = true;
+
+      // Sequentieel i.p.v. Promise.all — voorkomt service worker time-outs bij 100+ orders
+      (async () => {
+        let ok = 0, fail = 0;
+        for (let i = 0; i < targets.length; i++) {
+          const o = targets[i];
+          syncBtn.textContent = `⏳ ${i + 1}/${targets.length} bezig…`;
+          console.log(`[Vault] sync ${i + 1}/${targets.length}: txn ${o.transactionId} — "${o.title}"`);
+          const res = await sendMsg({ type: 'SYNC_TO_SUPABASE', order: o }, 20000);
+          if (res?.success) {
+            ok++;
+            console.log(`[Vault] sync ✓ txn ${o.transactionId}`);
+          } else {
+            fail++;
+            console.warn(`[Vault] sync ✗ txn ${o.transactionId}`, res);
+          }
+        }
+        console.log(`[Vault] sync klaar: ${ok} ok, ${fail} mislukt van ${targets.length}`);
+        toast(fail === 0
+          ? `✓ ${ok} orders gesynchroniseerd`
+          : `✓ ${ok}/${targets.length} — ${fail} mislukt`);
+        syncBtn.disabled = false;
+        syncBtn.textContent = '☁ Sync alle naar Vault';
+      })();
     });
 
     footer.append(selAll, syncBtn);
