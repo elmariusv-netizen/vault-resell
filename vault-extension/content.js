@@ -218,22 +218,23 @@
   }
 
   async function getSold() {
-    const c = await cGet('v_sold');
+    const c = await cGet('v_sold_v2');
     if (c) { console.log('[Vault] getSold: cache —', c.length, 'orders'); return c; }
 
-    // per_page=50: Vinted caps total_pages at ~5, so 50×5 = 250 vs 20×5 = 100
-    const PER_PAGE = 50;
+    const PER_PAGE = 100;
     let all = [];
     for (let page = 1; page <= 20; page++) {
       console.log(`[Vault] getSold: pagina ${page} ophalen…`);
-      const d = await vGet(`/api/v2/my_orders?type=sold&status=all&per_page=${PER_PAGE}&page=${page}`);
+      const d = await vGet(`/api/v2/my_orders?order_type=sold&per_page=${PER_PAGE}&page=${page}`);
       const raw = d.my_orders || d.orders || d.transactions || [];
       const pag = d.pagination || {};
       console.log(`[Vault] getSold pagina ${page}: ${raw.length} orders — API pag ${pag.current_page}/${pag.total_pages}, totaal: ${pag.total_count ?? '?'}`);
-      if (page === 1 && raw[0]) console.log('[Vault] sold[0] keys:', Object.keys(raw[0]).join(', '));
+      if (page === 1 && raw[0]) {
+        console.log('[Vault] sold[0] keys:', Object.keys(raw[0]).join(', '));
+        console.log('[Vault] sold[0]:', JSON.stringify(raw[0]).slice(0, 200));
+      }
       if (!raw.length) { console.log('[Vault] getSold: lege pagina, stop'); break; }
       all.push(...raw);
-      // Stop als API zegt dat we op de laatste pagina zitten OF als we minder dan een volle pagina kregen
       const atLastPage = pag.total_pages && pag.current_page >= pag.total_pages;
       const partialPage = raw.length < PER_PAGE;
       if (atLastPage || partialPage) {
@@ -256,7 +257,7 @@
       transactionUserStatus: o.transaction_user_status ?? null,  // 'needs_action' = label beschikbaar
       convId:                null,
     }));
-    await cSet('v_sold', orders);
+    await cSet('v_sold_v2', orders);
     return orders;
   }
 
@@ -354,7 +355,7 @@
       if (!o.date    && t.created_at)        { o.date   = t.created_at.slice(0, 10); changed = true; }
       if (!o.convId)                          { o.convId = t.id; changed = true; }
     }
-    if (changed) await cSet('v_sold', orders);
+    if (changed) await cSet('v_sold_v2', orders);
   }
 
   // ── Supabase sync ──────────────────────────────────────────────────────────
