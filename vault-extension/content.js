@@ -228,16 +228,17 @@
     if (all[0]) {
       console.log('[Vault] sold[0] keys:', Object.keys(all[0]).join(', '));
       console.log('[Vault] sold[0]:', JSON.stringify(all[0]).slice(0, 200));
+      console.log('[Vault] photo object:', JSON.stringify(all[0].photo));
     }
 
     const orders = all.map(o => {
+      // Zelfde volgorde als listings: photos[0].url → photo.url → item photos → photo_url
       const photo = hiPhoto(
-        o.photo?.full_size_url || o.photo?.url ||
-        o.item?.photos?.[0]?.full_size_url || o.item?.photos?.[0]?.url ||
-        o.item?.photo?.full_size_url || o.item?.photo?.url ||
+        o.photos?.[0]?.url || o.photo?.url ||
+        o.item?.photos?.[0]?.url || o.item?.photo?.url ||
         o.photo_url || null
       );
-      console.log(`[Vault] photo txn ${o.transaction_id || o.id}:`, o.photo?.full_size_url || o.photo?.url || o.photo_url || '(leeg)');
+      if (o === all[0]) console.log(`[Vault] photo txn ${o.transaction_id || o.id}: resolved →`, photo || '(leeg)');
       return {
         transactionId:         String(o.transaction_id || o.id || ''),
         itemId:                String(o.item?.id || ''),
