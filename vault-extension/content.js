@@ -718,10 +718,10 @@
           const res = await sendMsg({ type: 'SYNC_TO_SUPABASE', order: o }, 20000);
           if (res?.success) {
             ok++;
-            console.log(`[Vault] sync ✓ txn ${o.transactionId}`);
+            console.log(`[Vault] sync ✓ txn ${o.transactionId} (HTTP ${res.status})`);
           } else {
             fail++;
-            console.warn(`[Vault] sync ✗ txn ${o.transactionId}`, res);
+            console.error(`[Vault] sync ✗ txn ${o.transactionId} — HTTP ${res?.status ?? 'timeout'}: ${res?.error ?? 'geen response'}`);
           }
         }
         console.log(`[Vault] sync klaar: ${ok} ok, ${fail} mislukt van ${targets.length}`);

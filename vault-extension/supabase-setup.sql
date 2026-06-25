@@ -20,3 +20,16 @@ ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS sale_date DATE;
 ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS label_available BOOLEAN DEFAULT FALSE;
 ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS cost_price DECIMAL;
 ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS sku_ref TEXT;
+
+-- RLS policies — vereist zodat de Chrome extensie kan schrijven
+-- Voer dit uit als de tabel leeg blijft na sync:
+ALTER TABLE vinted_orders ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY IF NOT EXISTS "anon kan lezen"
+  ON vinted_orders FOR SELECT TO anon USING (true);
+
+CREATE POLICY IF NOT EXISTS "anon kan upserten"
+  ON vinted_orders FOR INSERT TO anon WITH CHECK (true);
+
+CREATE POLICY IF NOT EXISTS "anon kan updaten"
+  ON vinted_orders FOR UPDATE TO anon USING (true) WITH CHECK (true);

@@ -51,36 +51,48 @@ const SUPABASE_URL = 'https://dusffpxcheojvjwuqgwo.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_yQfFPaNA3hWHVWxqbagLrQ_U1oYPDxc';
 
 async function syncToSupabase(order) {
+  const endpoint = `${SUPABASE_URL}/rest/v1/vinted_orders`;
+  const payload = {
+    id:              order.transactionId,
+    transaction_id:  order.transactionId,
+    title:           order.title,
+    price:           order.price || 0,
+    buyer:           order.buyer || '',
+    country:         order.country || '',
+    status:          order.status || '',
+    item_url:        order.url || '',
+    label_url:       order.labelUrl || '',
+    photo_url:       order.photo || '',
+    sale_date:       order.date || null,
+    label_available: !!(order.transactionUserStatus === 'needs_action' || /verzendlabel/i.test(order.status || '')),
+  };
+
+  console.log(`[Vault] syncToSupabase → POST ${endpoint}`);
+  console.log(`[Vault] payload txn=${order.transactionId} title="${order.title}" price=${payload.price} buyer="${payload.buyer}"`);
+
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/vinted_orders`, {
+    const res = await fetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${SUPABASE_KEY}`,
-        'apikey': SUPABASE_KEY,
-        'Prefer': 'resolution=merge-duplicates',
+        'apikey':        SUPABASE_KEY,
+        'Prefer':        'return=minimal,resolution=merge-duplicates',
       },
-      body: JSON.stringify({
-        id:              order.transactionId,
-        transaction_id:  order.transactionId,
-        title:           order.title,
-        price:           order.price || 0,
-        buyer:           order.buyer || '',
-        country:         order.country || '',
-        status:          order.status || 'synced',
-        item_url:        order.url || '',
-        label_url:       order.labelUrl || '',
-        photo_url:       order.photo || '',
-        sale_date:       order.date || null,
-        label_available: order.transactionUserStatus === 'needs_action' || /verzendlabel/i.test(order.status || ''),
-      }),
+      body: JSON.stringify(payload),
     });
-    if (!res.ok) console.warn('[Vault] Supabase sync failed:', res.status, await res.text());
-    else console.log('[Vault] Supabase synced:', order.transactionId);
-    return res.ok;
+
+    const body = await res.text();
+    if (!res.ok) {
+      console.error(`[Vault] Supabase FOUT ${res.status} ${res.statusText} voor txn ${order.transactionId}`);
+      console.error(`[Vault] Supabase response body:`, body);
+      return { success: false, status: res.status, error: body.slice(0, 300) };
+    }
+    console.log(`[Vault] Supabase OK ${res.status} — txn ${order.transactionId}`);
+    return { success: true, status: res.status };
   } catch (e) {
-    console.error('[Vault] Supabase error:', e);
-    return false;
+    console.error(`[Vault] Supabase fetch exception voor txn ${order.transactionId}:`, e.message);
+    return { success: false, error: e.message };
   }
 }
 
@@ -229,11 +241,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message.type === 'SYNC_ORDER') {
-    syncOrder(message.order).then(sendResponse);
+    const txn = message.order?.transactionId || '?';
+    console.log(`[Vault] SYNC_ORDER ontvangen: txn ${txn}`);
+    syncOrder(message.order).then((result) => {
+      console.log(`[Vault] SYNC_ORDER klaar txn ${txn}:`, JSON.stringify(result).slice(0, 120));
+      sendResponse(result);
+    });
     return true;
   }
   if (message.type === 'SYNC_TO_SUPABASE') {
-    syncToSupabase(message.order).then((ok) => sendResponse({ success: ok }));
+    const txn = message.order?.transactionId || '?';
+    console.log(`[Vault] SYNC_TO_SUPABASE ontvangen: txn ${txn}`);
+    syncToSupabase(message.order).then((result) => {
+      console.log(`[Vault] SYNC_TO_SUPABASE klaar txn ${txn}:`, JSON.stringify(result).slice(0, 120));
+      sendResponse(result);
+    });
     return true;
   }
   if (message.type === 'PRINT_LABELS') {
@@ -276,8 +298,11 @@ async function syncOrder(order) {
     if (syncedOrders.length > 200) syncedOrders.splice(200);
     await chrome.storage.local.set({ syncedOrders });
     await updateDailyStats(order);
-    await syncToSupabase(order);
-    return { success: true };
+    const sbResult = await syncToSupabase(order);
+    if (!sbResult.success) {
+      console.error(`[Vault] syncOrder: Supabase mislukt voor txn ${order.transactionId}:`, sbResult.error);
+    }
+    return { success: true, supabase: sbResult };
   } catch (err) {
     console.error('[Vault] sync error', err);
     return { success: false, error: err.message };
