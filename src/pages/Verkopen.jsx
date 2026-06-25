@@ -598,7 +598,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
           <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>Vinted Orders</h2>
           {!vtLoading && (
             <span style={{ fontSize: 12, color: 'var(--text-3)', background: 'var(--bg-2)', padding: '1px 8px', borderRadius: 20 }}>
-              {vtOrders.length}
+              {vtOrders.filter(o => !/geannuleerd|cancel/i.test(o.status || '')).length}
             </span>
           )}
         </div>
@@ -616,11 +616,11 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
           </div>
         ) : (
           <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
-            {vtOrders.map((order, i) => (
+            {vtOrders.filter(o => !/geannuleerd|cancel/i.test(o.status || '')).map((order, i, arr) => (
               <VintedOrderRow
                 key={order.id}
                 order={order}
-                isLast={i === vtOrders.length - 1}
+                isLast={i === arr.length - 1}
                 onSave={saveVtField}
                 onRegister={() => openSaleModal(order)}
                 onDismiss={() => dismissVintedOrder(order.id)}
