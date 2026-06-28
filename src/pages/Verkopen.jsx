@@ -91,26 +91,15 @@ const SIZES = ['xxxl','xxl','xl','xs','xxs','3xl','2xl','one size',
 function suggestSku(title, description) {
   const combined = `${title || ''} ${description || ''}`
   if (!combined.trim()) return ''
-  // Bestaand SKU-patroon: 2-4 hoofdletters + 3-6 cijfers — zoek ook in beschrijving
-  const existing = combined.match(/\b([A-Z]{2,4}\d{3,6})\b/)
+  // Zoek SKU-prefix: alleen letters, geen nummer (gebruiker kiest zelf het nummer)
+  const existing = combined.match(/\b([A-Z]{2,4})\d{3,6}\b/)
   if (existing) return existing[1]
 
   const t = combined.toLowerCase()
-  let brand = '', color = '', size = ''
-
   for (const [name, code] of BRANDS_MAP) {
-    if (t.includes(name)) { brand = code; break }
+    if (t.includes(name)) return code
   }
-  for (const [name, code] of COLORS_MAP) {
-    if (t.includes(name)) { color = code; break }
-  }
-  for (const s of SIZES) {
-    const re = new RegExp(`(?:^|\\s|maat\\s*)${s}(?:\\s|$|/)`, 'i')
-    if (re.test(t)) { size = s.toUpperCase().replace(' ', ''); break }
-  }
-
-  const parts = [brand, color, size].filter(Boolean)
-  return parts.length >= 2 ? parts.join('-') : parts[0] || ''
+  return ''
 }
 
 // ── Status badge ───────────────────────────────────────────────────────────
@@ -291,7 +280,7 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick }) {
           {/* Header close als geen foto */}
           {!mainPhoto && (
             <div className="modal-header" style={{ marginBottom: 16 }}>
-              <h2 style={{ fontSize: 16 }}>Order details</h2>
+              <h2 style={{ fontSize: 16 }}>Ordergegevens</h2>
               <button className="modal-close" onClick={onClose}>×</button>
             </div>
           )}
@@ -309,17 +298,17 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick }) {
               ['Datum', date || '—'],
               ['Verkoopprijs', order.price > 0 ? fmtE(order.price) : '—'],
               ['Inkoopprijs', order.cost_price != null ? fmtE(order.cost_price) : '—'],
-              profit != null ? ['Winst', fmtE(profit)] : null,
+              profit != null ? ['Winst', `${profit >= 0 ? '+' : ''}${fmtE(profit)}`] : null,
               order.sku_ref ? ['SKU', order.sku_ref] : null,
               order.shipping_method ? ['Verzendmethode', order.shipping_method] : null,
-              order.tracking_code ? ['Tracking', order.tracking_code] : null,
+              order.tracking_code ? ['Trackingnummer', order.tracking_code] : null,
             ].filter(Boolean).map(([label, val]) => (
               <div key={label}>
                 <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 2 }}>{label}</div>
                 <div style={{
                   fontSize: 13, fontWeight: 600,
                   color: label === 'Winst' ? (profit >= 0 ? 'var(--green)' : 'var(--red)') : 'var(--text)',
-                  fontFamily: label === 'Tracking' ? 'monospace' : 'inherit',
+                  fontFamily: label === 'Trackingnummer' ? 'monospace' : 'inherit',
                   wordBreak: 'break-all',
                 }}>{val}</div>
               </div>
@@ -329,7 +318,7 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick }) {
           {/* Beschrijving */}
           {order.description && (
             <div style={{ marginBottom: 16, padding: '10px 12px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8 }}>
-              <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 4 }}>Beschrijving</div>
+              <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 4 }}>Omschrijving</div>
               <div style={{ fontSize: 12, color: 'var(--text-2)', lineHeight: 1.6, maxHeight: 100, overflowY: 'auto', whiteSpace: 'pre-line' }}>{order.description}</div>
             </div>
           )}
@@ -355,13 +344,14 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick }) {
                 {downloading ? '⏳ Ophalen…' : downloaded ? '✓ Label gedownload' : '⬇ Download label 4×6'}
               </button>
             )}
-            {order.item_url && (
+            {order.conversation_id && (
               <a
-                href={order.item_url} target="_blank" rel="noreferrer"
+                href={`https://www.vinted.be/conversations/${order.conversation_id}`}
+                target="_blank" rel="noreferrer"
                 className="btn btn-secondary"
-                style={{ flex: 1, textAlign: 'center', textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                style={{ flex: 1, textAlign: 'center', textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
               >
-                Bekijk op Vinted ↗
+                💬 Open gesprek op Vinted
               </a>
             )}
           </div>
@@ -459,7 +449,9 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
   const cogs     = parseFloat(order.cost_price || 0)
   const profit   = order.cost_price != null ? price - cogs : null
   const buyer    = order.buyer_name || order.buyer || ''
-  const itemUrl  = order.item_url || (order.transaction_id ? `https://www.vinted.be/items/${order.transaction_id}` : null)
+  const itemUrl  = order.conversation_id
+    ? `https://www.vinted.be/conversations/${order.conversation_id}`
+    : order.item_url || null
   const suggested = !order.sku_ref ? suggestSku(order.title, order.description) : ''
 
   const photoUrls = (() => { try { return JSON.parse(order.photo_urls || '[]') } catch { return [] } })()
@@ -747,6 +739,10 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
 
   const platforms = useMemo(() => {
     const set = new Set(sales.map((s) => normalizePlatform(s.platform)).filter(Boolean))
+    try {
+      const custom = JSON.parse(localStorage.getItem('vault-platforms') || '[]')
+      custom.forEach(p => p.name && set.add(p.name))
+    } catch {}
     return [...set].sort()
   }, [sales])
 

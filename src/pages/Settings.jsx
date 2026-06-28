@@ -283,6 +283,78 @@ function formatSize(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
 }
 
+const PLATFORMS_KEY = 'vault-platforms'
+
+function PlatformsSection() {
+  const load = () => { try { return JSON.parse(localStorage.getItem(PLATFORMS_KEY) || '[]') } catch { return [] } }
+  const [platforms, setPlatforms] = useState(load)
+  const [newName, setNewName]     = useState('')
+  const [newUrl,  setNewUrl]      = useState('')
+
+  const save = (list) => {
+    setPlatforms(list)
+    localStorage.setItem(PLATFORMS_KEY, JSON.stringify(list))
+  }
+
+  const add = () => {
+    const name = newName.trim()
+    if (!name) return
+    if (platforms.some(p => p.name.toLowerCase() === name.toLowerCase())) {
+      alert(`Platform "${name}" bestaat al.`); return
+    }
+    save([...platforms, { id: Date.now().toString(), name, url: newUrl.trim() }])
+    setNewName(''); setNewUrl('')
+  }
+
+  const remove = (id) => save(platforms.filter(p => p.id !== id))
+
+  return (
+    <div className="glass-card">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 15 }}>Verkoopplatforms</div>
+          <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2 }}>Verschijnen in het platformfilter op de Verkopen pagina</div>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+        {platforms.length === 0 && (
+          <div style={{ fontSize: 12, color: 'var(--text-3)', textAlign: 'center', padding: '12px 0' }}>Nog geen platforms toegevoegd</div>
+        )}
+        {platforms.map(p => (
+          <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 'var(--r-lg)', padding: '10px 14px' }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 600, fontSize: 13 }}>{p.name}</div>
+              {p.url && <div style={{ fontSize: 11, color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.url}</div>}
+            </div>
+            <button className="btn btn-danger btn-sm" onClick={() => remove(p.id)}>Verwijder</button>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <input
+          value={newName}
+          onChange={e => setNewName(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && add()}
+          placeholder="Naam (bv. Vinted, Depop)"
+          style={{ flex: '1 1 120px', minWidth: 0 }}
+        />
+        <input
+          value={newUrl}
+          onChange={e => setNewUrl(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && add()}
+          placeholder="URL (optioneel)"
+          style={{ flex: '2 1 180px', minWidth: 0 }}
+        />
+        <button className="btn btn-primary btn-sm" onClick={add} disabled={!newName.trim()} style={{ whiteSpace: 'nowrap' }}>
+          + Toevoegen
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export default function Settings({ data, updateData, onExport, activeUserId, vintedCookie, onVintedCookieChange }) {
   const { suppliers, batches, sales } = data
   const documents = data.documents || []
@@ -541,6 +613,9 @@ export default function Settings({ data, updateData, onExport, activeUserId, vin
           onSave={onVintedCookieChange}
           activeUserId={activeUserId}
         />
+
+        {/* Platforms */}
+        <PlatformsSection />
 
         {/* Data management */}
         <div className="glass-card">
