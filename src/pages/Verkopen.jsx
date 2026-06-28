@@ -371,17 +371,94 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick }) {
   )
 }
 
+// ── SKU koppel modal ───────────────────────────────────────────────────────
+function SkuPickerModal({ batches, onPick, onClose }) {
+  const [q, setQ] = useState('')
+
+  const items = useMemo(() => {
+    const lower = q.toLowerCase()
+    return batches
+      .filter(b => {
+        if (!lower) return true
+        const sku = formatSkuRange(b.supplierPrefix, b.startNum, b.endNum)
+        return (
+          sku.toLowerCase().includes(lower) ||
+          (b.name || '').toLowerCase().includes(lower) ||
+          (b.brand || '').toLowerCase().includes(lower)
+        )
+      })
+      .sort((a, b) => (b.liveCount || 0) - (a.liveCount || 0))
+  }, [batches, q])
+
+  useEffect(() => {
+    const close = e => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', close)
+    return () => window.removeEventListener('keydown', close)
+  }, [onClose])
+
+  return (
+    <div className="modal-overlay" onMouseDown={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal" style={{ maxWidth: 420, padding: 0, overflow: 'hidden', background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)' }}>
+        <div style={{ padding: '16px 20px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: '#f1f5f9' }}>Koppel SKU</h2>
+            <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: 22, cursor: 'pointer', lineHeight: 1 }}>×</button>
+          </div>
+          <input
+            autoFocus
+            value={q}
+            onChange={e => setQ(e.target.value)}
+            placeholder="Zoek SKU, naam, merk…"
+            style={{ width: '100%', padding: '8px 12px', background: '#1e293b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, color: '#f1f5f9', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
+          />
+        </div>
+        <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+          {items.length === 0 ? (
+            <div style={{ padding: 24, textAlign: 'center', color: '#64748b', fontSize: 13 }}>Geen batches gevonden</div>
+          ) : items.map(b => {
+            const sku = formatSkuRange(b.supplierPrefix, b.startNum, b.endNum)
+            const available = b.liveCount ?? b.quantity ?? 0
+            return (
+              <div
+                key={b.id}
+                onClick={() => { onPick(sku); onClose() }}
+                style={{ padding: '10px 20px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.04)' }}
+                onMouseEnter={e => e.currentTarget.style.background = '#1e293b'}
+                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+              >
+                <div>
+                  <span style={{ fontWeight: 700, fontSize: 13, color: '#818cf8', fontFamily: 'monospace' }}>{sku}</span>
+                  {(b.name || b.brand) && (
+                    <span style={{ fontSize: 12, color: '#94a3b8', marginLeft: 10 }}>{b.brand || b.name}</span>
+                  )}
+                </div>
+                <span style={{ fontSize: 11, color: available > 0 ? '#4ade80' : '#64748b', fontWeight: 600 }}>
+                  {available > 0 ? `${available} beschikbaar` : 'uitverkocht'}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Order rij (Vinteer-stijl) ──────────────────────────────────────────────
-function VintedOrderRow({ order, isLast, onSave, onRegister, onDismiss, onPhotoClick, onDetail, vintedCookie }) {
-  const [downloading, setDownloading] = useState(false)
-  const [downloaded,  setDownloaded]  = useState(false)
+function VintedOrderRow({ order, isLast, onSave, onRegister, onDismiss, onPhotoClick, onDetail, vintedCookie, batches }) {
+  const [downloading,   setDownloading]   = useState(false)
+  const [downloaded,    setDownloaded]    = useState(false)
+  const [skuPickerOpen, setSkuPickerOpen] = useState(false)
 
   const badge     = getStatusBadge(order.status, order.label_available)
   const flag      = COUNTRY_FLAGS[order.country] || ''
   const date      = order.sale_date || order.synced_at?.split('T')[0] || ''
   const suggested = !order.sku_ref ? suggestSku(order.title, order.description) : ''
-  const profit    = order.cost_price != null ? Number(order.price) - Number(order.cost_price) : null
-  const fmtP      = v => (v != null && v !== '' && !isNaN(Number(v))) ? `€${Number(v).toFixed(2).replace('.', ',')}` : '—'
+  const price     = parseFloat(order.price) || 0
+  const profit    = order.cost_price != null ? price - parseFloat(order.cost_price) : null
+  const fmtP      = v => Number(v) > 0 ? `€${Number(v).toFixed(2).replace('.', ',')}` : '—'
+  const buyer     = order.buyer_name || order.buyer || ''
+  const itemUrl   = order.item_url || (order.transaction_id ? `https://www.vinted.be/items/${order.transaction_id}` : null)
 
   const photoUrls = (() => { try { return JSON.parse(order.photo_urls || '[]') } catch { return [] } })()
   const allPhotos = photoUrls.length ? photoUrls : (order.photo_url ? [order.photo_url] : [])
@@ -420,145 +497,162 @@ function VintedOrderRow({ order, isLast, onSave, onRegister, onDismiss, onPhotoC
     }
   }
 
-  const actionBtn = (extra) => ({
+  const aBtn = (extra) => ({
     fontSize: 11, padding: '4px 10px', borderRadius: 6, cursor: 'pointer', fontWeight: 600, border: 'none', ...extra,
   })
 
   return (
-    <div style={{
-      padding: '16px',
-      borderBottom: isLast ? 'none' : '1px solid rgba(255,255,255,0.06)',
-      display: 'grid',
-      gridTemplateColumns: '72px 1fr auto',
-      gap: 14,
-      alignItems: 'start',
-    }}>
+    <>
+      <div style={{
+        padding: '16px',
+        borderBottom: isLast ? 'none' : '1px solid rgba(255,255,255,0.06)',
+        display: 'grid',
+        gridTemplateColumns: '72px 1fr auto',
+        gap: 14,
+        alignItems: 'start',
+      }}>
 
-      {/* Foto */}
-      <div
-        onClick={() => allPhotos.length && onPhotoClick(allPhotos)}
-        style={{ cursor: allPhotos.length ? 'zoom-in' : 'default' }}
-      >
-        {allPhotos.length ? (
-          <div style={{ position: 'relative' }}>
-            <img
-              src={allPhotos[0]} alt=""
-              style={{ width: 72, height: 72, borderRadius: 8, objectFit: 'cover', display: 'block' }}
-            />
-            {allPhotos.length > 1 && (
-              <span style={{ position: 'absolute', bottom: 3, right: 3, background: 'rgba(0,0,0,0.7)', color: '#fff', fontSize: 9, borderRadius: 4, padding: '1px 5px', lineHeight: 1.5 }}>
-                {allPhotos.length}
+        {/* Foto */}
+        <div
+          onClick={() => allPhotos.length && onPhotoClick(allPhotos)}
+          style={{ cursor: allPhotos.length ? 'zoom-in' : 'default' }}
+        >
+          {allPhotos.length ? (
+            <div style={{ position: 'relative' }}>
+              <img
+                src={allPhotos[0]} alt=""
+                style={{ width: 72, height: 72, borderRadius: 8, objectFit: 'cover', display: 'block' }}
+              />
+              {allPhotos.length > 1 && (
+                <span style={{ position: 'absolute', bottom: 3, right: 3, background: 'rgba(0,0,0,0.7)', color: '#fff', fontSize: 9, borderRadius: 4, padding: '1px 5px', lineHeight: 1.5 }}>
+                  {allPhotos.length}
+                </span>
+              )}
+            </div>
+          ) : (
+            <div style={{ width: 72, height: 72, borderRadius: 8, background: '#1e293b', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28 }}>📦</div>
+          )}
+        </div>
+
+        {/* Midden: info + acties */}
+        <div style={{ minWidth: 0 }}>
+          {itemUrl ? (
+            <a
+              href={itemUrl} target="_blank" rel="noreferrer"
+              style={{ fontWeight: 700, fontSize: 14, color: '#4ade80', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: meta ? 3 : 6, lineHeight: 1.3, textDecoration: 'none' }}
+            >
+              {order.title}
+            </a>
+          ) : (
+            <div style={{ fontWeight: 700, fontSize: 14, color: '#4ade80', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: meta ? 3 : 6, lineHeight: 1.3 }}>
+              {order.title}
+            </div>
+          )}
+          {meta && (
+            <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 5, textTransform: 'capitalize' }}>{meta}</div>
+          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap', marginBottom: 3 }}>
+            {buyer && <span style={{ fontSize: 12, color: '#cbd5e1' }}>@{buyer}</span>}
+            {order.country && (
+              <span style={{ fontSize: 10, background: '#1e293b', color: '#94a3b8', padding: '2px 7px', borderRadius: 5, fontWeight: 600, letterSpacing: '0.3px' }}>
+                {flag} {order.country}
               </span>
             )}
           </div>
-        ) : (
-          <div style={{ width: 72, height: 72, borderRadius: 8, background: '#1e293b', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28 }}>📦</div>
-        )}
-      </div>
+          {date && <div style={{ fontSize: 11, color: '#64748b', marginBottom: 10 }}>{date}</div>}
 
-      {/* Midden: info + acties */}
-      <div style={{ minWidth: 0 }}>
-        <div
-          onClick={onDetail}
-          title="Klik voor details"
-          style={{ fontWeight: 700, fontSize: 14, color: '#4ade80', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: meta ? 3 : 6, lineHeight: 1.3 }}
-        >
-          {order.title}
-        </div>
-        {meta && (
-          <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 5, textTransform: 'capitalize' }}>{meta}</div>
-        )}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap', marginBottom: 3 }}>
-          {order.buyer && <span style={{ fontSize: 12, color: '#cbd5e1' }}>@{order.buyer}</span>}
-          {order.country && (
-            <span style={{ fontSize: 10, background: '#1e293b', color: '#94a3b8', padding: '2px 7px', borderRadius: 5, fontWeight: 600, letterSpacing: '0.3px' }}>
-              {flag} {order.country}
-            </span>
-          )}
-        </div>
-        {date && <div style={{ fontSize: 11, color: '#64748b', marginBottom: 10 }}>{date}</div>}
-
-        {/* Actie knoppen */}
-        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
-          {(order.label_url || order.transaction_id) && (
+          {/* Actie knoppen */}
+          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
+            {(order.label_url || order.transaction_id) && (
+              <button
+                onClick={downloadLabel}
+                disabled={downloading}
+                style={aBtn({ background: downloaded ? 'rgba(74,222,128,0.1)' : 'rgba(251,191,36,0.12)', color: downloaded ? '#4ade80' : '#fbbf24', outline: '1px solid ' + (downloaded ? 'rgba(74,222,128,0.3)' : 'rgba(251,191,36,0.3)') })}
+              >
+                {downloading ? '⏳' : downloaded ? '✓ Label' : '↓ Label'}
+              </button>
+            )}
+            {order.registered_in_vault ? (
+              <span style={{ fontSize: 11, color: '#4ade80', fontWeight: 600 }}>✓ Geregistreerd</span>
+            ) : (
+              <button onClick={onRegister} style={aBtn({ background: 'rgba(74,222,128,0.1)', color: '#4ade80', outline: '1px solid rgba(74,222,128,0.25)' })}>
+                + Registreer
+              </button>
+            )}
             <button
-              onClick={downloadLabel}
-              disabled={downloading}
-              style={actionBtn({ background: downloaded ? 'rgba(74,222,128,0.1)' : 'rgba(251,191,36,0.12)', color: downloaded ? '#4ade80' : '#fbbf24', outline: '1px solid ' + (downloaded ? 'rgba(74,222,128,0.3)' : 'rgba(251,191,36,0.3)') })}
+              onClick={() => setSkuPickerOpen(true)}
+              style={aBtn({ background: 'rgba(129,140,248,0.1)', color: '#818cf8', outline: '1px solid rgba(129,140,248,0.25)' })}
             >
-              {downloading ? '⏳' : downloaded ? '✓ Label' : '↓ Label'}
+              Koppel SKU
             </button>
-          )}
-          {order.item_url && (
-            <a
-              href={order.item_url} target="_blank" rel="noreferrer"
-              style={{ ...actionBtn({ background: 'rgba(99,102,241,0.12)', color: '#818cf8', outline: '1px solid rgba(99,102,241,0.3)', textDecoration: 'none', display: 'inline-block' }) }}
-            >
-              Vinted ↗
-            </a>
-          )}
-          {order.registered_in_vault ? (
-            <span style={{ fontSize: 11, color: '#4ade80', fontWeight: 600 }}>✓ Geregistreerd</span>
-          ) : (
             <button
-              onClick={onRegister}
-              style={actionBtn({ background: 'rgba(74,222,128,0.1)', color: '#4ade80', outline: '1px solid rgba(74,222,128,0.25)' })}
+              onClick={onDetail}
+              title="Details"
+              style={aBtn({ background: 'rgba(148,163,184,0.08)', color: '#64748b', outline: '1px solid rgba(148,163,184,0.15)', padding: '4px 7px' })}
             >
-              + Registreer
+              ⓘ
             </button>
-          )}
-          <button
-            onClick={onDismiss}
-            title="Verwijder uit lijst"
-            style={{ fontSize: 14, width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(248,113,113,0.08)', color: '#f87171', border: '1px solid rgba(248,113,113,0.2)', borderRadius: 6, cursor: 'pointer', fontWeight: 700 }}
-          >
-            ×
-          </button>
-        </div>
-      </div>
-
-      {/* Rechter kolom: status + prijs + financieel */}
-      <div style={{ textAlign: 'right', minWidth: 112 }}>
-        {badge && (
-          <div style={{ marginBottom: 8 }}>
-            <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 5, background: badge.bg, color: badge.color, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              {badge.label}
-            </span>
+            <button
+              onClick={onDismiss}
+              title="Verwijder uit lijst"
+              style={{ fontSize: 14, width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(248,113,113,0.08)', color: '#f87171', border: '1px solid rgba(248,113,113,0.2)', borderRadius: 6, cursor: 'pointer', fontWeight: 700 }}
+            >
+              ×
+            </button>
           </div>
-        )}
-        <div style={{ fontSize: 20, fontWeight: 800, color: '#f1f5f9', marginBottom: 8, lineHeight: 1 }}>
-          {fmtP(order.price)}
         </div>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
-          <InlineInput
-            value={order.cost_price != null ? String(order.cost_price) : ''}
-            onSave={v => onSave(order.id, 'cost_price', v ? parseFloat(v) : null)}
-            placeholder="Inkoop €" prefix="€" width={78} type="number"
-          />
-        </div>
-        {profit != null && (
-          <div style={{ fontSize: 12, fontWeight: 700, color: profit >= 0 ? '#4ade80' : '#f87171', marginBottom: 6 }}>
-            Winst {profit >= 0 ? '+' : ''}{fmtP(Math.abs(profit))}
-          </div>
-        )}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3, marginTop: 2 }}>
-          <InlineInput
-            value={order.sku_ref || ''}
-            onSave={v => onSave(order.id, 'sku_ref', v || null)}
-            placeholder="SKU" width={86}
-          />
-          {suggested && (
-            <button
-              onClick={() => onSave(order.id, 'sku_ref', suggested)}
-              style={{ fontSize: 10, color: '#818cf8', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', textAlign: 'right', fontFamily: 'inherit' }}
-              title={`Stel in als SKU: ${suggested}`}
-            >
-              ✦ {suggested}
-            </button>
+
+        {/* Rechter kolom: status + prijs + financieel */}
+        <div style={{ textAlign: 'right', minWidth: 112 }}>
+          {badge && (
+            <div style={{ marginBottom: 8 }}>
+              <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 5, background: badge.bg, color: badge.color, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                {badge.label}
+              </span>
+            </div>
           )}
+          <div style={{ fontSize: 20, fontWeight: 800, color: '#f1f5f9', marginBottom: 8, lineHeight: 1 }}>
+            {fmtP(price)}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
+            <InlineInput
+              value={order.cost_price != null ? String(order.cost_price) : ''}
+              onSave={v => onSave(order.id, 'cost_price', v ? parseFloat(v) : null)}
+              placeholder="Inkoop €" prefix="€" width={78} type="number"
+            />
+          </div>
+          {profit != null && (
+            <div style={{ fontSize: 12, fontWeight: 700, color: profit >= 0 ? '#4ade80' : '#f87171', marginBottom: 6 }}>
+              Winst {profit >= 0 ? '+' : ''}{fmtP(Math.abs(profit))}
+            </div>
+          )}
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3, marginTop: 2 }}>
+            <InlineInput
+              value={order.sku_ref || ''}
+              onSave={v => onSave(order.id, 'sku_ref', v || null)}
+              placeholder="SKU" width={86}
+            />
+            {suggested && (
+              <button
+                onClick={() => onSave(order.id, 'sku_ref', suggested)}
+                style={{ fontSize: 10, color: '#818cf8', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', textAlign: 'right', fontFamily: 'inherit' }}
+                title={`Stel in als SKU: ${suggested}`}
+              >
+                ✦ {suggested}
+              </button>
+            )}
+          </div>
         </div>
       </div>
-    </div>
+
+      {skuPickerOpen && (
+        <SkuPickerModal
+          batches={batches}
+          onPick={sku => onSave(order.id, 'sku_ref', sku)}
+          onClose={() => setSkuPickerOpen(false)}
+        />
+      )}
+    </>
   )
 }
 
@@ -581,9 +675,22 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
 
   useEffect(() => {
     let cancelled = false
-    fetchAllVintedOrders()
-      .then(rows => { if (!cancelled) { setVtOrders(rows); setVtLoading(false) } })
-      .catch(e => { if (!cancelled) { setVtError(e.message); setVtLoading(false) } })
+    fetchAllVintedOrders().then(rows => {
+      if (cancelled) return
+      const SKU_RE = /\b([A-Z]{2,4}\d{3,6})\b/
+      const enriched = rows.map(row => {
+        if (!row.sku_ref && row.description) {
+          const m = row.description.match(SKU_RE)
+          if (m) {
+            supabase.from('vinted_orders').update({ sku_ref: m[1] }).eq('id', row.id)
+            return { ...row, sku_ref: m[1] }
+          }
+        }
+        return row
+      })
+      setVtOrders(enriched)
+      setVtLoading(false)
+    }).catch(e => { if (!cancelled) { setVtError(e.message); setVtLoading(false) } })
     return () => { cancelled = true }
   }, [])
 
@@ -728,6 +835,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
                 onPhotoClick={setPhotoPopup}
                 onDetail={() => setOrderDetail(order)}
                 vintedCookie={vintedCookie}
+                batches={batches}
               />
             ))}
           </div>
