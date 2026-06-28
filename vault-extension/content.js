@@ -242,7 +242,7 @@
         itemId:                String(o.item?.id || ''),
         title:                 o.item?.title || o.title || '?',
         photo,
-        price:                 parseFloat(o.total_price || o.item?.price_numeric || o.price || 0),
+        price:                 parseFloat(o.price?.amount || o.total_price || o.item?.price_numeric || 0),
         buyer:                 o.buyer?.login || o.user?.login || '',
         country:               o.buyer?.country_iso_code || o.country_iso_code || '',
         date:                  (o.created_at || o.updated_at || '').slice(0, 10),
