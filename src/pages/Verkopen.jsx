@@ -276,14 +276,14 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave }
       className="modal-overlay"
       onMouseDown={e => e.target === e.currentTarget && onClose()}
     >
-      <div className="modal" style={{ maxWidth: 480, padding: 0, overflow: 'hidden', maxHeight: '92vh', display: 'flex', flexDirection: 'column' }}>
+      <div className="modal" style={{ maxWidth: 520, padding: 0, overflow: 'hidden', maxHeight: '92vh', display: 'flex', flexDirection: 'column' }}>
 
         {/* Foto header */}
         <div style={{ position: 'relative', flexShrink: 0 }}>
           {mainPhoto ? (
             <div
               onClick={() => onPhotoClick(allPhotos)}
-              style={{ width: '100%', height: 260, cursor: 'zoom-in', background: 'var(--bg-2)', overflow: 'hidden' }}
+              style={{ width: '100%', height: 300, cursor: 'zoom-in', background: 'var(--bg-2)', overflow: 'hidden' }}
             >
               <img src={mainPhoto} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
               {allPhotos.length > 1 && (
@@ -308,12 +308,18 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave }
           {/* Titel */}
           <div style={{ fontSize: 17, fontWeight: 700, lineHeight: 1.35, marginBottom: 16, color: 'var(--text)' }}>{order.title}</div>
 
-          {/* Koper */}
-          {(order.buyer_name || order.buyer || order.country) && (
-            <>
-              {fieldLabel('Koper')}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
-                <span style={{ fontSize: 14, color: '#64748b', lineHeight: 1 }}>👤</span>
+          {/* Datum */}
+          {date && (
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ color: 'var(--text-3)' }}>🗓</span> {date}
+            </div>
+          )}
+
+          {/* Koper — altijd tonen */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
+            <span style={{ fontSize: 14, color: 'var(--text-3)', lineHeight: 1 }}>👤</span>
+            {(order.buyer_name || order.buyer || order.country) ? (
+              <>
                 {order.buyer_name && (
                   <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>{order.buyer_name}</span>
                 )}
@@ -325,19 +331,11 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave }
                     {flag} {order.country}
                   </span>
                 )}
-              </div>
-            </>
-          )}
-
-          {/* Datum */}
-          {date && (
-            <>
-              {fieldLabel('Datum verkoop')}
-              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ color: 'var(--text-3)' }}>🗓</span> {date}
-              </div>
-            </>
-          )}
+              </>
+            ) : (
+              <span style={{ fontSize: 13, color: 'var(--text-3)', fontStyle: 'italic' }}>Koper onbekend</span>
+            )}
+          </div>
 
           {divider}
 

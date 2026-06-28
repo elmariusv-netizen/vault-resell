@@ -230,6 +230,8 @@
       console.log('[Vault] sold[0]:', JSON.stringify(all[0]).slice(0, 200));
       console.log('[Vault] photo object:', JSON.stringify(all[0].photo));
       console.log('[Vault] price raw:', JSON.stringify(all[0].price));
+      console.log('[Vault] buyer object:', JSON.stringify(all[0].buyer));
+      console.log('[Vault] user object:', JSON.stringify(all[0].user));
     }
 
     const orders = all.map(o => {
@@ -244,6 +246,7 @@
         photo,
         price:                 parseFloat(o.price?.amount || o.total_price || o.item?.price_numeric || 0),
         buyer:                 o.buyer?.login || o.user?.login || '',
+        buyer_name:            o.buyer?.real_name || o.buyer?.display_name || o.buyer?.name || o.user?.real_name || o.user?.display_name || '',
         country:               o.buyer?.country_iso_code || o.country_iso_code || '',
         date:                  (o.created_at || o.updated_at || '').slice(0, 10),
         status:                o.status || '',
