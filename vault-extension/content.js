@@ -232,12 +232,9 @@
     }
 
     const orders = all.map(o => {
-      // Zelfde volgorde als listings: photos[0].url → photo.url → item photos → photo_url
-      const photo = hiPhoto(
-        o.photos?.[0]?.url || o.photo?.url ||
+      const photo = o.photos?.[0]?.url || o.photo?.url ||
         o.item?.photos?.[0]?.url || o.item?.photo?.url ||
-        o.photo_url || null
-      );
+        o.photo_url || null;
       if (o === all[0]) console.log(`[Vault] photo txn ${o.transaction_id || o.id}: resolved →`, photo || '(leeg)');
       return {
         transactionId:         String(o.transaction_id || o.id || ''),
@@ -349,7 +346,7 @@
                 || item.photo?.full_size_url || item.photo?.url
                 || item.thumbnail_url || null;
       if (url) console.log(`[Vault] foto via conv ${convId}:`, url.slice(0, 60));
-      return url ? hiPhoto(url) : null;
+      return url || null;
     } catch (e) {
       console.warn(`[Vault] conv foto mislukt ${convId}:`, e.message);
       return null;
