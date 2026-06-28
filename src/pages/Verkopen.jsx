@@ -205,15 +205,23 @@ function PhotoPopup({ urls, onClose }) {
 }
 
 // ── Order detail popup ─────────────────────────────────────────────────────
-function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick }) {
+function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave }) {
   const [downloading, setDownloading] = useState(false)
   const [downloaded, setDownloaded]   = useState(false)
+  const [skuEditing,  setSkuEditing]  = useState(false)
+  const [skuVal,      setSkuVal]      = useState(order.sku_ref || '')
+  const [cogsEditing, setCogsEditing] = useState(false)
+  const [cogsVal,     setCogsVal]     = useState(String(order.cost_price ?? ''))
 
-  const badge     = getStatusBadge(order.status, order.label_available)
-  const flag      = COUNTRY_FLAGS[order.country] || ''
-  const date      = order.sale_date || order.synced_at?.split('T')[0] || ''
-  const profit    = order.cost_price != null ? (Number(order.price) - Number(order.cost_price)) : null
-  const fmtE      = v => `€${Number(v).toFixed(2).replace('.', ',')}`
+  useEffect(() => { setSkuVal(order.sku_ref || '') },       [order.sku_ref])
+  useEffect(() => { setCogsVal(String(order.cost_price ?? '')) }, [order.cost_price])
+
+  const flag    = COUNTRY_FLAGS[order.country] || ''
+  const date    = order.sale_date || order.synced_at?.split('T')[0] || ''
+  const price   = Number(order.price || 0)
+  const cogs    = Number(order.cost_price || 0)
+  const profit  = order.cost_price != null ? price - cogs : null
+  const fmtE    = v => `€${Number(v).toFixed(2).replace('.', ',')}`
 
   const photoUrls = (() => { try { return JSON.parse(order.photo_urls || '[]') } catch { return [] } })()
   const allPhotos = photoUrls.length ? photoUrls : (order.photo_url ? [order.photo_url] : [])
@@ -241,109 +249,207 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick }) {
     }
   }
 
+  const saveCogs = () => {
+    const v = cogsVal.trim()
+    onSave?.(order.id, 'cost_price', v !== '' ? parseFloat(v) : null)
+    setCogsEditing(false)
+  }
+  const saveSku = () => {
+    onSave?.(order.id, 'sku_ref', skuVal.trim() || null)
+    setSkuEditing(false)
+  }
+
   useEffect(() => {
     const close = e => { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', close)
     return () => window.removeEventListener('keydown', close)
   }, [onClose])
 
+  const divider = <div style={{ height: 1, background: 'var(--border)', margin: '14px 0' }} />
+
+  const fieldLabel = (txt) => (
+    <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', letterSpacing: '0.6px', textTransform: 'uppercase', marginBottom: 3 }}>{txt}</div>
+  )
+
   return (
     <div
       className="modal-overlay"
       onMouseDown={e => e.target === e.currentTarget && onClose()}
     >
-      <div className="modal" style={{ maxWidth: 500, padding: 0, overflow: 'hidden' }}>
-        {/* Foto header */}
-        {mainPhoto && (
-          <div
-            onClick={() => onPhotoClick(allPhotos)}
-            style={{ position: 'relative', width: '100%', height: 220, cursor: 'zoom-in', background: 'var(--bg-2)', overflow: 'hidden' }}
-          >
-            <img
-              src={mainPhoto} alt=""
-              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-            />
-            {allPhotos.length > 1 && (
-              <span style={{ position: 'absolute', top: 12, left: 12, background: 'rgba(0,0,0,0.55)', color: '#fff', fontSize: 11, padding: '3px 10px', borderRadius: 20 }}>
-                {allPhotos.length} foto's
-              </span>
-            )}
-            <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to bottom, transparent 60%, rgba(0,0,0,0.5))', pointerEvents: 'none' }} />
-            <button
-              onClick={e => { e.stopPropagation(); onClose() }}
-              style={{ position: 'absolute', top: 12, right: 12, background: 'rgba(0,0,0,0.5)', border: 'none', color: '#fff', borderRadius: '50%', width: 32, height: 32, cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}
-            >×</button>
-          </div>
-        )}
+      <div className="modal" style={{ maxWidth: 480, padding: 0, overflow: 'hidden', maxHeight: '92vh', display: 'flex', flexDirection: 'column' }}>
 
-        <div style={{ padding: 24 }}>
-          {/* Header close als geen foto */}
-          {!mainPhoto && (
-            <div className="modal-header" style={{ marginBottom: 16 }}>
-              <h2 style={{ fontSize: 16 }}>Ordergegevens</h2>
-              <button className="modal-close" onClick={onClose}>×</button>
+        {/* Foto header */}
+        <div style={{ position: 'relative', flexShrink: 0 }}>
+          {mainPhoto ? (
+            <div
+              onClick={() => onPhotoClick(allPhotos)}
+              style={{ width: '100%', height: 260, cursor: 'zoom-in', background: 'var(--bg-2)', overflow: 'hidden' }}
+            >
+              <img src={mainPhoto} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              {allPhotos.length > 1 && (
+                <span style={{ position: 'absolute', top: 12, left: 12, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: 11, padding: '3px 10px', borderRadius: 20 }}>
+                  {allPhotos.length} foto's
+                </span>
+              )}
+              <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to bottom, transparent 55%, rgba(0,0,0,0.55))', pointerEvents: 'none' }} />
             </div>
+          ) : (
+            <div style={{ height: 80, background: 'var(--bg-2)' }} />
           )}
+          <button
+            onClick={onClose}
+            style={{ position: 'absolute', top: 12, right: 12, background: 'rgba(0,0,0,0.5)', border: 'none', color: '#fff', borderRadius: '50%', width: 32, height: 32, cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}
+          >×</button>
+        </div>
+
+        {/* Scrollbare inhoud */}
+        <div style={{ padding: '20px 24px 24px', overflowY: 'auto', flex: 1 }}>
 
           {/* Titel */}
-          <div style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.3, marginBottom: 14 }}>{order.title}</div>
+          <div style={{ fontSize: 17, fontWeight: 700, lineHeight: 1.35, marginBottom: 16, color: 'var(--text)' }}>{order.title}</div>
 
-          {/* Meta grid */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px', marginBottom: 16 }}>
+          {/* Koper */}
+          {(order.buyer_name || order.buyer || order.country) && (
+            <>
+              {fieldLabel('Koper')}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
+                <span style={{ fontSize: 14, color: '#64748b', lineHeight: 1 }}>👤</span>
+                {order.buyer_name && (
+                  <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>{order.buyer_name}</span>
+                )}
+                {order.buyer && (
+                  <span style={{ fontSize: 13, color: 'var(--text-3)' }}>@{order.buyer}</span>
+                )}
+                {order.country && (
+                  <span style={{ fontSize: 11, background: 'var(--bg-2)', border: '1px solid var(--border)', color: 'var(--text-2)', padding: '2px 8px', borderRadius: 5, fontWeight: 700, letterSpacing: '0.3px' }}>
+                    {flag} {order.country}
+                  </span>
+                )}
+              </div>
+            </>
+          )}
+
+          {/* Datum */}
+          {date && (
+            <>
+              {fieldLabel('Datum verkoop')}
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ color: 'var(--text-3)' }}>🗓</span> {date}
+              </div>
+            </>
+          )}
+
+          {divider}
+
+          {/* Financiën */}
+          {fieldLabel('Financiën')}
+          <div style={{ display: 'flex', background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', marginBottom: 14 }}>
             {[
-              ['Koper', order.buyer_name
-                ? `${order.buyer_name}${order.buyer ? ` (@${order.buyer})` : ''}`
-                : order.buyer ? `@${order.buyer}` : '—'],
-              ['Land', order.country ? `${flag} ${order.country}` : '—'],
-              ['Datum', date || '—'],
-              ['Verkoopprijs', order.price > 0 ? fmtE(order.price) : '—'],
-              ['Inkoopprijs', order.cost_price != null ? fmtE(order.cost_price) : '—'],
-              profit != null ? ['Winst', `${profit >= 0 ? '+' : ''}${fmtE(profit)}`] : null,
-              order.sku_ref ? ['SKU', order.sku_ref] : null,
-              order.shipping_method ? ['Verzendmethode', order.shipping_method] : null,
-              order.tracking_code ? ['Trackingnummer', order.tracking_code] : null,
-            ].filter(Boolean).map(([label, val]) => (
-              <div key={label}>
-                <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 2 }}>{label}</div>
-                <div style={{
-                  fontSize: 13, fontWeight: 600,
-                  color: label === 'Winst' ? (profit >= 0 ? 'var(--green)' : 'var(--red)') : 'var(--text)',
-                  fontFamily: label === 'Trackingnummer' ? 'monospace' : 'inherit',
-                  wordBreak: 'break-all',
-                }}>{val}</div>
+              {
+                label: 'BRUT',
+                node: <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>{fmtE(price)}</span>,
+              },
+              {
+                label: 'COGS',
+                node: cogsEditing ? (
+                  <input
+                    autoFocus
+                    type="number"
+                    value={cogsVal}
+                    onChange={e => setCogsVal(e.target.value)}
+                    onBlur={saveCogs}
+                    onKeyDown={e => e.key === 'Enter' && e.target.blur()}
+                    onClick={e => e.stopPropagation()}
+                    style={{ width: 60, fontSize: 13, fontWeight: 700, background: 'transparent', border: 'none', borderBottom: '1px solid var(--green)', color: 'var(--text)', outline: 'none', textAlign: 'center', fontFamily: 'inherit', padding: 0 }}
+                  />
+                ) : (
+                  <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-3)', cursor: 'pointer' }} title="Klik om te bewerken" onClick={() => setCogsEditing(true)}>
+                    {fmtE(cogs)}
+                  </span>
+                ),
+                clickable: true,
+              },
+              {
+                label: 'WINST',
+                node: profit != null
+                  ? <span style={{ fontSize: 15, fontWeight: 700, color: profit >= 0 ? 'var(--green)' : 'var(--red)' }}>{profit >= 0 ? '+' : '-'}{fmtE(Math.abs(profit))}</span>
+                  : <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-3)' }}>—</span>,
+              },
+            ].map((col, i, arr) => (
+              <div
+                key={col.label}
+                onClick={col.clickable && !cogsEditing ? () => setCogsEditing(true) : undefined}
+                style={{
+                  flex: 1, textAlign: 'center', padding: '10px 8px',
+                  borderRight: i < arr.length - 1 ? '1px solid var(--border)' : 'none',
+                  cursor: col.clickable ? 'pointer' : 'default',
+                }}
+              >
+                <div style={{ fontSize: 9, color: 'var(--text-3)', fontWeight: 700, letterSpacing: '0.7px', textTransform: 'uppercase', marginBottom: 4 }}>{col.label}</div>
+                {col.node}
               </div>
             ))}
           </div>
 
-          {/* Beschrijving */}
-          {order.description && (
-            <div style={{ marginBottom: 16, padding: '10px 12px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8 }}>
-              <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 4 }}>Omschrijving</div>
-              <div style={{ fontSize: 12, color: 'var(--text-2)', lineHeight: 1.6, maxHeight: 100, overflowY: 'auto', whiteSpace: 'pre-line' }}>{order.description}</div>
-            </div>
+          {/* Verzending */}
+          {(order.shipping_method || order.tracking_code) && (
+            <>
+              {divider}
+              {fieldLabel('Verzending')}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
+                {order.shipping_method && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 13, color: 'var(--text-3)' }}>📦</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{order.shipping_method}</span>
+                  </div>
+                )}
+                {order.tracking_code && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 13, color: 'var(--text-3)' }}>🔍</span>
+                    <span style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 600, color: 'var(--blue)', wordBreak: 'break-all' }}>{order.tracking_code}</span>
+                  </div>
+                )}
+              </div>
+            </>
           )}
 
-          {/* Status badge */}
-          {badge && (
-            <div style={{ marginBottom: 16 }}>
-              <span style={{ fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 10, background: badge.bg, color: badge.color }}>
-                {badge.label}
-              </span>
-            </div>
-          )}
+          {divider}
+
+          {/* SKU */}
+          {fieldLabel('SKU')}
+          <div style={{ marginBottom: 16 }}>
+            {skuEditing ? (
+              <div style={{ display: 'flex', gap: 6 }}>
+                <input
+                  autoFocus
+                  value={skuVal}
+                  onChange={e => setSkuVal(e.target.value.toUpperCase())}
+                  onBlur={saveSku}
+                  onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); if (e.key === 'Escape') { setSkuEditing(false); setSkuVal(order.sku_ref || '') } }}
+                  placeholder="bv. IND042"
+                  style={{ flex: 1, fontFamily: 'monospace', fontSize: 13, padding: '5px 9px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', outline: 'none' }}
+                />
+                <button
+                  onMouseDown={e => { e.preventDefault(); saveSku() }}
+                  style={{ padding: '5px 12px', borderRadius: 6, background: 'var(--green)', color: '#000', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: 12 }}
+                >✓</button>
+              </div>
+            ) : (
+              <div
+                onClick={() => setSkuEditing(true)}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '5px 10px', borderRadius: 6, background: 'var(--bg-2)', border: '1px solid var(--border)', minWidth: 100 }}
+                title="Klik om SKU te bewerken"
+              >
+                <span style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 700, color: skuVal ? 'var(--text)' : 'var(--text-3)' }}>
+                  {skuVal || 'Geen SKU'}
+                </span>
+                <span style={{ fontSize: 10, color: 'var(--text-3)' }}>✏️</span>
+              </div>
+            )}
+          </div>
 
           {/* Acties */}
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {(order.label_url || order.transaction_id) && (
-              <button
-                className={`btn ${downloaded ? 'btn-secondary' : 'btn-primary'}`}
-                onClick={downloadLabel}
-                disabled={downloading}
-                style={{ flex: 1 }}
-              >
-                {downloading ? '⏳ Ophalen…' : downloaded ? '✓ Label gedownload' : '⬇ Download label 4×6'}
-              </button>
-            )}
             {order.conversation_id && (
               <a
                 href={`https://www.vinted.be/conversations/${order.conversation_id}`}
@@ -353,6 +459,16 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick }) {
               >
                 💬 Open gesprek op Vinted
               </a>
+            )}
+            {(order.label_url || order.transaction_id) && (
+              <button
+                className={`btn ${downloaded ? 'btn-secondary' : 'btn-primary'}`}
+                onClick={downloadLabel}
+                disabled={downloading}
+                style={{ flex: 1 }}
+              >
+                {downloading ? '⏳ Ophalen…' : downloaded ? '✓ Label gedownload' : '⬇ Download label 4×6'}
+              </button>
             )}
           </div>
         </div>
@@ -435,7 +551,7 @@ function SkuPickerModal({ batches, onPick, onClose }) {
 }
 
 // ── Order rij (Vinteer-stijl) ──────────────────────────────────────────────
-function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegister, batches }) {
+function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegister, onDetail, batches }) {
   const [skuPickerOpen, setSkuPickerOpen] = useState(false)
   const [hoverPos,      setHoverPos]      = useState(null)
   const [cogsEditing,   setCogsEditing]   = useState(false)
@@ -511,18 +627,13 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
 
             {/* Rij 1: Titel + × */}
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
-              {itemUrl ? (
-                <a
-                  href={itemUrl} target="_blank" rel="noreferrer"
-                  style={{ fontWeight: 700, fontSize: 14, color: '#4ade80', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: 1.3, textDecoration: 'none', flex: 1, minWidth: 0 }}
-                >
-                  {order.title}
-                </a>
-              ) : (
-                <div style={{ fontWeight: 700, fontSize: 14, color: '#4ade80', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: 1.3, flex: 1, minWidth: 0 }}>
-                  {order.title}
-                </div>
-              )}
+              <span
+                onClick={onDetail}
+                style={{ fontWeight: 700, fontSize: 14, color: '#4ade80', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: 1.3, flex: 1, minWidth: 0, cursor: onDetail ? 'pointer' : 'default' }}
+                title={onDetail ? 'Klik voor details' : undefined}
+              >
+                {order.title}
+              </span>
               <button
                 onClick={onDismiss}
                 title="Verwijder"
@@ -863,6 +974,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
                 onSave={saveVtField}
                 onDismiss={() => dismissVintedOrder(order.id)}
                 onPhotoClick={setPhotoPopup}
+                onDetail={() => setOrderDetail(order)}
                 onRegister={() => openSaleModal(order)}
                 batches={batches}
               />
@@ -1066,6 +1178,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
           onClose={() => setOrderDetail(null)}
           vintedCookie={vintedCookie}
           onPhotoClick={(urls) => { setOrderDetail(null); setPhotoPopup(urls) }}
+          onSave={saveVtField}
         />
       )}
 
