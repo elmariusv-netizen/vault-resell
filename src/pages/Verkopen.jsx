@@ -445,16 +445,19 @@ function SkuPickerModal({ batches, onPick, onClose }) {
 }
 
 // ── Order rij (Vinteer-stijl) ──────────────────────────────────────────────
-function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, batches }) {
+function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegister, batches }) {
   const [skuPickerOpen, setSkuPickerOpen] = useState(false)
   const [hoverPos,      setHoverPos]      = useState(null)
+  const [cogsEditing,   setCogsEditing]   = useState(false)
+  const [cogsVal,       setCogsVal]       = useState(String(order.cost_price ?? ''))
 
-  const badge    = getStatusBadge(order.status, order.label_available)
+  useEffect(() => setCogsVal(String(order.cost_price ?? '')), [order.cost_price])
+
   const flag     = COUNTRY_FLAGS[order.country] || ''
   const date     = order.sale_date || order.synced_at?.split('T')[0] || ''
   const price    = parseFloat(order.price || 0)
-  const profit   = order.cost_price != null ? price - parseFloat(order.cost_price) : null
-  const fmtP     = v => `€${Math.abs(Number(v)).toFixed(2).replace('.', ',')}`
+  const cogs     = parseFloat(order.cost_price || 0)
+  const profit   = order.cost_price != null ? price - cogs : null
   const buyer    = order.buyer_name || order.buyer || ''
   const itemUrl  = order.item_url || (order.transaction_id ? `https://www.vinted.be/items/${order.transaction_id}` : null)
   const suggested = !order.sku_ref ? suggestSku(order.title, order.description) : ''
@@ -473,112 +476,168 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, batche
     return [brand, size, color].filter(Boolean).join(' · ')
   })()
 
+  const saveCogs = () => {
+    const v = cogsVal.trim()
+    onSave(order.id, 'cost_price', v !== '' ? parseFloat(v) : null)
+    setCogsEditing(false)
+  }
+
+  const miniBtn = (onClick, label, color, bg, border) => (
+    <button
+      onClick={onClick}
+      style={{ fontSize: 11, padding: '2px 8px', borderRadius: 5, cursor: 'pointer', fontWeight: 600, border: `1px solid ${border}`, background: bg, color, fontFamily: 'inherit', lineHeight: 1.5, whiteSpace: 'nowrap' }}
+    >{label}</button>
+  )
+
   return (
     <>
-      <div style={{
-        padding: '14px 16px',
-        borderBottom: isLast ? 'none' : '1px solid rgba(255,255,255,0.06)',
-        display: 'grid',
-        gridTemplateColumns: '80px 1fr auto',
-        gap: 14,
-        alignItems: 'start',
-      }}>
+      <div style={{ borderBottom: isLast ? 'none' : '1px solid rgba(255,255,255,0.06)' }}>
 
-        {/* Foto met hover preview */}
-        <div>
-          {allPhotos.length ? (
-            <img
-              src={allPhotos[0]} alt=""
-              style={{ width: 80, height: 80, borderRadius: 8, objectFit: 'cover', display: 'block', cursor: 'zoom-in' }}
-              onMouseEnter={e => {
-                const r = e.currentTarget.getBoundingClientRect()
-                setHoverPos({ x: r.right + 12, y: Math.max(8, r.top - 30) })
+        {/* Hoofdinhoud: foto + info */}
+        <div style={{ padding: '14px 16px 10px', display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+
+          {/* Foto */}
+          <div style={{ flexShrink: 0 }}>
+            {allPhotos.length ? (
+              <img
+                src={allPhotos[0]} alt=""
+                style={{ width: 100, height: 124, borderRadius: 8, objectFit: 'cover', display: 'block', cursor: 'zoom-in' }}
+                onMouseEnter={e => {
+                  const r = e.currentTarget.getBoundingClientRect()
+                  setHoverPos({ x: r.right + 12, y: Math.max(8, r.top - 40) })
+                }}
+                onMouseLeave={() => setHoverPos(null)}
+                onClick={() => onPhotoClick(allPhotos)}
+              />
+            ) : (
+              <div style={{ width: 100, height: 124, borderRadius: 8, background: '#1e293b', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 32 }}>📦</div>
+            )}
+          </div>
+
+          {/* Info */}
+          <div style={{ flex: 1, minWidth: 0 }}>
+
+            {/* Rij 1: Titel + × */}
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
+              {itemUrl ? (
+                <a
+                  href={itemUrl} target="_blank" rel="noreferrer"
+                  style={{ fontWeight: 700, fontSize: 14, color: '#4ade80', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: 1.3, textDecoration: 'none', flex: 1, minWidth: 0 }}
+                >
+                  {order.title}
+                </a>
+              ) : (
+                <div style={{ fontWeight: 700, fontSize: 14, color: '#4ade80', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: 1.3, flex: 1, minWidth: 0 }}>
+                  {order.title}
+                </div>
+              )}
+              <button
+                onClick={onDismiss}
+                title="Verwijder"
+                style={{ flexShrink: 0, fontSize: 17, lineHeight: 1, background: 'none', border: 'none', color: '#334155', cursor: 'pointer', padding: '0 2px', fontWeight: 700, fontFamily: 'inherit' }}
+                onMouseEnter={e => e.currentTarget.style.color = '#f87171'}
+                onMouseLeave={e => e.currentTarget.style.color = '#334155'}
+              >×</button>
+            </div>
+
+            {/* Rij 2: Merk · Maat · Kleur */}
+            {meta && (
+              <div style={{ fontSize: 11, color: '#475569', marginBottom: 5, textTransform: 'capitalize' }}>{meta}</div>
+            )}
+
+            {/* Rij 3: koper + land */}
+            {(buyer || order.country) && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 5 }}>
+                <span style={{ fontSize: 12, color: '#475569', lineHeight: 1 }}>👤</span>
+                {buyer && <span style={{ fontSize: 12, color: '#94a3b8' }}>{buyer}</span>}
+                {order.country && (
+                  <span style={{ fontSize: 10, background: '#1e293b', color: '#64748b', padding: '1px 7px', borderRadius: 4, fontWeight: 600, letterSpacing: '0.2px' }}>
+                    {flag} {order.country}
+                  </span>
+                )}
+              </div>
+            )}
+
+            {/* Rij 4: datum + acties */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              {date && (
+                <span style={{ fontSize: 11, color: '#475569', display: 'flex', alignItems: 'center', gap: 3 }}>
+                  🗓 {date}
+                </span>
+              )}
+              {miniBtn(
+                () => setSkuPickerOpen(true),
+                order.sku_ref ? `🏷 ${order.sku_ref}` : 'Lier SKU',
+                '#818cf8', 'rgba(129,140,248,0.08)', 'rgba(129,140,248,0.2)'
+              )}
+              {suggested && !order.sku_ref && (
+                <span
+                  onClick={() => onSave(order.id, 'sku_ref', suggested)}
+                  style={{ fontSize: 10, color: '#818cf8', cursor: 'pointer', userSelect: 'none' }}
+                  title={`Auto: ${suggested}`}
+                >✦ {suggested}</span>
+              )}
+              {order.registered_in_vault
+                ? <span style={{ fontSize: 11, color: '#4ade80', fontWeight: 600 }}>✓ Empl.</span>
+                : onRegister && miniBtn(onRegister, '+ Empl.', '#4ade80', 'rgba(74,222,128,0.08)', 'rgba(74,222,128,0.2)')
+              }
+            </div>
+          </div>
+        </div>
+
+        {/* Onderbalk: BRUT | COGS | PROFIT */}
+        <div style={{
+          background: '#1e293b',
+          display: 'flex',
+          borderTop: '1px solid rgba(255,255,255,0.04)',
+        }}>
+          {[
+            {
+              label: 'BRUT',
+              node: <span style={{ fontSize: 14, fontWeight: 700, color: '#cbd5e1' }}>€{price.toFixed(2).replace('.', ',')}</span>,
+            },
+            {
+              label: 'COGS',
+              node: cogsEditing ? (
+                <input
+                  autoFocus
+                  type="number"
+                  value={cogsVal}
+                  onChange={e => setCogsVal(e.target.value)}
+                  onBlur={saveCogs}
+                  onKeyDown={e => e.key === 'Enter' && e.target.blur()}
+                  onClick={e => e.stopPropagation()}
+                  style={{ width: 64, fontSize: 13, fontWeight: 700, background: 'transparent', border: 'none', borderBottom: '1px solid #4ade80', color: '#f1f5f9', outline: 'none', textAlign: 'center', fontFamily: 'inherit', padding: 0 }}
+                />
+              ) : (
+                <span style={{ fontSize: 14, fontWeight: 700, color: '#64748b' }}>€{cogs.toFixed(2).replace('.', ',')}</span>
+              ),
+              onClick: () => !cogsEditing && setCogsEditing(true),
+              title: 'Klik om te bewerken',
+            },
+            {
+              label: 'PROFIT',
+              node: profit != null
+                ? <span style={{ fontSize: 14, fontWeight: 700, color: profit >= 0 ? '#4ade80' : '#f87171' }}>{profit >= 0 ? '+' : '-'}€{Math.abs(profit).toFixed(2).replace('.', ',')}</span>
+                : <span style={{ fontSize: 14, fontWeight: 700, color: '#334155' }}>—</span>,
+            },
+          ].map((col, i, arr) => (
+            <div
+              key={col.label}
+              onClick={col.onClick}
+              title={col.title}
+              style={{
+                flex: 1,
+                textAlign: 'center',
+                padding: '7px 8px',
+                borderRight: i < arr.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none',
+                cursor: col.onClick ? 'pointer' : 'default',
               }}
-              onMouseLeave={() => setHoverPos(null)}
-              onClick={() => onPhotoClick(allPhotos)}
-            />
-          ) : (
-            <div style={{ width: 80, height: 80, borderRadius: 8, background: '#1e293b', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 30 }}>📦</div>
-          )}
-        </div>
-
-        {/* Info kolom */}
-        <div style={{ minWidth: 0 }}>
-          {itemUrl ? (
-            <a
-              href={itemUrl} target="_blank" rel="noreferrer"
-              style={{ fontWeight: 700, fontSize: 14, color: '#4ade80', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 3, lineHeight: 1.3, textDecoration: 'none' }}
             >
-              {order.title}
-            </a>
-          ) : (
-            <div style={{ fontWeight: 700, fontSize: 14, color: '#4ade80', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 3, lineHeight: 1.3 }}>
-              {order.title}
+              <div style={{ fontSize: 9, color: '#334155', fontWeight: 700, letterSpacing: '0.8px', textTransform: 'uppercase', marginBottom: 2 }}>{col.label}</div>
+              {col.node}
             </div>
-          )}
-          {meta && (
-            <div style={{ fontSize: 11, color: '#64748b', marginBottom: 4, textTransform: 'capitalize' }}>{meta}</div>
-          )}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap', marginBottom: 3 }}>
-            {buyer && <span style={{ fontSize: 12, color: '#94a3b8' }}>@{buyer}</span>}
-            {order.country && (
-              <span style={{ fontSize: 10, background: '#1e293b', color: '#64748b', padding: '1px 6px', borderRadius: 4, fontWeight: 600 }}>
-                {flag} {order.country}
-              </span>
-            )}
-          </div>
-          {date && <div style={{ fontSize: 11, color: '#475569' }}>{date}</div>}
-        </div>
-
-        {/* Rechter kolom */}
-        <div style={{ textAlign: 'right', minWidth: 120 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6, marginBottom: 6 }}>
-            {badge && (
-              <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 4, background: badge.bg, color: badge.color, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                {badge.label}
-              </span>
-            )}
-            <button
-              onClick={onDismiss}
-              title="Verwijder"
-              style={{ fontSize: 16, lineHeight: 1, background: 'none', border: 'none', color: '#475569', cursor: 'pointer', padding: '0 2px', fontWeight: 700, fontFamily: 'inherit' }}
-              onMouseEnter={e => e.currentTarget.style.color = '#f87171'}
-              onMouseLeave={e => e.currentTarget.style.color = '#475569'}
-            >×</button>
-          </div>
-          <div style={{ fontSize: 22, fontWeight: 800, color: '#f1f5f9', marginBottom: 6, lineHeight: 1 }}>
-            €{price.toFixed(2).replace('.', ',')}
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 3 }}>
-            <InlineInput
-              value={order.cost_price != null ? String(order.cost_price) : ''}
-              onSave={v => onSave(order.id, 'cost_price', v ? parseFloat(v) : null)}
-              placeholder="Inkoop €" prefix="€" width={80} type="number"
-            />
-          </div>
-          {profit != null && (
-            <div style={{ fontSize: 11, fontWeight: 700, color: profit >= 0 ? '#4ade80' : '#f87171', marginBottom: 5 }}>
-              {profit >= 0 ? '+' : '-'}{fmtP(profit)}
-            </div>
-          )}
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
-            <InlineInput
-              value={order.sku_ref || ''}
-              onSave={v => onSave(order.id, 'sku_ref', v || null)}
-              placeholder="SKU" width={86}
-            />
-            {suggested && (
-              <span
-                onClick={() => onSave(order.id, 'sku_ref', suggested)}
-                style={{ fontSize: 10, color: '#818cf8', cursor: 'pointer', userSelect: 'none' }}
-                title={`Stel in: ${suggested}`}
-              >✦ {suggested}</span>
-            )}
-            <span
-              onClick={() => setSkuPickerOpen(true)}
-              style={{ fontSize: 10, color: '#475569', cursor: 'pointer', textDecoration: 'underline', userSelect: 'none' }}
-            >koppel SKU</span>
-          </div>
+          ))}
         </div>
       </div>
 
@@ -589,8 +648,8 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, batche
             position: 'fixed',
             left: hoverPos.x,
             top: hoverPos.y,
-            width: 280,
-            height: 280,
+            width: 260,
+            height: 320,
             borderRadius: 12,
             objectFit: 'cover',
             zIndex: 9999,
@@ -808,6 +867,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
                 onSave={saveVtField}
                 onDismiss={() => dismissVintedOrder(order.id)}
                 onPhotoClick={setPhotoPopup}
+                onRegister={() => openSaleModal(order)}
                 batches={batches}
               />
             ))}
