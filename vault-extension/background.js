@@ -88,6 +88,7 @@ async function syncToSupabase(order) {
     label_available: !!(order.transactionUserStatus === 'needs_action' || /verzendlabel/i.test(order.status || '')),
   };
 
+  console.log('[Vault] price:', order.price);
   console.log(`[Vault] syncToSupabase → POST ${endpoint}`);
   console.log(`[Vault] payload txn=${order.transactionId} title="${order.title}" price=${payload.price} buyer="${payload.buyer}"`);
   console.log(`[Vault] sync photo — order.photo: ${order.photo?.slice(0,60) || '(leeg)'} | order.photo_url: ${order.photo_url?.slice(0,60) || '(leeg)'}`);

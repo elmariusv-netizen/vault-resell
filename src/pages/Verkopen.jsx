@@ -454,7 +454,7 @@ function VintedOrderRow({ order, isLast, onSave, onRegister, onDismiss, onPhotoC
   const flag      = COUNTRY_FLAGS[order.country] || ''
   const date      = order.sale_date || order.synced_at?.split('T')[0] || ''
   const suggested = !order.sku_ref ? suggestSku(order.title, order.description) : ''
-  const price     = parseFloat(order.price) || 0
+  const price     = parseFloat(order.price || 0)
   const profit    = order.cost_price != null ? price - parseFloat(order.cost_price) : null
   const fmtP      = v => Number(v) > 0 ? `€${Number(v).toFixed(2).replace('.', ',')}` : '—'
   const buyer     = order.buyer_name || order.buyer || ''
@@ -612,7 +612,7 @@ function VintedOrderRow({ order, isLast, onSave, onRegister, onDismiss, onPhotoC
             </div>
           )}
           <div style={{ fontSize: 20, fontWeight: 800, color: '#f1f5f9', marginBottom: 8, lineHeight: 1 }}>
-            {fmtP(price)}
+            €{price.toFixed(2).replace('.', ',')}
           </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
             <InlineInput

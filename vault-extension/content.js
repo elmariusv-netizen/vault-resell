@@ -229,6 +229,7 @@
       console.log('[Vault] sold[0] keys:', Object.keys(all[0]).join(', '));
       console.log('[Vault] sold[0]:', JSON.stringify(all[0]).slice(0, 200));
       console.log('[Vault] photo object:', JSON.stringify(all[0].photo));
+      console.log('[Vault] price raw:', JSON.stringify(all[0].price));
     }
 
     const orders = all.map(o => {
