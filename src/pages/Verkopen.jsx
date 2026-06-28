@@ -371,103 +371,192 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick }) {
   )
 }
 
-// ── Order rij ──────────────────────────────────────────────────────────────
-function VintedOrderRow({ order, isLast, onSave, onRegister, onDismiss, onPhotoClick, onDetail }) {
+// ── Order rij (Vinteer-stijl) ──────────────────────────────────────────────
+function VintedOrderRow({ order, isLast, onSave, onRegister, onDismiss, onPhotoClick, onDetail, vintedCookie }) {
+  const [downloading, setDownloading] = useState(false)
+  const [downloaded,  setDownloaded]  = useState(false)
+
   const badge     = getStatusBadge(order.status, order.label_available)
   const flag      = COUNTRY_FLAGS[order.country] || ''
   const date      = order.sale_date || order.synced_at?.split('T')[0] || ''
-  const fmtPrice  = v => v > 0 ? `€${Number(v).toFixed(2).replace('.', ',')}` : '—'
   const suggested = !order.sku_ref ? suggestSku(order.title, order.description) : ''
+  const profit    = order.cost_price != null ? Number(order.price) - Number(order.cost_price) : null
+  const fmtP      = v => (v != null && v !== '' && !isNaN(Number(v))) ? `€${Number(v).toFixed(2).replace('.', ',')}` : '—'
 
   const photoUrls = (() => { try { return JSON.parse(order.photo_urls || '[]') } catch { return [] } })()
   const allPhotos = photoUrls.length ? photoUrls : (order.photo_url ? [order.photo_url] : [])
 
-  return (
-    <div style={{ padding: '12px 16px', borderBottom: isLast ? 'none' : '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+  const meta = (() => {
+    const t = (order.title || '').toLowerCase()
+    let brand = '', color = '', size = ''
+    for (const [name] of BRANDS_MAP) if (t.includes(name)) { brand = name; break }
+    for (const [name] of COLORS_MAP) if (t.includes(name)) { color = name; break }
+    for (const s of SIZES) {
+      if (new RegExp(`(?:^|\\s|maat\\s*)${s}(?:\\s|$|/)`, 'i').test(t)) { size = s; break }
+    }
+    return [brand, size, color].filter(Boolean).join(' · ')
+  })()
 
-      {/* Foto met hover → popup */}
+  const downloadLabel = async (e) => {
+    e.stopPropagation()
+    if (!vintedCookie) { alert('Geen Vinted cookie — koppel je account in Instellingen.'); return }
+    setDownloading(true)
+    try {
+      const params = order.label_url
+        ? new URLSearchParams({ label_url: order.label_url })
+        : new URLSearchParams({ transaction_id: order.transaction_id })
+      const res = await fetch(`/api/label?${params}`, { headers: { 'x-vinted-cookie': vintedCookie } })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const blob = await res.blob()
+      const url  = URL.createObjectURL(blob)
+      const a    = document.createElement('a')
+      a.href = url; a.download = `label-${order.transaction_id || order.id}.pdf`; a.click()
+      URL.revokeObjectURL(url)
+      setDownloaded(true)
+    } catch (err) {
+      alert(`Label download mislukt: ${err.message}`)
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  const actionBtn = (extra) => ({
+    fontSize: 11, padding: '4px 10px', borderRadius: 6, cursor: 'pointer', fontWeight: 600, border: 'none', ...extra,
+  })
+
+  return (
+    <div style={{
+      padding: '16px',
+      borderBottom: isLast ? 'none' : '1px solid rgba(255,255,255,0.06)',
+      display: 'grid',
+      gridTemplateColumns: '72px 1fr auto',
+      gap: 14,
+      alignItems: 'start',
+    }}>
+
+      {/* Foto */}
       <div
-        style={{ flexShrink: 0, cursor: allPhotos.length ? 'zoom-in' : 'default' }}
         onClick={() => allPhotos.length && onPhotoClick(allPhotos)}
+        style={{ cursor: allPhotos.length ? 'zoom-in' : 'default' }}
       >
         {allPhotos.length ? (
           <div style={{ position: 'relative' }}>
             <img
               src={allPhotos[0]} alt=""
-              style={{ width: 48, height: 48, borderRadius: 8, objectFit: 'cover', display: 'block', transition: 'transform 0.15s' }}
-              onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.08)'; e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.25)' }}
-              onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = 'none' }}
+              style={{ width: 72, height: 72, borderRadius: 8, objectFit: 'cover', display: 'block' }}
             />
             {allPhotos.length > 1 && (
-              <span style={{ position: 'absolute', bottom: 2, right: 2, background: 'rgba(0,0,0,0.65)', color: '#fff', fontSize: 9, borderRadius: 4, padding: '1px 4px', lineHeight: 1.4 }}>
+              <span style={{ position: 'absolute', bottom: 3, right: 3, background: 'rgba(0,0,0,0.7)', color: '#fff', fontSize: 9, borderRadius: 4, padding: '1px 5px', lineHeight: 1.5 }}>
                 {allPhotos.length}
               </span>
             )}
           </div>
         ) : (
-          <div style={{ width: 48, height: 48, borderRadius: 8, background: 'var(--bg-3,var(--bg))', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22 }}>📦</div>
+          <div style={{ width: 72, height: 72, borderRadius: 8, background: '#1e293b', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28 }}>📦</div>
         )}
       </div>
 
-      {/* Info */}
-      <div style={{ flex: 1, minWidth: 140 }}>
+      {/* Midden: info + acties */}
+      <div style={{ minWidth: 0 }}>
         <div
           onClick={onDetail}
-          style={{ fontWeight: 500, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 260, cursor: 'pointer', textDecoration: 'none' }}
-          onMouseEnter={e => e.currentTarget.style.textDecoration = 'underline'}
-          onMouseLeave={e => e.currentTarget.style.textDecoration = 'none'}
           title="Klik voor details"
+          style={{ fontWeight: 700, fontSize: 14, color: '#4ade80', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: meta ? 3 : 6, lineHeight: 1.3 }}
         >
           {order.title}
         </div>
-        <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          {order.buyer && <span>@{order.buyer}</span>}
-          {order.country && <span>{flag} {order.country}</span>}
-          {date && <span>{date}</span>}
-        </div>
-        {badge && (
-          <span style={{ display: 'inline-block', marginTop: 4, fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: badge.bg, color: badge.color }}>
-            {badge.label}
-          </span>
+        {meta && (
+          <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 5, textTransform: 'capitalize' }}>{meta}</div>
         )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap', marginBottom: 3 }}>
+          {order.buyer && <span style={{ fontSize: 12, color: '#cbd5e1' }}>@{order.buyer}</span>}
+          {order.country && (
+            <span style={{ fontSize: 10, background: '#1e293b', color: '#94a3b8', padding: '2px 7px', borderRadius: 5, fontWeight: 600, letterSpacing: '0.3px' }}>
+              {flag} {order.country}
+            </span>
+          )}
+        </div>
+        {date && <div style={{ fontSize: 11, color: '#64748b', marginBottom: 10 }}>{date}</div>}
+
+        {/* Actie knoppen */}
+        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
+          {(order.label_url || order.transaction_id) && (
+            <button
+              onClick={downloadLabel}
+              disabled={downloading}
+              style={actionBtn({ background: downloaded ? 'rgba(74,222,128,0.1)' : 'rgba(251,191,36,0.12)', color: downloaded ? '#4ade80' : '#fbbf24', outline: '1px solid ' + (downloaded ? 'rgba(74,222,128,0.3)' : 'rgba(251,191,36,0.3)') })}
+            >
+              {downloading ? '⏳' : downloaded ? '✓ Label' : '↓ Label'}
+            </button>
+          )}
+          {order.item_url && (
+            <a
+              href={order.item_url} target="_blank" rel="noreferrer"
+              style={{ ...actionBtn({ background: 'rgba(99,102,241,0.12)', color: '#818cf8', outline: '1px solid rgba(99,102,241,0.3)', textDecoration: 'none', display: 'inline-block' }) }}
+            >
+              Vinted ↗
+            </a>
+          )}
+          {order.registered_in_vault ? (
+            <span style={{ fontSize: 11, color: '#4ade80', fontWeight: 600 }}>✓ Geregistreerd</span>
+          ) : (
+            <button
+              onClick={onRegister}
+              style={actionBtn({ background: 'rgba(74,222,128,0.1)', color: '#4ade80', outline: '1px solid rgba(74,222,128,0.25)' })}
+            >
+              + Registreer
+            </button>
+          )}
+          <button
+            onClick={onDismiss}
+            title="Verwijder uit lijst"
+            style={{ fontSize: 14, width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(248,113,113,0.08)', color: '#f87171', border: '1px solid rgba(248,113,113,0.2)', borderRadius: 6, cursor: 'pointer', fontWeight: 700 }}
+          >
+            ×
+          </button>
+        </div>
       </div>
 
-      {/* Prijs */}
-      <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--green)', flexShrink: 0 }}>{fmtPrice(order.price)}</div>
-
-      {/* Inkoop + SKU */}
-      <div style={{ display: 'flex', gap: 6, alignItems: 'flex-start', flexShrink: 0 }}>
-        <InlineInput
-          value={order.cost_price != null ? String(order.cost_price) : ''}
-          onSave={v => onSave(order.id, 'cost_price', v ? parseFloat(v) : null)}
-          placeholder="Inkoop €" prefix="€" width={76} type="number"
-        />
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      {/* Rechter kolom: status + prijs + financieel */}
+      <div style={{ textAlign: 'right', minWidth: 112 }}>
+        {badge && (
+          <div style={{ marginBottom: 8 }}>
+            <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 5, background: badge.bg, color: badge.color, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              {badge.label}
+            </span>
+          </div>
+        )}
+        <div style={{ fontSize: 20, fontWeight: 800, color: '#f1f5f9', marginBottom: 8, lineHeight: 1 }}>
+          {fmtP(order.price)}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
+          <InlineInput
+            value={order.cost_price != null ? String(order.cost_price) : ''}
+            onSave={v => onSave(order.id, 'cost_price', v ? parseFloat(v) : null)}
+            placeholder="Inkoop €" prefix="€" width={78} type="number"
+          />
+        </div>
+        {profit != null && (
+          <div style={{ fontSize: 12, fontWeight: 700, color: profit >= 0 ? '#4ade80' : '#f87171', marginBottom: 6 }}>
+            Winst {profit >= 0 ? '+' : ''}{fmtP(Math.abs(profit))}
+          </div>
+        )}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3, marginTop: 2 }}>
           <InlineInput
             value={order.sku_ref || ''}
             onSave={v => onSave(order.id, 'sku_ref', v || null)}
-            placeholder="SKU" width={84}
+            placeholder="SKU" width={86}
           />
           {suggested && (
             <button
               onClick={() => onSave(order.id, 'sku_ref', suggested)}
-              style={{ fontSize: 10, color: 'var(--accent,#6366f1)', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', textAlign: 'left', lineHeight: 1.2, fontFamily: 'inherit' }}
+              style={{ fontSize: 10, color: '#818cf8', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', textAlign: 'right', fontFamily: 'inherit' }}
               title={`Stel in als SKU: ${suggested}`}
             >
               ✦ {suggested}
             </button>
           )}
         </div>
-      </div>
-
-      {/* Acties */}
-      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
-        {order.registered_in_vault ? (
-          <span style={{ fontSize: 11, color: 'var(--green)', fontWeight: 600, whiteSpace: 'nowrap' }}>✓ Geregistreerd</span>
-        ) : (
-          <button className="btn btn-primary btn-sm" onClick={onRegister} style={{ fontSize: 11 }}>+ Registreer</button>
-        )}
-        <button className="btn btn-ghost btn-sm btn-icon" onClick={onDismiss} title="Verwijder uit lijst" style={{ fontSize: 14 }}>×</button>
       </div>
     </div>
   )
@@ -615,7 +704,19 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
             Nog geen orders gesynchroniseerd via de Chrome extensie.
           </div>
         ) : (
-          <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
+          <div style={{
+            background: '#0f172a',
+            border: '1px solid rgba(255,255,255,0.08)',
+            borderRadius: 12,
+            overflow: 'hidden',
+            '--bg': '#1e293b',
+            '--bg-2': '#0f172a',
+            '--bg-3': '#1e293b',
+            '--border': 'rgba(255,255,255,0.1)',
+            '--text': '#f1f5f9',
+            '--text-2': '#cbd5e1',
+            '--text-3': '#94a3b8',
+          }}>
             {vtOrders.filter(o => !/geannuleerd|cancel/i.test(o.status || '')).map((order, i, arr) => (
               <VintedOrderRow
                 key={order.id}
@@ -626,6 +727,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
                 onDismiss={() => dismissVintedOrder(order.id)}
                 onPhotoClick={setPhotoPopup}
                 onDetail={() => setOrderDetail(order)}
+                vintedCookie={vintedCookie}
               />
             ))}
           </div>
