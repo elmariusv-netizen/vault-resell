@@ -445,20 +445,19 @@ function SkuPickerModal({ batches, onPick, onClose }) {
 }
 
 // ── Order rij (Vinteer-stijl) ──────────────────────────────────────────────
-function VintedOrderRow({ order, isLast, onSave, onRegister, onDismiss, onPhotoClick, onDetail, vintedCookie, batches }) {
-  const [downloading,   setDownloading]   = useState(false)
-  const [downloaded,    setDownloaded]    = useState(false)
+function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, batches }) {
   const [skuPickerOpen, setSkuPickerOpen] = useState(false)
+  const [hoverPos,      setHoverPos]      = useState(null)
 
-  const badge     = getStatusBadge(order.status, order.label_available)
-  const flag      = COUNTRY_FLAGS[order.country] || ''
-  const date      = order.sale_date || order.synced_at?.split('T')[0] || ''
+  const badge    = getStatusBadge(order.status, order.label_available)
+  const flag     = COUNTRY_FLAGS[order.country] || ''
+  const date     = order.sale_date || order.synced_at?.split('T')[0] || ''
+  const price    = parseFloat(order.price || 0)
+  const profit   = order.cost_price != null ? price - parseFloat(order.cost_price) : null
+  const fmtP     = v => `€${Math.abs(Number(v)).toFixed(2).replace('.', ',')}`
+  const buyer    = order.buyer_name || order.buyer || ''
+  const itemUrl  = order.item_url || (order.transaction_id ? `https://www.vinted.be/items/${order.transaction_id}` : null)
   const suggested = !order.sku_ref ? suggestSku(order.title, order.description) : ''
-  const price     = parseFloat(order.price || 0)
-  const profit    = order.cost_price != null ? price - parseFloat(order.cost_price) : null
-  const fmtP      = v => Number(v) > 0 ? `€${Number(v).toFixed(2).replace('.', ',')}` : '—'
-  const buyer     = order.buyer_name || order.buyer || ''
-  const itemUrl   = order.item_url || (order.transaction_id ? `https://www.vinted.be/items/${order.transaction_id}` : null)
 
   const photoUrls = (() => { try { return JSON.parse(order.photo_urls || '[]') } catch { return [] } })()
   const allPhotos = photoUrls.length ? photoUrls : (order.photo_url ? [order.photo_url] : [])
@@ -474,176 +473,133 @@ function VintedOrderRow({ order, isLast, onSave, onRegister, onDismiss, onPhotoC
     return [brand, size, color].filter(Boolean).join(' · ')
   })()
 
-  const downloadLabel = async (e) => {
-    e.stopPropagation()
-    if (!vintedCookie) { alert('Geen Vinted cookie — koppel je account in Instellingen.'); return }
-    setDownloading(true)
-    try {
-      const params = order.label_url
-        ? new URLSearchParams({ label_url: order.label_url })
-        : new URLSearchParams({ transaction_id: order.transaction_id })
-      const res = await fetch(`/api/label?${params}`, { headers: { 'x-vinted-cookie': vintedCookie } })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const blob = await res.blob()
-      const url  = URL.createObjectURL(blob)
-      const a    = document.createElement('a')
-      a.href = url; a.download = `label-${order.transaction_id || order.id}.pdf`; a.click()
-      URL.revokeObjectURL(url)
-      setDownloaded(true)
-    } catch (err) {
-      alert(`Label download mislukt: ${err.message}`)
-    } finally {
-      setDownloading(false)
-    }
-  }
-
-  const aBtn = (extra) => ({
-    fontSize: 11, padding: '4px 10px', borderRadius: 6, cursor: 'pointer', fontWeight: 600, border: 'none', ...extra,
-  })
-
   return (
     <>
       <div style={{
-        padding: '16px',
+        padding: '14px 16px',
         borderBottom: isLast ? 'none' : '1px solid rgba(255,255,255,0.06)',
         display: 'grid',
-        gridTemplateColumns: '72px 1fr auto',
+        gridTemplateColumns: '80px 1fr auto',
         gap: 14,
         alignItems: 'start',
       }}>
 
-        {/* Foto */}
-        <div
-          onClick={() => allPhotos.length && onPhotoClick(allPhotos)}
-          style={{ cursor: allPhotos.length ? 'zoom-in' : 'default' }}
-        >
+        {/* Foto met hover preview */}
+        <div>
           {allPhotos.length ? (
-            <div style={{ position: 'relative' }}>
-              <img
-                src={allPhotos[0]} alt=""
-                style={{ width: 72, height: 72, borderRadius: 8, objectFit: 'cover', display: 'block' }}
-              />
-              {allPhotos.length > 1 && (
-                <span style={{ position: 'absolute', bottom: 3, right: 3, background: 'rgba(0,0,0,0.7)', color: '#fff', fontSize: 9, borderRadius: 4, padding: '1px 5px', lineHeight: 1.5 }}>
-                  {allPhotos.length}
-                </span>
-              )}
-            </div>
+            <img
+              src={allPhotos[0]} alt=""
+              style={{ width: 80, height: 80, borderRadius: 8, objectFit: 'cover', display: 'block', cursor: 'zoom-in' }}
+              onMouseEnter={e => {
+                const r = e.currentTarget.getBoundingClientRect()
+                setHoverPos({ x: r.right + 12, y: Math.max(8, r.top - 30) })
+              }}
+              onMouseLeave={() => setHoverPos(null)}
+              onClick={() => onPhotoClick(allPhotos)}
+            />
           ) : (
-            <div style={{ width: 72, height: 72, borderRadius: 8, background: '#1e293b', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28 }}>📦</div>
+            <div style={{ width: 80, height: 80, borderRadius: 8, background: '#1e293b', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 30 }}>📦</div>
           )}
         </div>
 
-        {/* Midden: info + acties */}
+        {/* Info kolom */}
         <div style={{ minWidth: 0 }}>
           {itemUrl ? (
             <a
               href={itemUrl} target="_blank" rel="noreferrer"
-              style={{ fontWeight: 700, fontSize: 14, color: '#4ade80', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: meta ? 3 : 6, lineHeight: 1.3, textDecoration: 'none' }}
+              style={{ fontWeight: 700, fontSize: 14, color: '#4ade80', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 3, lineHeight: 1.3, textDecoration: 'none' }}
             >
               {order.title}
             </a>
           ) : (
-            <div style={{ fontWeight: 700, fontSize: 14, color: '#4ade80', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: meta ? 3 : 6, lineHeight: 1.3 }}>
+            <div style={{ fontWeight: 700, fontSize: 14, color: '#4ade80', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 3, lineHeight: 1.3 }}>
               {order.title}
             </div>
           )}
           {meta && (
-            <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 5, textTransform: 'capitalize' }}>{meta}</div>
+            <div style={{ fontSize: 11, color: '#64748b', marginBottom: 4, textTransform: 'capitalize' }}>{meta}</div>
           )}
           <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap', marginBottom: 3 }}>
-            {buyer && <span style={{ fontSize: 12, color: '#cbd5e1' }}>@{buyer}</span>}
+            {buyer && <span style={{ fontSize: 12, color: '#94a3b8' }}>@{buyer}</span>}
             {order.country && (
-              <span style={{ fontSize: 10, background: '#1e293b', color: '#94a3b8', padding: '2px 7px', borderRadius: 5, fontWeight: 600, letterSpacing: '0.3px' }}>
+              <span style={{ fontSize: 10, background: '#1e293b', color: '#64748b', padding: '1px 6px', borderRadius: 4, fontWeight: 600 }}>
                 {flag} {order.country}
               </span>
             )}
           </div>
-          {date && <div style={{ fontSize: 11, color: '#64748b', marginBottom: 10 }}>{date}</div>}
-
-          {/* Actie knoppen */}
-          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
-            {(order.label_url || order.transaction_id) && (
-              <button
-                onClick={downloadLabel}
-                disabled={downloading}
-                style={aBtn({ background: downloaded ? 'rgba(74,222,128,0.1)' : 'rgba(251,191,36,0.12)', color: downloaded ? '#4ade80' : '#fbbf24', outline: '1px solid ' + (downloaded ? 'rgba(74,222,128,0.3)' : 'rgba(251,191,36,0.3)') })}
-              >
-                {downloading ? '⏳' : downloaded ? '✓ Label' : '↓ Label'}
-              </button>
-            )}
-            {order.registered_in_vault ? (
-              <span style={{ fontSize: 11, color: '#4ade80', fontWeight: 600 }}>✓ Geregistreerd</span>
-            ) : (
-              <button onClick={onRegister} style={aBtn({ background: 'rgba(74,222,128,0.1)', color: '#4ade80', outline: '1px solid rgba(74,222,128,0.25)' })}>
-                + Registreer
-              </button>
-            )}
-            <button
-              onClick={() => setSkuPickerOpen(true)}
-              style={aBtn({ background: 'rgba(129,140,248,0.1)', color: '#818cf8', outline: '1px solid rgba(129,140,248,0.25)' })}
-            >
-              Koppel SKU
-            </button>
-            <button
-              onClick={onDetail}
-              title="Details"
-              style={aBtn({ background: 'rgba(148,163,184,0.08)', color: '#64748b', outline: '1px solid rgba(148,163,184,0.15)', padding: '4px 7px' })}
-            >
-              ⓘ
-            </button>
-            <button
-              onClick={onDismiss}
-              title="Verwijder uit lijst"
-              style={{ fontSize: 14, width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(248,113,113,0.08)', color: '#f87171', border: '1px solid rgba(248,113,113,0.2)', borderRadius: 6, cursor: 'pointer', fontWeight: 700 }}
-            >
-              ×
-            </button>
-          </div>
+          {date && <div style={{ fontSize: 11, color: '#475569' }}>{date}</div>}
         </div>
 
-        {/* Rechter kolom: status + prijs + financieel */}
-        <div style={{ textAlign: 'right', minWidth: 112 }}>
-          {badge && (
-            <div style={{ marginBottom: 8 }}>
-              <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 5, background: badge.bg, color: badge.color, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+        {/* Rechter kolom */}
+        <div style={{ textAlign: 'right', minWidth: 120 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6, marginBottom: 6 }}>
+            {badge && (
+              <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 4, background: badge.bg, color: badge.color, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                 {badge.label}
               </span>
-            </div>
-          )}
-          <div style={{ fontSize: 20, fontWeight: 800, color: '#f1f5f9', marginBottom: 8, lineHeight: 1 }}>
+            )}
+            <button
+              onClick={onDismiss}
+              title="Verwijder"
+              style={{ fontSize: 16, lineHeight: 1, background: 'none', border: 'none', color: '#475569', cursor: 'pointer', padding: '0 2px', fontWeight: 700, fontFamily: 'inherit' }}
+              onMouseEnter={e => e.currentTarget.style.color = '#f87171'}
+              onMouseLeave={e => e.currentTarget.style.color = '#475569'}
+            >×</button>
+          </div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: '#f1f5f9', marginBottom: 6, lineHeight: 1 }}>
             €{price.toFixed(2).replace('.', ',')}
           </div>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 3 }}>
             <InlineInput
               value={order.cost_price != null ? String(order.cost_price) : ''}
               onSave={v => onSave(order.id, 'cost_price', v ? parseFloat(v) : null)}
-              placeholder="Inkoop €" prefix="€" width={78} type="number"
+              placeholder="Inkoop €" prefix="€" width={80} type="number"
             />
           </div>
           {profit != null && (
-            <div style={{ fontSize: 12, fontWeight: 700, color: profit >= 0 ? '#4ade80' : '#f87171', marginBottom: 6 }}>
-              Winst {profit >= 0 ? '+' : ''}{fmtP(Math.abs(profit))}
+            <div style={{ fontSize: 11, fontWeight: 700, color: profit >= 0 ? '#4ade80' : '#f87171', marginBottom: 5 }}>
+              {profit >= 0 ? '+' : '-'}{fmtP(profit)}
             </div>
           )}
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3, marginTop: 2 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
             <InlineInput
               value={order.sku_ref || ''}
               onSave={v => onSave(order.id, 'sku_ref', v || null)}
               placeholder="SKU" width={86}
             />
             {suggested && (
-              <button
+              <span
                 onClick={() => onSave(order.id, 'sku_ref', suggested)}
-                style={{ fontSize: 10, color: '#818cf8', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', textAlign: 'right', fontFamily: 'inherit' }}
-                title={`Stel in als SKU: ${suggested}`}
-              >
-                ✦ {suggested}
-              </button>
+                style={{ fontSize: 10, color: '#818cf8', cursor: 'pointer', userSelect: 'none' }}
+                title={`Stel in: ${suggested}`}
+              >✦ {suggested}</span>
             )}
+            <span
+              onClick={() => setSkuPickerOpen(true)}
+              style={{ fontSize: 10, color: '#475569', cursor: 'pointer', textDecoration: 'underline', userSelect: 'none' }}
+            >koppel SKU</span>
           </div>
         </div>
       </div>
+
+      {hoverPos && allPhotos.length > 0 && (
+        <img
+          src={allPhotos[0]} alt=""
+          style={{
+            position: 'fixed',
+            left: hoverPos.x,
+            top: hoverPos.y,
+            width: 280,
+            height: 280,
+            borderRadius: 12,
+            objectFit: 'cover',
+            zIndex: 9999,
+            pointerEvents: 'none',
+            boxShadow: '0 24px 60px rgba(0,0,0,0.7)',
+            border: '2px solid rgba(255,255,255,0.1)',
+          }}
+        />
+      )}
 
       {skuPickerOpen && (
         <SkuPickerModal
@@ -788,6 +744,26 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
         </div>
       </div>
 
+      <div className="filters">
+        <input
+          className="search-input"
+          placeholder="Zoek SKU, koper, product…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <select className="filter-select" value={filterPlatform} onChange={(e) => setFilterPlatform(e.target.value)}>
+          <option value="all">Alle platforms</option>
+          {platforms.map((p) => <option key={p} value={p}>{p}</option>)}
+        </select>
+        <select className="filter-select" value={filterMonth} onChange={(e) => setFilterMonth(e.target.value)}>
+          <option value="all">Alle maanden</option>
+          {months.map((m) => <option key={m} value={m}>{m}</option>)}
+        </select>
+        <span style={{ fontSize: 12, color: 'var(--text-3)', padding: '0 4px' }}>
+          {filtered.length} verkopen
+        </span>
+      </div>
+
       {/* ── Vinted Orders ── */}
       <div style={{ marginBottom: 24 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
@@ -830,36 +806,13 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
                 order={order}
                 isLast={i === arr.length - 1}
                 onSave={saveVtField}
-                onRegister={() => openSaleModal(order)}
                 onDismiss={() => dismissVintedOrder(order.id)}
                 onPhotoClick={setPhotoPopup}
-                onDetail={() => setOrderDetail(order)}
-                vintedCookie={vintedCookie}
                 batches={batches}
               />
             ))}
           </div>
         )}
-      </div>
-
-      <div className="filters">
-        <input
-          className="search-input"
-          placeholder="Zoek SKU, koper, product…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        <select className="filter-select" value={filterPlatform} onChange={(e) => setFilterPlatform(e.target.value)}>
-          <option value="all">Alle platforms</option>
-          {platforms.map((p) => <option key={p} value={p}>{p}</option>)}
-        </select>
-        <select className="filter-select" value={filterMonth} onChange={(e) => setFilterMonth(e.target.value)}>
-          <option value="all">Alle maanden</option>
-          {months.map((m) => <option key={m} value={m}>{m}</option>)}
-        </select>
-        <span style={{ fontSize: 12, color: 'var(--text-3)', padding: '0 4px' }}>
-          {filtered.length} verkopen
-        </span>
       </div>
 
       {filtered.length > 0 && (
