@@ -221,7 +221,7 @@ export default function App() {
           {page === 'home'      && <Home {...props} theme={theme} />}
           {page === 'inventory' && <Inventory {...props} />}
           {page === 'new'       && <NewSKU {...props} />}
-          {page === 'verkopen'  && <Verkopen data={data} onDeleteSale={handleDeleteSale} onUpdateSale={handleUpdateSale} updateData={updateData} vintedCookie={vintedCookie} />}
+          {page === 'verkopen'  && <Verkopen data={data} onDeleteSale={handleDeleteSale} onUpdateSale={handleUpdateSale} updateData={updateData} vintedCookie={vintedCookie} activeUserId={activeUserId} />}
           {page === 'stats'     && <Stats data={data} theme={theme} />}
           {page === 'settings'  && <Settings {...props} onExport={handleExport} activeUserId={activeUserId} vintedCookie={vintedCookie} onVintedCookieChange={setVintedCookie} />}
           {page === 'labels'    && <Labels data={data} vintedCookie={vintedCookie} />}

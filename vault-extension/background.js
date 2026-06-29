@@ -83,7 +83,7 @@ async function syncToSupabase(order) {
     description:     order.description  || null,
     shipping_method: order.shipping_method || null,
     tracking_code:   order.tracking_code   || null,
-    buyer_name:      order.buyer_name      || null,
+    buyer_name:      order.buyerName || order.buyer_name || null,
     sale_date:       order.date || null,
     label_available: !!(order.transactionUserStatus === 'needs_action' || /verzendlabel/i.test(order.status || '')),
     conversation_id: order.conversationId  || null,
@@ -334,6 +334,59 @@ async function syncOrder(order) {
     return { success: false, error: err.message };
   }
 }
+
+// ── Auto-sync via vault-sync-requested flag in Supabase ───────────────────
+async function checkAndSync() {
+  try {
+    const checkRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/user_settings?vault_sync_requested=eq.true&select=user_id&limit=1`,
+      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    )
+    if (!checkRes.ok) return
+    const rows = await checkRes.json()
+    if (!rows?.length) return
+
+    const userId = rows[0].user_id
+    console.log('[Vault] vault-sync-requested gevonden, user:', userId)
+
+    // Stuur FORCE_SYNC naar elke open Vinted tab
+    const tabs = await new Promise(resolve =>
+      chrome.tabs.query({ url: '*://*.vinted.be/*' }, resolve)
+    )
+
+    if (tabs.length) {
+      await Promise.all(tabs.map(tab =>
+        new Promise(resolve =>
+          chrome.tabs.sendMessage(tab.id, { type: 'FORCE_SYNC' }, r => {
+            if (chrome.runtime.lastError) resolve(null)
+            else { console.log('[Vault] FORCE_SYNC result tab', tab.id, ':', r); resolve(r) }
+          })
+        )
+      ))
+    } else {
+      console.log('[Vault] Geen Vinted tab open — sync overgeslagen')
+    }
+
+    // Reset vlag
+    await fetch(
+      `${SUPABASE_URL}/rest/v1/user_settings?user_id=eq.${encodeURIComponent(userId)}`,
+      {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': SUPABASE_KEY,
+          'Authorization': `Bearer ${SUPABASE_KEY}`,
+        },
+        body: JSON.stringify({ vault_sync_requested: false }),
+      }
+    )
+    console.log('[Vault] vault-sync-requested reset naar false')
+  } catch (e) {
+    console.warn('[Vault] checkAndSync error:', e.message)
+  }
+}
+
+setInterval(checkAndSync, 30000)
 
 async function updateDailyStats(order) {
   const today = new Date().toISOString().slice(0, 10);

@@ -39,6 +39,9 @@ CREATE POLICY IF NOT EXISTS "anon kan upserten"
 CREATE POLICY IF NOT EXISTS "anon kan updaten"
   ON vinted_orders FOR UPDATE TO anon USING (true) WITH CHECK (true);
 
+-- Auto-sync vlag (webapp → extensie)
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS vault_sync_requested BOOLEAN DEFAULT FALSE;
+
 -- Storage bucket voor handmatig geüploade foto's en video's
 INSERT INTO storage.buckets (id, name, public)
   VALUES ('order-photos', 'order-photos', true)

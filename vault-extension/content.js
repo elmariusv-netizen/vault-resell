@@ -340,34 +340,43 @@
     return found;
   }
 
-  // Haal foto op via conversation detail als o.photo leeg is
-  async function fetchPhotoFromConversation(convId) {
+  // Haal foto + buyer info op via conversation detail
+  async function fetchConvDetail(convId) {
     try {
       const d = await vGet(`/api/v2/conversations/${convId}`);
       const conv = d.conversation || d;
+      const opp  = conv.opposite_user || {};
       const item = conv.item || conv.context_item || {};
       const url  = item.photos?.[0]?.full_size_url || item.photos?.[0]?.url
                 || item.photo?.full_size_url || item.photo?.url
                 || item.thumbnail_url || null;
       if (url) console.log(`[Vault] foto via conv ${convId}:`, url.slice(0, 60));
-      return url || null;
+      return {
+        photo:     url || null,
+        buyer:     opp.login || '',
+        buyerName: opp.real_name || opp.display_name || '',
+        country:   opp.country_iso_code || opp.country_code || '',
+      };
     } catch (e) {
-      console.warn(`[Vault] conv foto mislukt ${convId}:`, e.message);
-      return null;
+      console.warn(`[Vault] conv detail mislukt ${convId}:`, e.message);
+      return { photo: null, buyer: '', buyerName: '', country: '' };
     }
   }
 
-  // Enrich sold orders: foto ophalen via conversationId voor orders zonder foto (max 20)
+  // Enrich sold orders: foto + buyer info ophalen via conversationId (max 20)
   async function enrichSold(orders) {
     const noPhoto = orders.filter(o => !o.photo && (o.conversationId || o.convId)).slice(0, 20);
     if (!noPhoto.length) return;
 
-    console.log(`[Vault] enrichSold: foto ophalen voor ${noPhoto.length} orders via conversationId`);
+    console.log(`[Vault] enrichSold: detail ophalen voor ${noPhoto.length} orders via conversationId`);
     let changed = false;
     await Promise.all(noPhoto.map(async o => {
       const id = o.conversationId || o.convId;
-      const photo = await fetchPhotoFromConversation(id);
-      if (photo) { o.photo = photo; changed = true; }
+      const { photo, buyer, buyerName, country } = await fetchConvDetail(id);
+      if (photo)     { o.photo     = photo;     changed = true; }
+      if (buyer)     { o.buyer     = buyer;     changed = true; }
+      if (buyerName) { o.buyerName = buyerName; changed = true; }
+      if (country)   { o.country   = country;   changed = true; }
     }));
     if (changed) await cSet('v_sold_v2', orders);
   }
@@ -1031,6 +1040,24 @@
     b.addEventListener('click', () => toggleOverlay());
     document.body.appendChild(b);
   }
+
+  // ── Remote sync trigger (vanuit background.js) ────────────────────────────
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg.type !== 'FORCE_SYNC') return
+    ;(async () => {
+      try {
+        const orders = await getSold()
+        const active = orders.filter(o => !isCancelled(o))
+        await enrichSold(active)
+        await autoSync(active)
+        sendResponse({ success: true, count: active.length })
+      } catch (e) {
+        console.warn('[Vault] FORCE_SYNC error:', e.message)
+        sendResponse({ success: false, error: e.message })
+      }
+    })()
+    return true
+  })
 
   // ── Bootstrap ──────────────────────────────────────────────────────────────
   let booted = false;

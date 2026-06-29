@@ -921,7 +921,7 @@ function AddOrderModal({ onClose, onSave }) {
   )
 }
 
-export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData, vintedCookie }) {
+export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData, vintedCookie, activeUserId }) {
   const { batches, sales, suppliers } = data
 
   const [search, setSearch] = useState('')
@@ -938,7 +938,8 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
   const [photoPopup, setPhotoPopup]   = useState(null)   // string[] | null
   const [orderDetail, setOrderDetail] = useState(null)   // row | null
   const [addOrderOpen, setAddOrderOpen] = useState(false)
-  const [syncToast, setSyncToast]       = useState(false)
+  const [syncing,   setSyncing]   = useState(false)
+  const [syncToast, setSyncToast] = useState(null)  // null | string
 
   useEffect(() => {
     let cancelled = false
@@ -1015,10 +1016,44 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
     setVtOrders(prev => [newRow, ...prev])
   }
 
-  const showSyncToast = () => {
+  const handleSync = async () => {
     window.open('https://www.vinted.be/my_orders', '_blank')
-    setSyncToast(true)
-    setTimeout(() => setSyncToast(false), 4000)
+    if (activeUserId) {
+      try {
+        await supabase.from('user_settings')
+          .upsert({ user_id: activeUserId, vault_sync_requested: true }, { onConflict: 'user_id' })
+      } catch (e) {
+        console.warn('[Vault] sync flag mislukt:', e.message)
+      }
+    }
+    setSyncing(true)
+    const startCount = vtOrders.length
+    const deadline   = Date.now() + 30000
+    const pollId = setInterval(async () => {
+      if (Date.now() > deadline) {
+        clearInterval(pollId)
+        setSyncing(false)
+        setSyncToast('Geen nieuwe orders gevonden — selecteer orders in de extensie')
+        setTimeout(() => setSyncToast(null), 4000)
+        return
+      }
+      const fresh = await fetchAllVintedOrders()
+      if (fresh.length > startCount) {
+        clearInterval(pollId)
+        const SKU_RE = /\b([A-Z]{2,4}\d{3,6})\b/
+        setVtOrders(fresh.map(row => {
+          if (!row.sku_ref && row.description) {
+            const m = row.description.match(SKU_RE)
+            if (m) return { ...row, sku_ref: m[1] }
+          }
+          return row
+        }))
+        setSyncing(false)
+        const added = fresh.length - startCount
+        setSyncToast(`✓ ${added} nieuwe order${added !== 1 ? 's' : ''} gesynchroniseerd`)
+        setTimeout(() => setSyncToast(null), 4000)
+      }
+    }, 2000)
   }
 
   const platforms = useMemo(() => {
@@ -1116,8 +1151,9 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
             <button
               className="btn btn-secondary"
               style={{ fontSize: 12, padding: '4px 12px' }}
-              onClick={showSyncToast}
-            >🔄 Synchroniseer Vinted</button>
+              onClick={handleSync}
+              disabled={syncing}
+            >{syncing ? '⏳ Synchroniseren…' : '🔄 Synchroniseer Vinted'}</button>
             <button
               className="btn btn-primary"
               style={{ fontSize: 12, padding: '4px 12px' }}
@@ -1363,9 +1399,9 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
           background: '#1e293b', color: '#f1f5f9', padding: '10px 20px', borderRadius: 10,
           fontSize: 13, fontWeight: 500, zIndex: 9999,
           boxShadow: '0 8px 32px rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)',
-          maxWidth: 400, textAlign: 'center',
+          maxWidth: 420, textAlign: 'center',
         }}>
-          🔄 Vinted geopend — selecteer orders in de extensie om te synchroniseren
+          {syncToast}
         </div>
       )}
 
