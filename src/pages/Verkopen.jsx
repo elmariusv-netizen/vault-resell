@@ -971,6 +971,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
   }
 
   const showSyncToast = () => {
+    window.open('https://www.vinted.be/my_orders', '_blank')
     setSyncToast(true)
     setTimeout(() => setSyncToast(false), 4000)
   }
@@ -1319,7 +1320,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
           boxShadow: '0 8px 32px rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)',
           maxWidth: 400, textAlign: 'center',
         }}>
-          🔄 Open de Chrome extensie op vinted.be/my_orders om te synchroniseren
+          🔄 Vinted geopend — selecteer orders in de extensie om te synchroniseren
         </div>
       )}
 
