@@ -789,19 +789,47 @@ function AddOrderModal({ onClose, onSave }) {
   const [form, setForm] = useState({
     title: '', price: '', buyerName: '', country: '',
     date: new Date().toISOString().split('T')[0],
-    platform: 'Vinted', photoUrl: '', sku: '',
+    platform: 'Vinted', sku: '',
   })
+  const [files,     setFiles]     = useState([])
+  const [previews,  setPreviews]  = useState([])
+  const [uploading, setUploading] = useState(false)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  const handleFiles = (e) => {
+    const picked = Array.from(e.target.files)
+    setFiles(picked)
+    setPreviews(picked.map(f => ({
+      url:     URL.createObjectURL(f),
+      isVideo: f.type.startsWith('video/'),
+      name:    f.name,
+    })))
+  }
 
   const handleSave = async () => {
     if (!form.title.trim()) return
+    setUploading(true)
+    const photoUrls = []
+    for (const file of files) {
+      const ext  = file.name.split('.').pop()
+      const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+      const { error } = await supabase.storage.from('order-photos').upload(path, file)
+      if (!error) {
+        const { data } = supabase.storage.from('order-photos').getPublicUrl(path)
+        photoUrls.push(data.publicUrl)
+      } else {
+        photoUrls.push(URL.createObjectURL(file))
+      }
+    }
+    setUploading(false)
     await onSave({
       title:      form.title.trim(),
       price:      parseFloat(form.price) || 0,
       buyer_name: form.buyerName.trim() || null,
       country:    form.country.trim().toUpperCase().slice(0, 2) || '',
       sale_date:  form.date || null,
-      photo_url:  form.photoUrl.trim() || null,
+      photo_url:  photoUrls[0] || null,
+      photo_urls: photoUrls.length ? JSON.stringify(photoUrls) : null,
       sku_ref:    form.sku.trim().toUpperCase() || null,
       status:     `Handmatig · ${form.platform}`,
       synced_at:  new Date().toISOString(),
@@ -859,8 +887,23 @@ function AddOrderModal({ onClose, onSave }) {
             </select>
           </div>
           <div style={{ marginBottom: 14 }}>
-            {lbl('Foto URL')}
-            <input type="url" value={form.photoUrl} onChange={e => set('photoUrl', e.target.value)} placeholder="https://…" style={inputStyle} />
+            {lbl("Foto's / Video's")}
+            <input
+              type="file"
+              accept="image/*,video/*"
+              multiple
+              onChange={handleFiles}
+              style={{ ...inputStyle, padding: '5px 10px', cursor: 'pointer' }}
+            />
+            {previews.length > 0 && (
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+                {previews.map((p, i) => (
+                  p.isVideo
+                    ? <video key={i} src={p.url} muted style={{ width: 64, height: 64, borderRadius: 6, objectFit: 'cover', border: '1px solid var(--border)' }} />
+                    : <img   key={i} src={p.url} alt="" style={{ width: 64, height: 64, borderRadius: 6, objectFit: 'cover', border: '1px solid var(--border)' }} />
+                ))}
+              </div>
+            )}
           </div>
           <div style={{ marginBottom: 4 }}>
             {lbl('SKU')}
@@ -868,8 +911,10 @@ function AddOrderModal({ onClose, onSave }) {
           </div>
         </div>
         <div className="modal-footer" style={{ marginTop: 20 }}>
-          <button className="btn btn-secondary" onClick={onClose}>Annuleer</button>
-          <button className="btn btn-primary" onClick={handleSave} disabled={!form.title.trim()}>Toevoegen</button>
+          <button className="btn btn-secondary" onClick={onClose} disabled={uploading}>Annuleer</button>
+          <button className="btn btn-primary" onClick={handleSave} disabled={!form.title.trim() || uploading}>
+            {uploading ? '⏳ Uploaden…' : 'Toevoegen'}
+          </button>
         </div>
       </div>
     </div>

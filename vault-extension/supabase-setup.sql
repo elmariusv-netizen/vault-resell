@@ -38,3 +38,8 @@ CREATE POLICY IF NOT EXISTS "anon kan upserten"
 
 CREATE POLICY IF NOT EXISTS "anon kan updaten"
   ON vinted_orders FOR UPDATE TO anon USING (true) WITH CHECK (true);
+
+-- Storage bucket voor handmatig geüploade foto's en video's
+INSERT INTO storage.buckets (id, name, public)
+  VALUES ('order-photos', 'order-photos', true)
+  ON CONFLICT DO NOTHING;
