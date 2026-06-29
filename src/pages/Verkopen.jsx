@@ -450,7 +450,7 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave }
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {order.conversation_id && (
               <a
-                href={`https://www.vinted.be/conversations/${order.conversation_id}`}
+                href={`https://www.vinted.be/my/conversations/${order.conversation_id}`}
                 target="_blank" rel="noreferrer"
                 className="btn btn-secondary"
                 style={{ flex: 1, textAlign: 'center', textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
@@ -564,7 +564,7 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
   const profit   = order.cost_price != null ? price - cogs : null
   const buyer    = order.buyer_name || order.buyer || ''
   const itemUrl  = order.conversation_id
-    ? `https://www.vinted.be/conversations/${order.conversation_id}`
+    ? `https://www.vinted.be/my/conversations/${order.conversation_id}`
     : order.item_url || null
   const suggested = !order.sku_ref ? suggestSku(order.title, order.description) : ''
 
