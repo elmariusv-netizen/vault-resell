@@ -306,7 +306,14 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave }
         <div style={{ padding: '20px 24px 24px', overflowY: 'auto', flex: 1 }}>
 
           {/* Titel */}
-          <div style={{ fontSize: 17, fontWeight: 700, lineHeight: 1.35, marginBottom: 16, color: 'var(--text)' }}>{order.title}</div>
+          <div style={{ fontSize: 17, fontWeight: 700, lineHeight: 1.35, marginBottom: 8, color: 'var(--text)' }}>{order.title}</div>
+
+          {/* Status badge */}
+          {(() => { const b = getStatusBadge(order.status, order.label_available); return b ? (
+            <div style={{ marginBottom: 12 }}>
+              <span style={{ fontSize: 11, color: b.color, background: b.bg, padding: '3px 10px', borderRadius: 6, fontWeight: 700, border: `1px solid ${b.color}30` }}>{b.label}</span>
+            </div>
+          ) : null })()}
 
           {/* Datum */}
           {date && (
@@ -661,6 +668,9 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
 
             {/* Rij 4: datum + acties */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              {(() => { const b = getStatusBadge(order.status, order.label_available); return b ? (
+                <span style={{ fontSize: 10, color: b.color, background: b.bg, padding: '2px 7px', borderRadius: 4, fontWeight: 700, border: `1px solid ${b.color}30` }}>{b.label}</span>
+              ) : null })()}
               {date && (
                 <span style={{ fontSize: 11, color: '#475569', display: 'flex', alignItems: 'center', gap: 3 }}>
                   🗓 {date}
@@ -772,6 +782,100 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
   )
 }
 
+// ── Handmatige order toevoegen ─────────────────────────────────────────────
+const PLATFORM_OPTIONS = ['Vinted', 'eBay', 'Vide Dressing', 'Depop', 'Facebook Marketplace', 'Andere']
+
+function AddOrderModal({ onClose, onSave }) {
+  const [form, setForm] = useState({
+    title: '', price: '', buyerName: '', country: '',
+    date: new Date().toISOString().split('T')[0],
+    platform: 'Vinted', photoUrl: '', sku: '',
+  })
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  const handleSave = async () => {
+    if (!form.title.trim()) return
+    await onSave({
+      title:      form.title.trim(),
+      price:      parseFloat(form.price) || 0,
+      buyer_name: form.buyerName.trim() || null,
+      country:    form.country.trim().toUpperCase().slice(0, 2) || '',
+      sale_date:  form.date || null,
+      photo_url:  form.photoUrl.trim() || null,
+      sku_ref:    form.sku.trim().toUpperCase() || null,
+      status:     `Handmatig · ${form.platform}`,
+      synced_at:  new Date().toISOString(),
+    })
+    onClose()
+  }
+
+  useEffect(() => {
+    const close = e => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', close)
+    return () => window.removeEventListener('keydown', close)
+  }, [onClose])
+
+  const lbl = (txt) => (
+    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', letterSpacing: '0.6px', textTransform: 'uppercase', marginBottom: 4 }}>{txt}</div>
+  )
+  const inputStyle = { width: '100%', padding: '7px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontSize: 13, outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit' }
+
+  return (
+    <div className="modal-overlay" onMouseDown={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal" style={{ maxWidth: 460, padding: '24px' }}>
+        <div className="modal-header">
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Order toevoegen</h2>
+          <button className="modal-close" onClick={onClose}>×</button>
+        </div>
+        <div style={{ marginTop: 16 }}>
+          <div style={{ marginBottom: 14 }}>
+            {lbl('Titel')}
+            <input autoFocus value={form.title} onChange={e => set('title', e.target.value)} placeholder="bv. Nike Air Max maat 42" style={inputStyle} />
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
+            <div>
+              {lbl('Verkoopprijs (€)')}
+              <input type="number" value={form.price} onChange={e => set('price', e.target.value)} placeholder="0.00" min={0} step={0.01} style={inputStyle} />
+            </div>
+            <div>
+              {lbl('Datum')}
+              <input type="date" value={form.date} onChange={e => set('date', e.target.value)} style={inputStyle} />
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
+            <div>
+              {lbl('Koper naam')}
+              <input value={form.buyerName} onChange={e => set('buyerName', e.target.value)} placeholder="bv. Jan Janssen" style={inputStyle} />
+            </div>
+            <div>
+              {lbl('Land (ISO)')}
+              <input value={form.country} onChange={e => set('country', e.target.value)} placeholder="bv. NL" maxLength={2} style={inputStyle} />
+            </div>
+          </div>
+          <div style={{ marginBottom: 14 }}>
+            {lbl('Platform')}
+            <select value={form.platform} onChange={e => set('platform', e.target.value)} style={inputStyle}>
+              {PLATFORM_OPTIONS.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </div>
+          <div style={{ marginBottom: 14 }}>
+            {lbl('Foto URL')}
+            <input type="url" value={form.photoUrl} onChange={e => set('photoUrl', e.target.value)} placeholder="https://…" style={inputStyle} />
+          </div>
+          <div style={{ marginBottom: 4 }}>
+            {lbl('SKU')}
+            <input value={form.sku} onChange={e => set('sku', e.target.value.toUpperCase())} placeholder="bv. IND042" style={inputStyle} />
+          </div>
+        </div>
+        <div className="modal-footer" style={{ marginTop: 20 }}>
+          <button className="btn btn-secondary" onClick={onClose}>Annuleer</button>
+          <button className="btn btn-primary" onClick={handleSave} disabled={!form.title.trim()}>Toevoegen</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData, vintedCookie }) {
   const { batches, sales, suppliers } = data
 
@@ -788,6 +892,8 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
   const [saleModalPrefill, setSaleModalPrefill] = useState(null)
   const [photoPopup, setPhotoPopup]   = useState(null)   // string[] | null
   const [orderDetail, setOrderDetail] = useState(null)   // row | null
+  const [addOrderOpen, setAddOrderOpen] = useState(false)
+  const [syncToast, setSyncToast]       = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -844,6 +950,29 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
   const dismissVintedOrder = async (orderId) => {
     await markRegisteredInSupabase(orderId)
     setVtOrders(prev => prev.filter(o => o.id !== orderId))
+  }
+
+  const addVintedOrder = async (row) => {
+    const payload = {
+      title:      row.title,
+      price:      row.price,
+      buyer_name: row.buyer_name || null,
+      country:    row.country   || '',
+      sale_date:  row.sale_date || null,
+      photo_url:  row.photo_url || null,
+      sku_ref:    row.sku_ref   || null,
+      status:     row.status    || 'Handmatig',
+      synced_at:  row.synced_at,
+    }
+    const { data: inserted, error } = await supabase
+      .from('vinted_orders').insert([payload]).select().single()
+    const newRow = error ? { ...payload, id: `manual-${Date.now()}` } : inserted
+    setVtOrders(prev => [newRow, ...prev])
+  }
+
+  const showSyncToast = () => {
+    setSyncToast(true)
+    setTimeout(() => setSyncToast(false), 4000)
   }
 
   const platforms = useMemo(() => {
@@ -930,13 +1059,25 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
 
       {/* ── Vinted Orders ── */}
       <div style={{ marginBottom: 24 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
           <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>Vinted Orders</h2>
           {!vtLoading && (
             <span style={{ fontSize: 12, color: 'var(--text-3)', background: 'var(--bg-2)', padding: '1px 8px', borderRadius: 20 }}>
               {vtOrders.filter(o => !/geannuleerd|cancel/i.test(o.status || '')).length}
             </span>
           )}
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            <button
+              className="btn btn-secondary"
+              style={{ fontSize: 12, padding: '4px 12px' }}
+              onClick={showSyncToast}
+            >🔄 Synchroniseer Vinted</button>
+            <button
+              className="btn btn-primary"
+              style={{ fontSize: 12, padding: '4px 12px' }}
+              onClick={() => setAddOrderOpen(true)}
+            >+ Toevoegen</button>
+          </div>
         </div>
         {vtLoading ? (
           <div style={{ padding: 20, background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
@@ -1164,6 +1305,22 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
             ))}
           </div>
         </>
+      )}
+
+      {addOrderOpen && (
+        <AddOrderModal onClose={() => setAddOrderOpen(false)} onSave={addVintedOrder} />
+      )}
+
+      {syncToast && (
+        <div style={{
+          position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',
+          background: '#1e293b', color: '#f1f5f9', padding: '10px 20px', borderRadius: 10,
+          fontSize: 13, fontWeight: 500, zIndex: 9999,
+          boxShadow: '0 8px 32px rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)',
+          maxWidth: 400, textAlign: 'center',
+        }}>
+          🔄 Open de Chrome extensie op vinted.be/my_orders om te synchroniseren
+        </div>
       )}
 
       {photoPopup && (

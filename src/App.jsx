@@ -30,7 +30,7 @@ function validateData(loaded) {
 }
 
 export default function App() {
-  const [page, setPage] = useState('home')
+  const [page, setPage] = useState(() => localStorage.getItem('vault-page') || 'home')
   const [data, setData] = useState(null)
   const [users, setUsers] = useState([])
   const [activeUserId, setActiveUserIdState] = useState(null)
@@ -39,6 +39,8 @@ export default function App() {
   const [bannerDismissed, setBannerDismissed] = useState(false)
   const [ready, setReady] = useState(false)
   const [vintedCookie, setVintedCookie] = useState(() => localStorage.getItem('vault-vinted-cookie') || null)
+
+  useEffect(() => { localStorage.setItem('vault-page', page) }, [page])
 
   useEffect(() => {
     const savedTheme = localStorage.getItem('vault-theme') || 'light'
