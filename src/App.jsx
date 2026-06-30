@@ -43,7 +43,16 @@ export default function App() {
 
   // ── Supabase Auth ─────────────────────────────────────────────────────────
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (session) {
+        const { error } = await supabase.auth.getUser()
+        if (error) {
+          await supabase.auth.signOut()
+          setSupabaseUser(null)
+          setAuthChecked(true)
+          return
+        }
+      }
       setSupabaseUser(session?.user ?? null)
       setAuthChecked(true)
     })
