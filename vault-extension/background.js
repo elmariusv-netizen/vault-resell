@@ -159,40 +159,30 @@ async function syncToSupabase(order) {
 
   console.log('[Vault] price:', order.price);
   console.log('[Vault] buyer raw:', order.buyer, '| country raw:', order.country, '| conversationId:', order.conversationId);
-  console.log(`[Vault] syncToSupabase → POST ${endpoint}`);
+  console.log(`[Vault] syncToSupabase → txn ${order.transactionId}`);
   console.log(`[Vault] payload txn=${order.transactionId} buyer="${payload.buyer}" country="${payload.country}" conv="${payload.conversation_id}"`);
   console.log(`[Vault] sync photo — order.photo: ${order.photo?.slice(0,60) || '(leeg)'} | order.photo_url: ${order.photo_url?.slice(0,60) || '(leeg)'}`);
   console.log(`[Vault] sync photo_url:`, payload.photo_url?.slice(0, 60) || '(leeg)');
 
-  const fetchHeaders = {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${SUPABASE_KEY}`,
-    'apikey':        SUPABASE_KEY,
-    'Prefer':        'return=minimal,resolution=merge-duplicates',
-  };
-
-  console.log('[Vault] DEBUG fetch url:', endpoint);
-  console.log('[Vault] DEBUG headers:', JSON.stringify(fetchHeaders));
   console.log('[Vault] DEBUG payload owner_id:', payload.owner_id);
   console.log('[Vault] DEBUG payload (volledig):', JSON.stringify(payload));
 
   try {
-    const res = await fetch(endpoint, {
+    const res = await fetch('https://vault-resell.vercel.app/api/sync-order', {
       method: 'POST',
-      headers: fetchHeaders,
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
 
     const body = await res.text();
     if (!res.ok) {
-      console.error(`[Vault] Supabase FOUT ${res.status} ${res.statusText} voor txn ${order.transactionId}`);
-      console.error(`[Vault] Supabase response body:`, body);
+      console.error(`[Vault] sync-order FOUT ${res.status} voor txn ${order.transactionId}:`, body);
       return { success: false, status: res.status, error: body.slice(0, 300) };
     }
-    console.log(`[Vault] Supabase OK ${res.status} — txn ${order.transactionId}`);
+    console.log(`[Vault] sync-order OK ${res.status} — txn ${order.transactionId}`);
     return { success: true, status: res.status };
   } catch (e) {
-    console.error(`[Vault] Supabase fetch exception voor txn ${order.transactionId}:`, e.message);
+    console.error(`[Vault] sync-order exception voor txn ${order.transactionId}:`, e.message);
     return { success: false, error: e.message };
   }
 }
