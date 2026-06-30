@@ -370,6 +370,7 @@
     await Promise.all(noPhoto.map(async o => {
       const id = o.conversationId || o.convId;
       const { photo, buyer, buyerName, country } = await fetchConvDetail(id);
+      console.log(`[Vault] conv detail txn ${o.transactionId}: buyer="${buyer}" country="${country}"`);
       if (photo)     { o.photo     = photo;     changed = true; }
       if (buyer)     { o.buyer     = buyer;     changed = true; }
       if (buyerName) { o.buyerName = buyerName; changed = true; }
