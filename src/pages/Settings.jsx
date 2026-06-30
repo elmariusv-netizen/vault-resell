@@ -1,6 +1,5 @@
 import { useState, useRef } from 'react'
 import { genId, getNextSkuLabel, formatSku, formatDate } from '../utils/skuUtils'
-import { clearData } from '../utils/storage'
 import { supabase } from '../utils/supabase'
 
 const COLORS = ['#00ff88', '#4fc3f7', '#ce93d8', '#ffb74d', '#80cbc4', '#ff7043', '#f06292', '#aed581', '#ffd60a', '#3ecfff']
@@ -355,7 +354,7 @@ function PlatformsSection() {
   )
 }
 
-export default function Settings({ data, updateData, onExport, activeUserId, vintedCookie, onVintedCookieChange, supabaseUser, onSignOut }) {
+export default function Settings({ data, updateData, onExport, onClearData, activeUserId, vintedCookie, onVintedCookieChange, supabaseUser, onSignOut }) {
   const { suppliers, batches, sales } = data
   const documents = data.documents || []
 
@@ -718,7 +717,7 @@ export default function Settings({ data, updateData, onExport, activeUserId, vin
           title="Alles resetten?"
           message="Alle batches, verkopen en leveranciers worden verwijderd en teruggezet naar de begindata. Dit kan niet ongedaan worden gemaakt."
           onCancel={() => setConfirmReset(false)}
-          onConfirm={() => { clearData(activeUserId); window.location.reload() }}
+          onConfirm={() => { onClearData() }}
           danger
         />
       )}

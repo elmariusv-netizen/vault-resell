@@ -9,11 +9,9 @@ import Labels from './pages/Labels'
 import Verkopen from './pages/Verkopen'
 import Aankopen from './pages/Aankopen'
 import Auth from './pages/Auth'
-import Onboarding from './pages/Onboarding'
-import {
-  loadData, saveData, getBackupMeta, saveBackupMeta,
-  getUsers, saveUsers, getActiveUserId, setActiveUserId, hasLegacyData,
-} from './utils/storage'
+import { getBackupMeta, saveBackupMeta } from './utils/storage'
+import { loadCloudData, saveCloudData } from './utils/cloudStorage'
+import { SEED_DATA } from './data/seedData'
 import { getRemainingQty } from './utils/skuUtils'
 import { supabase } from './utils/supabase'
 
@@ -34,7 +32,6 @@ function validateData(loaded) {
 export default function App() {
   const [page, setPage] = useState(() => localStorage.getItem('vault-page') || 'home')
   const [data, setData] = useState(null)
-  const [users, setUsers] = useState([])
   const [activeUserId, setActiveUserIdState] = useState(null)
   const [theme, setTheme] = useState('light')
   const [backupMeta, setBackupMeta] = useState(null)
@@ -58,32 +55,30 @@ export default function App() {
 
   useEffect(() => { localStorage.setItem('vault-page', page) }, [page])
 
+  // Theme + backup meta (no localStorage user system anymore)
   useEffect(() => {
     const savedTheme = localStorage.getItem('vault-theme') || 'light'
     setTheme(savedTheme)
     document.documentElement.setAttribute('data-theme', savedTheme)
-
-    const loadedUsers = getUsers()
-    setUsers(loadedUsers)
-
-    const storedId = getActiveUserId()
-    if (storedId && loadedUsers.find((u) => u.id === storedId)) {
-      setActiveUserIdState(storedId)
-    }
-
     setBackupMeta(getBackupMeta())
-    setReady(true)
   }, [])
 
+  // Load cloud data when authenticated user is known
   useEffect(() => {
-    if (activeUserId) {
-      const raw = loadData(activeUserId)
-      const validated = validateData(raw)
-      if (validated !== raw) saveData(validated, activeUserId)
-      setData(validated)
-    }
-  }, [activeUserId])
+    if (!supabaseUser) return
+    const uid = supabaseUser.id
+    setActiveUserIdState(uid)
+    setReady(false)
+    loadCloudData(uid)
+      .then(raw => {
+        const validated = validateData(raw)
+        setData(validated)
+      })
+      .catch(() => setData(structuredClone(SEED_DATA)))
+      .finally(() => setReady(true))
+  }, [supabaseUser?.id])
 
+  // Vinted cookie from Supabase user_settings
   useEffect(() => {
     if (!activeUserId) return
     supabase
@@ -111,7 +106,7 @@ export default function App() {
   const updateData = useCallback((updates) => {
     setData((prev) => {
       const next = { ...prev, ...updates }
-      saveData(next, activeUserId)
+      saveCloudData(activeUserId, next)
       return next
     })
   }, [activeUserId])
@@ -120,7 +115,7 @@ export default function App() {
     setData((prev) => {
       if (!prev) return prev
       const next = { ...prev, sales: prev.sales.map((s) => s.id === updatedSale.id ? updatedSale : s) }
-      saveData(next, activeUserId)
+      saveCloudData(activeUserId, next)
       return next
     })
   }, [activeUserId])
@@ -140,7 +135,7 @@ export default function App() {
         )
       }
       const next = { ...prev, sales: nextSales, batches: nextBatches }
-      saveData(next, activeUserId)
+      saveCloudData(activeUserId, next)
       return next
     })
   }, [activeUserId])
@@ -160,13 +155,11 @@ export default function App() {
     setBannerDismissed(true)
   }, [data])
 
-  const handleOnboardingComplete = useCallback((user) => {
-    const newUsers = [...users, user]
-    saveUsers(newUsers)
-    setUsers(newUsers)
-    setActiveUserId(user.id)
-    setActiveUserIdState(user.id)
-  }, [users])
+  const handleClearData = useCallback(async () => {
+    const fresh = structuredClone(SEED_DATA)
+    await saveCloudData(activeUserId, fresh)
+    setData(fresh)
+  }, [activeUserId])
 
   const showBackupBanner = useMemo(() => {
     if (!data || !backupMeta || bannerDismissed) return false
@@ -194,7 +187,7 @@ export default function App() {
 
   if (!supabaseUser) return <Auth />
 
-  if (!ready) {
+  if (!ready || !data) {
     return (
       <div className="loading">
         <span style={{ color: 'var(--green)' }}>●</span>
@@ -203,20 +196,7 @@ export default function App() {
     )
   }
 
-  if (!activeUserId || !users.find((u) => u.id === activeUserId)) {
-    return <Onboarding onComplete={handleOnboardingComplete} hasLegacy={hasLegacyData()} />
-  }
-
-  if (!data) {
-    return (
-      <div className="loading">
-        <span style={{ color: 'var(--green)' }}>●</span>
-        Laden…
-      </div>
-    )
-  }
-
-  const activeUser = users.find((u) => u.id === activeUserId)
+  const displayName = supabaseUser.email.split('@')[0]
   const props = { data, updateData, onNavigate: setPage, onDeleteSale: handleDeleteSale }
 
   return (
@@ -226,7 +206,7 @@ export default function App() {
         onNavigate={setPage}
         theme={theme}
         onToggleTheme={toggleTheme}
-        userName={activeUser?.name}
+        userName={displayName}
       />
 
       <div className="content-area">
@@ -251,7 +231,7 @@ export default function App() {
           {page === 'verkopen'  && <Verkopen data={data} onDeleteSale={handleDeleteSale} onUpdateSale={handleUpdateSale} updateData={updateData} vintedCookie={vintedCookie} activeUserId={activeUserId} />}
           {page === 'aankopen'  && <Aankopen />}
           {page === 'stats'     && <Stats data={data} theme={theme} />}
-          {page === 'settings'  && <Settings {...props} onExport={handleExport} activeUserId={activeUserId} vintedCookie={vintedCookie} onVintedCookieChange={setVintedCookie} supabaseUser={supabaseUser} onSignOut={() => supabase.auth.signOut()} />}
+          {page === 'settings'  && <Settings {...props} onExport={handleExport} onClearData={handleClearData} activeUserId={activeUserId} vintedCookie={vintedCookie} onVintedCookieChange={setVintedCookie} supabaseUser={supabaseUser} onSignOut={() => supabase.auth.signOut()} />}
           {page === 'labels'    && <Labels data={data} vintedCookie={vintedCookie} />}
         </main>
       </div>

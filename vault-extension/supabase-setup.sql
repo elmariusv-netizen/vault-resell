@@ -88,4 +88,22 @@ CREATE POLICY "user beheert eigen settings"
 -- ══════════════════════════════════════════════════════════════════
 
 -- UPDATE vinted_orders  SET owner_id = '<JOUW_UUID>' WHERE owner_id IS NULL;
--- UPDATE user_settings  SET owner_id = '<JOUW_UUID>' WHERE owner_id IS NULL;
+-- UPDATE user_settings  SET owner_id = '<JOUW_UUID>', user_id = '<JOUW_UUID>' WHERE owner_id IS NULL;
+
+-- ══════════════════════════════════════════════════════════════════
+-- USER DATA (suppliers, batches, sales, documents, …)
+-- Vervangt localStorage — voer dit uit in Supabase SQL Editor
+-- ══════════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS user_data (
+  owner_id   UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  payload    JSONB NOT NULL DEFAULT '{}',
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE user_data ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "user beheert eigen data"
+  ON user_data FOR ALL TO authenticated
+  USING (auth.uid() = owner_id)
+  WITH CHECK (auth.uid() = owner_id);
