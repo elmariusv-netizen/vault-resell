@@ -346,16 +346,13 @@
       const d = await vGet(`/api/v2/conversations/${convId}`);
       const conv = d.conversation || d;
       const opp  = conv.opposite_user || {};
-      const item = conv.item || conv.context_item || {};
-      const url  = item.photos?.[0]?.full_size_url || item.photos?.[0]?.url
-                || item.photo?.full_size_url || item.photo?.url
-                || item.thumbnail_url || null;
-      if (url) console.log(`[Vault] foto via conv ${convId}:`, url.slice(0, 60));
+      const t    = conv.transaction || {};
+      const photoUrl = t.item_photo?.full_size_url || t.item_photo?.url || null;
       return {
-        photo:     url || null,
+        photo:     photoUrl,
         buyer:     opp.login || '',
-        buyerName: opp.real_name || opp.display_name || '',
-        country:   opp.country_iso_code || opp.country_code || '',
+        buyerName: opp.login || '',
+        country:   opp.country_code || '',
       };
     } catch (e) {
       console.warn(`[Vault] conv detail mislukt ${convId}:`, e.message);
