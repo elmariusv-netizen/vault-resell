@@ -768,10 +768,9 @@
 
       // Info kolom
       const tags = extractMeta(o.title);
-      const flag = FLAGS[o.country] || '';
       const subParts = [
         o.buyer ? `@${o.buyer}` : '',
-        flag && o.country ? `${flag} ${o.country}` : (o.country || ''),
+        o.country || '',
         fmtD(o.date),
       ].filter(Boolean);
 
