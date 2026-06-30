@@ -363,14 +363,15 @@
       const t    = conv.transaction || {};
       const photoUrl = t.item_photo?.full_size_url || t.item_photo?.url || null;
       return {
-        photo:     photoUrl,
-        buyer:     opp.login || '',
-        buyerName: opp.login || '',
-        country:   opp.country_code || '',
+        photo:           photoUrl,
+        buyer:           opp.login || '',
+        buyerName:       opp.login || '',
+        country:         opp.country_code || '',
+        currentUserSide: t.current_user_side || '',
       };
     } catch (e) {
       console.warn(`[Vault] conv detail mislukt ${convId}:`, e.message);
-      return { photo: null, buyer: '', buyerName: '', country: '' };
+      return { photo: null, buyer: '', buyerName: '', country: '', currentUserSide: '' };
     }
   }
 
@@ -383,12 +384,13 @@
     let changed = false;
     await Promise.all(noPhoto.map(async o => {
       const id = o.conversationId || o.convId;
-      const { photo, buyer, buyerName, country } = await fetchConvDetail(id);
-      console.log(`[Vault] conv detail txn ${o.transactionId}: buyer="${buyer}" country="${country}"`);
-      if (photo)     { o.photo     = photo;     changed = true; }
-      if (buyer)     { o.buyer     = buyer;     changed = true; }
-      if (buyerName) { o.buyerName = buyerName; changed = true; }
-      if (country)   { o.country   = country;   changed = true; }
+      const { photo, buyer, buyerName, country, currentUserSide } = await fetchConvDetail(id);
+      console.log(`[Vault] conv detail txn ${o.transactionId}: buyer="${buyer}" country="${country}" side="${currentUserSide}"`);
+      if (photo)           { o.photo           = photo;           changed = true; }
+      if (buyer)           { o.buyer           = buyer;           changed = true; }
+      if (buyerName)       { o.buyerName       = buyerName;       changed = true; }
+      if (country)         { o.country         = country;         changed = true; }
+      if (currentUserSide) { o.currentUserSide = currentUserSide; changed = true; }
     }));
     if (changed) await cSet('v_sold_v2', orders);
   }
@@ -732,7 +734,16 @@
     drawVerkopenFooter(footer, orders);
 
     enrichSold(orders).then(() => {
-      if (activeTab === 'verkopen') drawVerkopen(content, orders);
+      if (activeTab !== 'verkopen') return;
+      const visibleOrders = orders.filter(o => {
+        if (o.currentUserSide === 'buyer') {
+          console.log('[Vault] gefilterd (ik was koper):', o.title);
+          return false;
+        }
+        return true;
+      });
+      drawVerkopen(content, visibleOrders);
+      drawVerkopenFooter(footer, visibleOrders);
     });
   }
 
