@@ -362,7 +362,7 @@
 
   // Enrich sold orders: foto + buyer info ophalen via conversationId (max 20)
   async function enrichSold(orders) {
-    const noPhoto = orders.filter(o => !o.photo && (o.conversationId || o.convId)).slice(0, 20);
+    const noPhoto = orders.filter(o => (!o.photo || !o.buyer) && (o.conversationId || o.convId)).slice(0, 20);
     if (!noPhoto.length) return;
 
     console.log(`[Vault] enrichSold: detail ophalen voor ${noPhoto.length} orders via conversationId`);
