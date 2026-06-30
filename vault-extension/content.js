@@ -1215,9 +1215,6 @@
   })
 
   // ── Auto-koppeling via vault_link query param ─────────────────────────────
-  const SUPABASE_URL_EXT = 'https://dusffpxcheojvjwuqgwo.supabase.co';
-  const SUPABASE_KEY_EXT = 'sb_publishable_yQfFPaNA3hWHVWxqbagLrQ_U1oYPDxc';
-
   async function tryAutoLink() {
     const linkId = new URLSearchParams(window.location.search).get('vault_link');
     if (!linkId) return;

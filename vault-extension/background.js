@@ -48,7 +48,7 @@ async function getVintedHeaders() {
 
 // ── Supabase config ───────────────────────────────────────────────────────
 const SUPABASE_URL = 'https://dusffpxcheojvjwuqgwo.supabase.co';
-const SUPABASE_KEY = 'sb_publishable_yQfFPaNA3hWHVWxqbagLrQ_U1oYPDxc';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR1c2ZmcHhjaGVvanZqd3VxZ3dvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIxMjE0MjIsImV4cCI6MjA5NzY5NzQyMn0.C3pG5eqOBzusDzkCMA-oI4IGPdbaIpfX-fkycGv5ud8';
 
 async function handleVaultLink(linkId, vintedUserId) {
   try {
