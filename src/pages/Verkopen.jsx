@@ -605,7 +605,7 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
 
   return (
     <>
-      <div style={{ borderBottom: isLast ? 'none' : '1px solid rgba(255,255,255,0.06)' }}>
+      <div style={{ borderBottom: isLast ? 'none' : '1px solid rgba(255,255,255,0.06)', background: checked ? 'rgba(248,113,113,0.06)' : 'transparent', transition: 'background 0.15s' }}>
 
         {/* Hoofdinhoud: foto + info */}
         <div style={{ padding: '14px 16px 10px', display: 'flex', gap: 12, alignItems: 'flex-start' }}>
@@ -617,7 +617,7 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
               checked={!!checked}
               onChange={e => onCheck?.(e.target.checked)}
               onClick={e => e.stopPropagation()}
-              style={{ width: 15, height: 15, cursor: 'pointer', accentColor: '#f87171' }}
+              style={{ width: 18, height: 18, cursor: 'pointer', accentColor: '#f87171' }}
             />
           </div>
 

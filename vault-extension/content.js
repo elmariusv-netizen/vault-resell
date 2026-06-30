@@ -239,6 +239,8 @@
         o.item?.photos?.[0]?.url || o.item?.photo?.url ||
         o.photo_url || null;
       if (o === all[0]) console.log(`[Vault] photo txn ${o.transaction_id || o.id}: resolved →`, photo || '(leeg)');
+      const _title = o.item?.title || o.title || ''
+      if (/short de bain/i.test(_title)) console.log('[Vault] DEBUG aankoop-check:', JSON.stringify(o));
       return {
         transactionId:         String(o.transaction_id || o.id || ''),
         itemId:                String(o.item?.id || ''),
