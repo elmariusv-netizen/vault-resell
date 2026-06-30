@@ -164,15 +164,22 @@ async function syncToSupabase(order) {
   console.log(`[Vault] sync photo — order.photo: ${order.photo?.slice(0,60) || '(leeg)'} | order.photo_url: ${order.photo_url?.slice(0,60) || '(leeg)'}`);
   console.log(`[Vault] sync photo_url:`, payload.photo_url?.slice(0, 60) || '(leeg)');
 
+  const fetchHeaders = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${SUPABASE_KEY}`,
+    'apikey':        SUPABASE_KEY,
+    'Prefer':        'return=minimal,resolution=merge-duplicates',
+  };
+
+  console.log('[Vault] DEBUG fetch url:', endpoint);
+  console.log('[Vault] DEBUG headers:', JSON.stringify(fetchHeaders));
+  console.log('[Vault] DEBUG payload owner_id:', payload.owner_id);
+  console.log('[Vault] DEBUG payload (volledig):', JSON.stringify(payload));
+
   try {
     const res = await fetch(endpoint, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${SUPABASE_KEY}`,
-        'apikey':        SUPABASE_KEY,
-        'Prefer':        'return=minimal,resolution=merge-duplicates',
-      },
+      headers: fetchHeaders,
       body: JSON.stringify(payload),
     });
 
