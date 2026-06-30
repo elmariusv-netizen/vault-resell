@@ -16,9 +16,6 @@
   const OV_ID  = 'vault-overlay';
   const BTN_ID = 'vault-fab';
 
-  // ── Vinted account id (hardcoded — wordt ook gebruikt als koppelsleutel) ──
-  const MY_VINTED_USER_ID = '268018729';
-
   // ── Runtime state ──────────────────────────────────────────────────────────
   let overlayOpen = false;
   let activeTab   = 'zoekertjes';
@@ -80,6 +77,19 @@
     });
     if (!r.ok) throw new Error(`${r.status} ${r.statusText} — ${path}`);
     return r.json();
+  }
+
+  // ── Vinted userId (dynamisch, gecached) ───────────────────────────────────
+  let _cachedVintedUserId = null;
+  async function getVintedUserId() {
+    if (_cachedVintedUserId) return _cachedVintedUserId;
+    try {
+      const d = await vGet('/api/v2/users/current');
+      _cachedVintedUserId = d.user?.id ? String(d.user.id) : null;
+    } catch (e) {
+      console.warn('[Vault] getVintedUserId mislukt:', e.message);
+    }
+    return _cachedVintedUserId;
   }
 
   // Parse items from a document — tries __NEXT_DATA__ JSON first, then DOM cards
@@ -239,10 +249,10 @@
       console.log('[Vault] user object:', JSON.stringify(all[0].user));
     }
 
-    const MY_USER_ID = 268018729;
+    const MY_USER_ID = await getVintedUserId();
     const sold = all.filter(o => {
       const sellerId = o.seller_id || o.seller?.id || o.transaction?.seller_id;
-      if (sellerId && String(sellerId) !== String(MY_USER_ID)) {
+      if (MY_USER_ID && sellerId && String(sellerId) !== MY_USER_ID) {
         console.log('[Vault] gefilterd (geen seller):', o.item?.title || o.title || '?', '| seller_id:', sellerId);
         return false;
       }
@@ -423,7 +433,8 @@
 
     let ok = 0, fail = 0;
     for (const o of nieuw) {
-      const res = await sendMsg({ type: 'SYNC_ORDER', order: { ...o, labelUrl: labelUrl(o.transactionId), vintedUserId: MY_VINTED_USER_ID } });
+      const vId = await getVintedUserId();
+      const res = await sendMsg({ type: 'SYNC_ORDER', order: { ...o, labelUrl: labelUrl(o.transactionId), vintedUserId: vId } });
       if (res?.success && !res.duplicate) {
         syncedIds.add(o.transactionId);
         ok++;
@@ -883,7 +894,7 @@
           const o = targets[i];
           syncBtn.textContent = `⏳ ${i + 1}/${targets.length} — sync…`;
           console.log(`[Vault] sync ${i + 1}/${targets.length}: txn ${o.transactionId} — "${o.title}"`);
-          const res = await sendMsg({ type: 'SYNC_TO_SUPABASE', order: { ...o, vintedUserId: MY_VINTED_USER_ID } }, 20000);
+          const res = await sendMsg({ type: 'SYNC_TO_SUPABASE', order: { ...o, vintedUserId: await getVintedUserId() } }, 20000);
           if (res?.success) {
             ok++;
             console.log(`[Vault] sync ✓ txn ${o.transactionId} (HTTP ${res.status})`);
@@ -1005,7 +1016,7 @@
         try { await enrichOrders(targets); } catch (e) { console.warn('[Vault] enrichOrders skip:', e.message); }
 
         for (let i = 0; i < targets.length; i++) {
-          const o = { ...targets[i], orderDirection: 'purchase', vintedUserId: MY_VINTED_USER_ID };
+          const o = { ...targets[i], orderDirection: 'purchase', vintedUserId: await getVintedUserId() };
           syncBtn.textContent = `⏳ ${i + 1}/${targets.length} — sync…`;
           const res = await sendMsg({ type: 'SYNC_TO_SUPABASE', order: o }, 20000);
           res?.success ? ok++ : fail++;
@@ -1203,6 +1214,27 @@
     return true
   })
 
+  // ── Auto-koppeling via vault_link query param ─────────────────────────────
+  const SUPABASE_URL_EXT = 'https://dusffpxcheojvjwuqgwo.supabase.co';
+  const SUPABASE_KEY_EXT = 'sb_publishable_yQfFPaNA3hWHVWxqbagLrQ_U1oYPDxc';
+
+  async function tryAutoLink() {
+    const linkId = new URLSearchParams(window.location.search).get('vault_link');
+    if (!linkId) return;
+    console.log('[Vault] vault_link gevonden:', linkId);
+
+    const userId = await getVintedUserId();
+    if (!userId) { console.warn('[Vault] vault_link: kon Vinted userId niet ophalen'); return; }
+
+    const result = await sendMsg({ type: 'VAULT_LINK', linkId, vintedUserId: userId }, 10000);
+    if (result?.success) {
+      console.log('[Vault] vault_link: koppeling voltooid voor userId', userId);
+      toast('✓ Vinted account gekoppeld aan Vault');
+    } else {
+      console.error('[Vault] vault_link mislukt:', result?.error);
+    }
+  }
+
   // ── Bootstrap ──────────────────────────────────────────────────────────────
   let booted = false;
 
@@ -1212,6 +1244,7 @@
     buildOverlay();
     injectFab();
     console.log('[Vault] booted on', location.href);
+    tryAutoLink();
   }
 
   // SPA navigation watcher

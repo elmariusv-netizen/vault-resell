@@ -276,12 +276,12 @@ function ConfirmModal({ title, message, onCancel, onConfirm, danger }) {
 }
 
 function VintedAccountLink({ supabaseUser }) {
-  const [linked, setLinked]     = useState(null)   // null=loading, string=linked userId, false=not linked
-  const [input, setInput]       = useState('')
-  const [saving, setSaving]     = useState(false)
-  const [error, setError]       = useState('')
-  const [success, setSuccess]   = useState('')
+  const [linked, setLinked]       = useState(null)    // null=loading, true=gekoppeld, false=niet
+  const [waiting, setWaiting]     = useState(false)
+  const [pendingId, setPendingId] = useState(null)
+  const [error, setError]         = useState('')
 
+  // Controleer of er al een koppeling is
   useEffect(() => {
     if (!supabaseUser) return
     supabase
@@ -289,82 +289,102 @@ function VintedAccountLink({ supabaseUser }) {
       .select('vinted_user_id')
       .eq('owner_id', supabaseUser.id)
       .maybeSingle()
-      .then(({ data }) => setLinked(data?.vinted_user_id ?? false))
+      .then(({ data }) => setLinked(!!data?.vinted_user_id))
   }, [supabaseUser?.id])
 
-  const handleLink = async () => {
-    const val = input.trim().replace(/\D/g, '')
-    if (!val) { setError('Voer een geldig Vinted userId in (alleen cijfers).'); return }
-    setSaving(true); setError(''); setSuccess('')
-    const { error: e } = await supabase
-      .from('vinted_account_links')
-      .upsert({ vinted_user_id: val, owner_id: supabaseUser.id }, { onConflict: 'vinted_user_id' })
-    if (e) { setError(e.message); setSaving(false); return }
-    setLinked(val); setInput(''); setSuccess('Gekoppeld — de extensie gebruikt nu jouw account.')
-    setSaving(false)
+  // Poll pending_links elke 2s zolang we wachten
+  useEffect(() => {
+    if (!waiting || !pendingId) return
+    const interval = setInterval(async () => {
+      const { data } = await supabase
+        .from('pending_links')
+        .select('linked')
+        .eq('id', pendingId)
+        .maybeSingle()
+      if (data?.linked) {
+        setLinked(true)
+        setWaiting(false)
+      }
+    }, 2000)
+    return () => clearInterval(interval)
+  }, [waiting, pendingId])
+
+  const handleStartLink = async () => {
+    setError('')
+    const { data, error: e } = await supabase
+      .from('pending_links')
+      .insert({ owner_id: supabaseUser.id })
+      .select('id')
+      .single()
+    if (e) { setError(e.message); return }
+    setPendingId(data.id)
+    setWaiting(true)
+    window.open(`https://www.vinted.be/my_orders?vault_link=${data.id}`, '_blank')
   }
 
   const handleUnlink = async () => {
-    if (!linked) return
     await supabase.from('vinted_account_links').delete().eq('owner_id', supabaseUser.id)
-    setLinked(false); setSuccess('')
+    setLinked(false)
+    setWaiting(false)
+    setPendingId(null)
   }
 
-  const isLinked = !!linked
+  const iconColor = linked ? 'rgba(0,255,136,0.1)' : waiting ? 'rgba(99,102,241,0.1)' : 'var(--bg-2)'
+  const iconBorder = linked ? 'rgba(0,255,136,0.3)' : waiting ? 'rgba(99,102,241,0.3)' : 'var(--border)'
 
   return (
     <div className="glass-card">
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: isLinked ? 0 : 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
         <div style={{
           width: 42, height: 42, borderRadius: 12, flexShrink: 0,
-          background: isLinked ? 'rgba(0,255,136,0.1)' : 'var(--bg-2)',
-          border: `1px solid ${isLinked ? 'rgba(0,255,136,0.3)' : 'var(--border)'}`,
+          background: iconColor, border: `1px solid ${iconBorder}`,
           display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22,
         }}>🔗</div>
+
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 700, fontSize: 15 }}>Vinted account ID</div>
+          <div style={{ fontWeight: 700, fontSize: 15 }}>Vinted account koppelen</div>
           <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2 }}>
             {linked === null ? 'Laden…'
-              : isLinked ? `Gekoppeld — ID ${linked}`
-              : 'Nog niet gekoppeld — sync werkt pas na koppeling'}
+              : linked        ? 'Gekoppeld — extensie sync werkt'
+              : waiting       ? 'Wachten op koppeling…'
+              :                 'Niet gekoppeld — sync werkt pas na koppeling'}
           </div>
         </div>
-        {isLinked && (
+
+        {linked && (
           <button className="btn btn-secondary btn-sm" onClick={handleUnlink}>Ontkoppel</button>
+        )}
+        {!linked && !waiting && linked !== null && (
+          <button className="btn btn-primary btn-sm" onClick={handleStartLink}>
+            Koppel mijn Vinted account
+          </button>
         )}
       </div>
 
-      {!isLinked && linked !== null && (
-        <div>
-          <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 10, lineHeight: 1.6 }}>
-            Vul je Vinted userId in. Je vindt hem via de extensie in de browser console
-            (<code style={{ fontFamily: 'monospace', fontSize: 12 }}>[Vault] current userId: 268018729</code>)
-            of via <strong>vinted.be/api/v2/users/current</strong> → <code style={{ fontFamily: 'monospace', fontSize: 12 }}>user.id</code>.
+      {waiting && (
+        <div style={{ marginTop: 14, padding: '12px 14px', borderRadius: 8, background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.18)' }}>
+          <div style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.65 }}>
+            <strong>Ga naar het geopende Vinted-tabblad</strong> en klik op de
+            {' '}<span style={{ display: 'inline-block', width: 18, height: 18, borderRadius: 4, background: '#6366f1', color: '#fff', fontWeight: 800, fontSize: 11, textAlign: 'center', lineHeight: '18px', verticalAlign: 'middle' }}>V</span>{' '}
+            knop van de extensie om het paneel te openen.
+            De koppeling wordt dan automatisch voltooid.
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input
-              type="text"
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              placeholder="bv. 268018729"
-              style={{
-                flex: 1, padding: '8px 12px', borderRadius: 8, fontSize: 14,
-                border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)',
-                fontFamily: 'monospace', outline: 'none',
-              }}
-              onKeyDown={e => e.key === 'Enter' && handleLink()}
-            />
-            <button className="btn btn-primary btn-sm" onClick={handleLink} disabled={saving || !input.trim()}>
-              {saving ? '⏳' : 'Koppel'}
-            </button>
+          <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-3)', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>⏳</span>
+            Wachten op bevestiging…
           </div>
-          {error   && <div style={{ marginTop: 8, fontSize: 12, color: 'var(--red)' }}>{error}</div>}
-          {success && <div style={{ marginTop: 8, fontSize: 12, color: 'var(--green)' }}>{success}</div>}
         </div>
       )}
-      {isLinked && success && (
-        <div style={{ marginTop: 10, fontSize: 12, color: 'var(--green)' }}>{success}</div>
+
+      {linked && (
+        <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, background: 'rgba(0,255,136,0.05)', border: '1px solid rgba(0,255,136,0.18)' }}>
+          <span style={{ fontSize: 13, color: 'var(--green)', fontWeight: 600 }}>
+            ✓ Gekoppeld — de extensie gebruikt jouw Vault account voor sync
+          </span>
+        </div>
       )}
+
+      {error && <div style={{ marginTop: 10, fontSize: 12, color: 'var(--red)' }}>{error}</div>}
     </div>
   )
 }

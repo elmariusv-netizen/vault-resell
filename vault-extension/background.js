@@ -50,6 +50,47 @@ async function getVintedHeaders() {
 const SUPABASE_URL = 'https://dusffpxcheojvjwuqgwo.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_yQfFPaNA3hWHVWxqbagLrQ_U1oYPDxc';
 
+async function handleVaultLink(linkId, vintedUserId) {
+  try {
+    const hdrs = { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` };
+
+    // 1. Haal pending_link op om owner_id te krijgen
+    const linkRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/pending_links?id=eq.${encodeURIComponent(linkId)}&select=owner_id,linked&limit=1`,
+      { headers: hdrs }
+    );
+    if (!linkRes.ok) return { success: false, error: `pending_links fetch ${linkRes.status}` };
+    const rows = await linkRes.json();
+    if (!rows?.length) return { success: false, error: 'not_found' };
+    const { owner_id, linked } = rows[0];
+    if (linked) { console.log('[Vault] VAULT_LINK: al eerder gekoppeld'); return { success: true, already: true }; }
+
+    // 2. Upsert vinted_account_links
+    const linkOk = await fetch(`${SUPABASE_URL}/rest/v1/vinted_account_links`, {
+      method: 'POST',
+      headers: { ...hdrs, 'Content-Type': 'application/json', 'Prefer': 'return=minimal,resolution=merge-duplicates' },
+      body: JSON.stringify({ vinted_user_id: vintedUserId, owner_id }),
+    });
+    if (!linkOk.ok) {
+      const err = await linkOk.text();
+      return { success: false, error: `vinted_account_links: ${err.slice(0, 100)}` };
+    }
+
+    // 3. Markeer pending_link als linked
+    await fetch(`${SUPABASE_URL}/rest/v1/pending_links?id=eq.${encodeURIComponent(linkId)}`, {
+      method: 'PATCH',
+      headers: { ...hdrs, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vinted_user_id: vintedUserId, linked: true }),
+    });
+
+    console.log('[Vault] VAULT_LINK: gekoppeld', vintedUserId, '->', owner_id);
+    return { success: true };
+  } catch (e) {
+    console.error('[Vault] VAULT_LINK error:', e.message);
+    return { success: false, error: e.message };
+  }
+}
+
 async function lookupOwnerId(vintedUserId) {
   if (!vintedUserId) return null;
   try {
@@ -291,6 +332,10 @@ function fetchBytesViaTab(tabId, url) {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'FETCH_LISTINGS') {
     fetchListingsViaTab().then(sendResponse);
+    return true;
+  }
+  if (message.type === 'VAULT_LINK') {
+    handleVaultLink(message.linkId, message.vintedUserId).then(sendResponse);
     return true;
   }
   if (message.type === 'SYNC_ORDER') {

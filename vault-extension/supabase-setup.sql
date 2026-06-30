@@ -128,3 +128,28 @@ CREATE POLICY "user beheert eigen link"
 
 CREATE POLICY "anon kan lezen voor sync"
   ON vinted_account_links FOR SELECT TO anon USING (true);
+
+-- ══════════════════════════════════════════════════════════════════
+-- PENDING LINKS (tijdelijke koppelsessie webapp ↔ extensie)
+-- ══════════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS pending_links (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id       UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  vinted_user_id TEXT,
+  linked         BOOLEAN DEFAULT false,
+  created_at     TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE pending_links ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "user beheert eigen pending link"
+  ON pending_links FOR ALL TO authenticated
+  USING (auth.uid() = owner_id)
+  WITH CHECK (auth.uid() = owner_id);
+
+CREATE POLICY "anon kan updaten voor koppeling"
+  ON pending_links FOR UPDATE TO anon USING (true);
+
+CREATE POLICY "anon kan lezen voor koppeling"
+  ON pending_links FOR SELECT TO anon USING (true);
