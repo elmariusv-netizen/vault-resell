@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { genId, getNextSkuLabel, formatSku, formatDate } from '../utils/skuUtils'
 import { supabase } from '../utils/supabase'
 
