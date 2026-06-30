@@ -275,6 +275,100 @@ function ConfirmModal({ title, message, onCancel, onConfirm, danger }) {
   )
 }
 
+function VintedAccountLink({ supabaseUser }) {
+  const [linked, setLinked]     = useState(null)   // null=loading, string=linked userId, false=not linked
+  const [input, setInput]       = useState('')
+  const [saving, setSaving]     = useState(false)
+  const [error, setError]       = useState('')
+  const [success, setSuccess]   = useState('')
+
+  useEffect(() => {
+    if (!supabaseUser) return
+    supabase
+      .from('vinted_account_links')
+      .select('vinted_user_id')
+      .eq('owner_id', supabaseUser.id)
+      .maybeSingle()
+      .then(({ data }) => setLinked(data?.vinted_user_id ?? false))
+  }, [supabaseUser?.id])
+
+  const handleLink = async () => {
+    const val = input.trim().replace(/\D/g, '')
+    if (!val) { setError('Voer een geldig Vinted userId in (alleen cijfers).'); return }
+    setSaving(true); setError(''); setSuccess('')
+    const { error: e } = await supabase
+      .from('vinted_account_links')
+      .upsert({ vinted_user_id: val, owner_id: supabaseUser.id }, { onConflict: 'vinted_user_id' })
+    if (e) { setError(e.message); setSaving(false); return }
+    setLinked(val); setInput(''); setSuccess('Gekoppeld — de extensie gebruikt nu jouw account.')
+    setSaving(false)
+  }
+
+  const handleUnlink = async () => {
+    if (!linked) return
+    await supabase.from('vinted_account_links').delete().eq('owner_id', supabaseUser.id)
+    setLinked(false); setSuccess('')
+  }
+
+  const isLinked = !!linked
+
+  return (
+    <div className="glass-card">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: isLinked ? 0 : 16 }}>
+        <div style={{
+          width: 42, height: 42, borderRadius: 12, flexShrink: 0,
+          background: isLinked ? 'rgba(0,255,136,0.1)' : 'var(--bg-2)',
+          border: `1px solid ${isLinked ? 'rgba(0,255,136,0.3)' : 'var(--border)'}`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22,
+        }}>🔗</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: 15 }}>Vinted account ID</div>
+          <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2 }}>
+            {linked === null ? 'Laden…'
+              : isLinked ? `Gekoppeld — ID ${linked}`
+              : 'Nog niet gekoppeld — sync werkt pas na koppeling'}
+          </div>
+        </div>
+        {isLinked && (
+          <button className="btn btn-secondary btn-sm" onClick={handleUnlink}>Ontkoppel</button>
+        )}
+      </div>
+
+      {!isLinked && linked !== null && (
+        <div>
+          <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 10, lineHeight: 1.6 }}>
+            Vul je Vinted userId in. Je vindt hem via de extensie in de browser console
+            (<code style={{ fontFamily: 'monospace', fontSize: 12 }}>[Vault] current userId: 268018729</code>)
+            of via <strong>vinted.be/api/v2/users/current</strong> → <code style={{ fontFamily: 'monospace', fontSize: 12 }}>user.id</code>.
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              type="text"
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              placeholder="bv. 268018729"
+              style={{
+                flex: 1, padding: '8px 12px', borderRadius: 8, fontSize: 14,
+                border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)',
+                fontFamily: 'monospace', outline: 'none',
+              }}
+              onKeyDown={e => e.key === 'Enter' && handleLink()}
+            />
+            <button className="btn btn-primary btn-sm" onClick={handleLink} disabled={saving || !input.trim()}>
+              {saving ? '⏳' : 'Koppel'}
+            </button>
+          </div>
+          {error   && <div style={{ marginTop: 8, fontSize: 12, color: 'var(--red)' }}>{error}</div>}
+          {success && <div style={{ marginTop: 8, fontSize: 12, color: 'var(--green)' }}>{success}</div>}
+        </div>
+      )}
+      {isLinked && success && (
+        <div style={{ marginTop: 10, fontSize: 12, color: 'var(--green)' }}>{success}</div>
+      )}
+    </div>
+  )
+}
+
 function formatSize(bytes) {
   if (!bytes) return ''
   if (bytes < 1024) return `${bytes}B`
@@ -612,6 +706,9 @@ export default function Settings({ data, updateData, onExport, onClearData, acti
           onSave={onVintedCookieChange}
           activeUserId={activeUserId}
         />
+
+        {/* Vinted account ID koppeling (voor extensie sync) */}
+        <VintedAccountLink supabaseUser={supabaseUser} />
 
         {/* Platforms */}
         <PlatformsSection />

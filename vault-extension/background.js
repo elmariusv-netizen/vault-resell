@@ -50,8 +50,32 @@ async function getVintedHeaders() {
 const SUPABASE_URL = 'https://dusffpxcheojvjwuqgwo.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_yQfFPaNA3hWHVWxqbagLrQ_U1oYPDxc';
 
+async function lookupOwnerId(vintedUserId) {
+  if (!vintedUserId) return null;
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/vinted_account_links?vinted_user_id=eq.${encodeURIComponent(vintedUserId)}&select=owner_id&limit=1`,
+      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    );
+    if (!res.ok) return null;
+    const rows = await res.json();
+    return rows?.[0]?.owner_id ?? null;
+  } catch { return null; }
+}
+
 async function syncToSupabase(order) {
   const endpoint = `${SUPABASE_URL}/rest/v1/vinted_orders`;
+
+  // Zoek owner_id op via Vinted userId koppeling
+  const ownerId = await lookupOwnerId(order.vintedUserId);
+  if (!ownerId) {
+    console.warn(`[Vault] geen vinted_account_links koppeling voor userId ${order.vintedUserId} — sync geblokkeerd`);
+    return {
+      success: false,
+      error: 'no_link',
+      message: 'Koppel eerst je Vault account aan je Vinted account via Instellingen → Vinted account ID',
+    };
+  }
 
   // Geannuleerde orders verwijderen uit Supabase
   if (/geannuleerd|cancel/i.test(order.status || '')) {
@@ -71,6 +95,7 @@ async function syncToSupabase(order) {
   const payload = {
     id:              order.transactionId,
     transaction_id:  order.transactionId,
+    owner_id:        ownerId,
     title:           order.title,
     price:           order.price || 0,
     buyer:           order.buyer || '',

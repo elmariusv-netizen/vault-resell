@@ -107,3 +107,24 @@ CREATE POLICY "user beheert eigen data"
   ON user_data FOR ALL TO authenticated
   USING (auth.uid() = owner_id)
   WITH CHECK (auth.uid() = owner_id);
+
+-- ══════════════════════════════════════════════════════════════════
+-- VINTED ACCOUNT KOPPELING (Vinted userId ↔ Supabase owner_id)
+-- Laat de Chrome extensie (anon key) de juiste owner_id opzoeken
+-- ══════════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS vinted_account_links (
+  vinted_user_id TEXT PRIMARY KEY,
+  owner_id       UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  linked_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE vinted_account_links ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "user beheert eigen link"
+  ON vinted_account_links FOR ALL TO authenticated
+  USING (auth.uid() = owner_id)
+  WITH CHECK (auth.uid() = owner_id);
+
+CREATE POLICY "anon kan lezen voor sync"
+  ON vinted_account_links FOR SELECT TO anon USING (true);

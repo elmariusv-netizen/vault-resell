@@ -16,6 +16,9 @@
   const OV_ID  = 'vault-overlay';
   const BTN_ID = 'vault-fab';
 
+  // ── Vinted account id (hardcoded — wordt ook gebruikt als koppelsleutel) ──
+  const MY_VINTED_USER_ID = '268018729';
+
   // ── Runtime state ──────────────────────────────────────────────────────────
   let overlayOpen = false;
   let activeTab   = 'zoekertjes';
@@ -420,7 +423,7 @@
 
     let ok = 0, fail = 0;
     for (const o of nieuw) {
-      const res = await sendMsg({ type: 'SYNC_ORDER', order: { ...o, labelUrl: labelUrl(o.transactionId) } });
+      const res = await sendMsg({ type: 'SYNC_ORDER', order: { ...o, labelUrl: labelUrl(o.transactionId), vintedUserId: MY_VINTED_USER_ID } });
       if (res?.success && !res.duplicate) {
         syncedIds.add(o.transactionId);
         ok++;
@@ -880,10 +883,13 @@
           const o = targets[i];
           syncBtn.textContent = `⏳ ${i + 1}/${targets.length} — sync…`;
           console.log(`[Vault] sync ${i + 1}/${targets.length}: txn ${o.transactionId} — "${o.title}"`);
-          const res = await sendMsg({ type: 'SYNC_TO_SUPABASE', order: o }, 20000);
+          const res = await sendMsg({ type: 'SYNC_TO_SUPABASE', order: { ...o, vintedUserId: MY_VINTED_USER_ID } }, 20000);
           if (res?.success) {
             ok++;
             console.log(`[Vault] sync ✓ txn ${o.transactionId} (HTTP ${res.status})`);
+          } else if (res?.error === 'no_link') {
+            fail++;
+            console.error(`[Vault] sync ✗ geen koppeling — ${res.message}`);
           } else {
             fail++;
             console.error(`[Vault] sync ✗ txn ${o.transactionId} — HTTP ${res?.status ?? 'timeout'}: ${res?.error ?? 'geen response'}`);
@@ -999,7 +1005,7 @@
         try { await enrichOrders(targets); } catch (e) { console.warn('[Vault] enrichOrders skip:', e.message); }
 
         for (let i = 0; i < targets.length; i++) {
-          const o = { ...targets[i], orderDirection: 'purchase' };
+          const o = { ...targets[i], orderDirection: 'purchase', vintedUserId: MY_VINTED_USER_ID };
           syncBtn.textContent = `⏳ ${i + 1}/${targets.length} — sync…`;
           const res = await sendMsg({ type: 'SYNC_TO_SUPABASE', order: o }, 20000);
           res?.success ? ok++ : fail++;
