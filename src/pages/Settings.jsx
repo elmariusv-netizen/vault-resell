@@ -275,6 +275,110 @@ function ConfirmModal({ title, message, onCancel, onConfirm, danger }) {
   )
 }
 
+const EXT_INSTALLED_KEY = 'vault-ext-installed'
+
+function ExtensionInstall({ onConfirm }) {
+  const [confirmed, setConfirmed] = useState(() => !!localStorage.getItem(EXT_INSTALLED_KEY))
+  const [expanded, setExpanded]   = useState(!confirmed)
+
+  const confirm = () => {
+    localStorage.setItem(EXT_INSTALLED_KEY, '1')
+    setConfirmed(true)
+    setExpanded(false)
+    onConfirm?.()
+  }
+
+  const step = (n, text) => (
+    <div style={{ display: 'flex', gap: 10, marginBottom: 10, alignItems: 'flex-start' }}>
+      <span style={{
+        flexShrink: 0, width: 22, height: 22, borderRadius: '50%',
+        background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.3)',
+        color: '#a5b4fc', fontSize: 12, fontWeight: 700,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>{n}</span>
+      <span style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.55, paddingTop: 2 }}>{text}</span>
+    </div>
+  )
+
+  return (
+    <div className="glass-card">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+        <div style={{
+          width: 42, height: 42, borderRadius: 12, flexShrink: 0,
+          background: confirmed ? 'rgba(0,255,136,0.1)' : 'rgba(99,102,241,0.1)',
+          border: `1px solid ${confirmed ? 'rgba(0,255,136,0.3)' : 'rgba(99,102,241,0.3)'}`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontWeight: 800, fontSize: 15, color: confirmed ? 'var(--green)' : '#a5b4fc',
+        }}>{confirmed ? '✓' : 'V'}</div>
+
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: 15 }}>Stap 1 — Installeer de extensie</div>
+          <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2 }}>
+            {confirmed ? 'Extensie geïnstalleerd' : 'Vereist voor sync met Vinted'}
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 8 }}>
+          {!confirmed && (
+            <a
+              href="/vault-extension.zip"
+              download
+              className="btn btn-primary btn-sm"
+              style={{ textDecoration: 'none' }}
+            >
+              ⬇ Download
+            </a>
+          )}
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={() => setExpanded(v => !v)}
+            style={{ fontSize: 12 }}
+          >
+            {expanded ? 'Verberg' : confirmed ? 'Toon uitleg' : 'Uitleg'}
+          </button>
+        </div>
+      </div>
+
+      {expanded && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ marginBottom: 14 }}>
+            {step(1, <span>Klik <strong>⬇ Download</strong> hierboven en open het gedownloade <code style={{ fontFamily: 'monospace', fontSize: 12 }}>vault-extension.zip</code> bestand</span>)}
+            {step(2, <span>Rechtsklik op het zip-bestand → <strong>Alles uitpakken</strong> → kies een map en klik Uitpakken</span>)}
+            {step(3,
+              <span>
+                Ga naar{' '}
+                <code
+                  onClick={() => navigator.clipboard.writeText('chrome://extensions')}
+                  title="Klik om te kopiëren"
+                  style={{
+                    fontFamily: 'monospace', fontSize: 12, padding: '1px 7px', borderRadius: 4,
+                    background: 'rgba(79,70,229,0.1)', color: '#818cf8',
+                    cursor: 'pointer', userSelect: 'all',
+                  }}
+                >chrome://extensions</code>
+                {' '}in een nieuw tabblad <span style={{ fontSize: 11, color: 'var(--text-3)' }}>(klik om te kopiëren)</span>
+              </span>
+            )}
+            {step(4, <span>Zet <strong>Ontwikkelaarsmodus</strong> rechtsboven aan (schuifknop)</span>)}
+            {step(5, <span>Klik op <strong>"Uitgepakte extensie laden"</strong> en selecteer de zojuist uitgepakte map</span>)}
+            {step(6, <span>Klaar — de extensie verschijnt als blauw <strong>V</strong>-icoon in je browser</span>)}
+          </div>
+
+          {!confirmed && (
+            <button
+              className="btn btn-primary"
+              style={{ width: '100%', justifyContent: 'center', padding: '10px' }}
+              onClick={confirm}
+            >
+              ✓ Ik heb de extensie geïnstalleerd
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function VintedAccountLink({ supabaseUser }) {
   const [linked, setLinked]       = useState(null)    // null=loading, true=gekoppeld, false=niet
   const [waiting, setWaiting]     = useState(false)
@@ -476,6 +580,7 @@ export default function Settings({ data, updateData, onExport, onClearData, acti
   const [addOpen, setAddOpen] = useState(false)
   const [confirmReset, setConfirmReset] = useState(false)
   const [confirmDeleteSup, setConfirmDeleteSup] = useState(null)
+  const [extInstalled, setExtInstalled] = useState(() => !!localStorage.getItem(EXT_INSTALLED_KEY))
   const docRef = useRef()
 
   const handleAdd = (s) => {
@@ -727,8 +832,13 @@ export default function Settings({ data, updateData, onExport, onClearData, acti
           activeUserId={activeUserId}
         />
 
-        {/* Vinted account ID koppeling (voor extensie sync) */}
-        <VintedAccountLink supabaseUser={supabaseUser} />
+        {/* Extensie installatie — Stap 1 */}
+        <ExtensionInstall onConfirm={() => setExtInstalled(true)} />
+
+        {/* Vinted account koppelen — Stap 2, pas zichtbaar na bevestiging */}
+        {extInstalled && (
+          <VintedAccountLink supabaseUser={supabaseUser} />
+        )}
 
         {/* Platforms */}
         <PlatformsSection />

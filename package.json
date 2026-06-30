@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "zip-extension": "powershell -Command \"Remove-Item -Force public/vault-extension.zip -ErrorAction SilentlyContinue; Compress-Archive -Path vault-extension/background.js,vault-extension/bridge.js,vault-extension/content.js,vault-extension/manifest.json,vault-extension/pdf-lib.min.js,vault-extension/popup.html,vault-extension/popup.js -DestinationPath public/vault-extension.zip; Write-Host 'vault-extension.zip bijgewerkt'\""
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
