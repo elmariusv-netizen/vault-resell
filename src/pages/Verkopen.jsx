@@ -556,7 +556,7 @@ function SkuPickerModal({ batches, onPick, onClose }) {
 }
 
 // ── Order rij (Vinteer-stijl) ──────────────────────────────────────────────
-function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegister, onDetail, batches }) {
+function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegister, onDetail, batches, checked, onCheck }) {
   const [skuPickerOpen, setSkuPickerOpen] = useState(false)
   const [hoverPos,      setHoverPos]      = useState(null)
   const [cogsEditing,   setCogsEditing]   = useState(false)
@@ -608,6 +608,17 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
 
         {/* Hoofdinhoud: foto + info */}
         <div style={{ padding: '14px 16px 10px', display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+
+          {/* Checkbox */}
+          <div style={{ flexShrink: 0, paddingTop: 4 }}>
+            <input
+              type="checkbox"
+              checked={!!checked}
+              onChange={e => onCheck?.(e.target.checked)}
+              onClick={e => e.stopPropagation()}
+              style={{ width: 15, height: 15, cursor: 'pointer', accentColor: '#f87171' }}
+            />
+          </div>
 
           {/* Foto */}
           <div style={{ flexShrink: 0 }}>
@@ -940,6 +951,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
   const [addOrderOpen, setAddOrderOpen] = useState(false)
   const [syncing,   setSyncing]   = useState(false)
   const [syncToast, setSyncToast] = useState(null)  // null | string
+  const [selectedIds, setSelectedIds] = useState(new Set())
 
   useEffect(() => {
     let cancelled = false
@@ -996,6 +1008,14 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
   const dismissVintedOrder = async (orderId) => {
     await markRegisteredInSupabase(orderId)
     setVtOrders(prev => prev.filter(o => o.id !== orderId))
+  }
+
+  const deleteSelected = async () => {
+    if (!window.confirm(`${selectedIds.size} order(s) definitief verwijderen?`)) return
+    const ids = [...selectedIds]
+    await supabase.from('vinted_orders').delete().in('id', ids)
+    setVtOrders(prev => prev.filter(o => !selectedIds.has(o.id)))
+    setSelectedIds(new Set())
   }
 
   const addVintedOrder = async (row) => {
@@ -1139,75 +1159,111 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
       </div>
 
       {/* ── Vinted Orders ── */}
-      <div style={{ marginBottom: 24 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
-          <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>Vinted Orders</h2>
-          {!vtLoading && (
-            <span style={{ fontSize: 12, color: 'var(--text-3)', background: 'var(--bg-2)', padding: '1px 8px', borderRadius: 20 }}>
-              {vtOrders.filter(o => !/geannuleerd|cancel/i.test(o.status || '')).length}
-            </span>
-          )}
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-            <button
-              className="btn btn-secondary"
-              style={{ fontSize: 12, padding: '4px 12px' }}
-              onClick={() => window.open('https://www.vinted.be/my_orders', '_blank')}
-            >🔗 Open Vinted</button>
-            <button
-              className="btn btn-secondary"
-              style={{ fontSize: 12, padding: '4px 12px' }}
-              onClick={handleSync}
-              disabled={syncing}
-            >{syncing ? '⏳ Synchroniseren…' : '⚡ Auto-sync'}</button>
-            <button
-              className="btn btn-primary"
-              style={{ fontSize: 12, padding: '4px 12px' }}
-              onClick={() => setAddOrderOpen(true)}
-            >+ Toevoegen</button>
+      {(() => {
+        const visibleVtOrders = vtOrders.filter(o =>
+          !/geannuleerd|cancel/i.test(o.status || '') &&
+          !o.seller && !o.seller_id
+        )
+        const toggleId = (id, on) => setSelectedIds(prev => {
+          const next = new Set(prev)
+          on ? next.add(id) : next.delete(id)
+          return next
+        })
+        return (
+          <div style={{ marginBottom: 24 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+              <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>Vinted Orders</h2>
+              {!vtLoading && (
+                <span style={{ fontSize: 12, color: 'var(--text-3)', background: 'var(--bg-2)', padding: '1px 8px', borderRadius: 20 }}>
+                  {visibleVtOrders.length}
+                </span>
+              )}
+              <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+                <button
+                  className="btn btn-secondary"
+                  style={{ fontSize: 12, padding: '4px 12px' }}
+                  onClick={() => window.open('https://www.vinted.be/my_orders', '_blank')}
+                >🔗 Open Vinted</button>
+                <button
+                  className="btn btn-secondary"
+                  style={{ fontSize: 12, padding: '4px 12px' }}
+                  onClick={handleSync}
+                  disabled={syncing}
+                >{syncing ? '⏳ Synchroniseren…' : '⚡ Auto-sync'}</button>
+                <button
+                  className="btn btn-primary"
+                  style={{ fontSize: 12, padding: '4px 12px' }}
+                  onClick={() => setAddOrderOpen(true)}
+                >+ Toevoegen</button>
+              </div>
+            </div>
+
+            {/* Bulk controls */}
+            {!vtLoading && !vtError && visibleVtOrders.length > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                <button
+                  onClick={() => setSelectedIds(new Set(visibleVtOrders.map(o => o.id)))}
+                  style={{ fontSize: 11, padding: '2px 10px', borderRadius: 5, cursor: 'pointer', background: 'var(--bg-2)', border: '1px solid var(--border)', color: 'var(--text-2)', fontFamily: 'inherit' }}
+                >☑ Alles</button>
+                <button
+                  onClick={() => setSelectedIds(new Set())}
+                  style={{ fontSize: 11, padding: '2px 10px', borderRadius: 5, cursor: 'pointer', background: 'var(--bg-2)', border: '1px solid var(--border)', color: 'var(--text-2)', fontFamily: 'inherit' }}
+                >☐ Geen</button>
+                {selectedIds.size > 0 && (
+                  <button
+                    onClick={deleteSelected}
+                    style={{ fontSize: 11, padding: '2px 10px', borderRadius: 5, cursor: 'pointer', background: 'rgba(248,113,113,0.12)', border: '1px solid rgba(248,113,113,0.3)', color: '#f87171', fontFamily: 'inherit', fontWeight: 600 }}
+                  >🗑 Verwijder geselecteerde ({selectedIds.size})</button>
+                )}
+              </div>
+            )}
+
+            {vtLoading ? (
+              <div style={{ padding: 20, background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
+                Laden…
+              </div>
+            ) : vtError ? (
+              <div style={{ padding: 16, background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, color: 'var(--red)', fontSize: 13 }}>
+                Fout: {vtError}
+              </div>
+            ) : visibleVtOrders.length === 0 ? (
+              <div style={{ padding: 24, background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
+                Nog geen orders gesynchroniseerd via de Chrome extensie.
+              </div>
+            ) : (
+              <div style={{
+                background: '#0f172a',
+                border: '1px solid rgba(255,255,255,0.08)',
+                borderRadius: 12,
+                overflow: 'hidden',
+                '--bg': '#1e293b',
+                '--bg-2': '#0f172a',
+                '--bg-3': '#1e293b',
+                '--border': 'rgba(255,255,255,0.1)',
+                '--text': '#f1f5f9',
+                '--text-2': '#cbd5e1',
+                '--text-3': '#94a3b8',
+              }}>
+                {visibleVtOrders.map((order, i, arr) => (
+                  <VintedOrderRow
+                    key={order.id}
+                    order={order}
+                    isLast={i === arr.length - 1}
+                    onSave={saveVtField}
+                    onDismiss={() => dismissVintedOrder(order.id)}
+                    onPhotoClick={setPhotoPopup}
+                    onDetail={() => setOrderDetail(order)}
+                    onRegister={() => openSaleModal(order)}
+                    batches={batches}
+                    checked={selectedIds.has(order.id)}
+                    onCheck={on => toggleId(order.id, on)}
+                  />
+                ))}
+              </div>
+            )}
           </div>
-        </div>
-        {vtLoading ? (
-          <div style={{ padding: 20, background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
-            Laden…
-          </div>
-        ) : vtError ? (
-          <div style={{ padding: 16, background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, color: 'var(--red)', fontSize: 13 }}>
-            Fout: {vtError}
-          </div>
-        ) : vtOrders.length === 0 ? (
-          <div style={{ padding: 24, background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
-            Nog geen orders gesynchroniseerd via de Chrome extensie.
-          </div>
-        ) : (
-          <div style={{
-            background: '#0f172a',
-            border: '1px solid rgba(255,255,255,0.08)',
-            borderRadius: 12,
-            overflow: 'hidden',
-            '--bg': '#1e293b',
-            '--bg-2': '#0f172a',
-            '--bg-3': '#1e293b',
-            '--border': 'rgba(255,255,255,0.1)',
-            '--text': '#f1f5f9',
-            '--text-2': '#cbd5e1',
-            '--text-3': '#94a3b8',
-          }}>
-            {vtOrders.filter(o => !/geannuleerd|cancel/i.test(o.status || '')).map((order, i, arr) => (
-              <VintedOrderRow
-                key={order.id}
-                order={order}
-                isLast={i === arr.length - 1}
-                onSave={saveVtField}
-                onDismiss={() => dismissVintedOrder(order.id)}
-                onPhotoClick={setPhotoPopup}
-                onDetail={() => setOrderDetail(order)}
-                onRegister={() => openSaleModal(order)}
-                batches={batches}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+        )
+      })()}
 
       {filtered.length > 0 && (
         <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
