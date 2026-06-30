@@ -1,4 +1,161 @@
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, PDFName } from 'pdf-lib';
+import { inflateSync } from 'zlib';
+
+const LABEL_W = 288;  // 4 inch × 72 pt/inch
+const LABEL_H = 432;  // 6 inch × 72 pt/inch
+
+// Read a PDF box array [x1, y1, x2, y2] from the page node dictionary
+function readPageBox(pageNode, context, name) {
+  try {
+    const ref = pageNode.get(PDFName.of(name));
+    if (!ref) return null;
+    const arr = context.lookup(ref);
+    if (!arr || typeof arr.get !== 'function') return null;
+    const nums = [0, 1, 2, 3].map(i => {
+      const item = arr.get(i);
+      if (!item) return null;
+      const v = item.numberValue ?? item.asNumber?.() ?? parseFloat(item.toString());
+      return isNaN(v) ? null : v;
+    });
+    if (nums.some(n => n === null)) return null;
+    const [x1, y1, x2, y2] = nums;
+    return { left: Math.min(x1, x2), bottom: Math.min(y1, y2), right: Math.max(x1, x2), top: Math.max(y1, y2) };
+  } catch { return null; }
+}
+
+// Decompress a PDF stream object (handles FlateDecode)
+function decodeStreamObj(obj) {
+  try {
+    if (!obj || !(obj.contents instanceof Uint8Array)) return null;
+    const filter = obj.dict?.get(PDFName.of('Filter'));
+    if (!filter) return obj.contents;
+    const fname = filter.toString?.() ?? '';
+    if (fname === '/FlateDecode' || fname === 'FlateDecode') {
+      return inflateSync(Buffer.from(obj.contents));
+    }
+    // Uncompressed or unknown filter — return raw
+    return obj.contents;
+  } catch { return null; }
+}
+
+// Extract all 're' (rectangle) operators from decoded content stream bytes
+// PDF syntax: x y w h re
+function parseRects(bytes, pageW, pageH) {
+  if (!bytes) return [];
+  try {
+    const text = Buffer.from(bytes).toString('binary');
+    const re = /(-?[\d]+(?:\.[\d]+)?)\s+(-?[\d]+(?:\.[\d]+)?)\s+(-?[\d]+(?:\.[\d]+)?)\s+(-?[\d]+(?:\.[\d]+)?)\s+re\b/g;
+    const rects = [];
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      const x = +m[1], y = +m[2], rw = +m[3], rh = +m[4];
+      const aw = Math.abs(rw), ah = Math.abs(rh);
+      // Ignore tiny rects (barcodes, lines) and full-page rects
+      if (aw > 80 && ah > 80 && aw < pageW * 0.98 && ah < pageH * 0.98) {
+        rects.push({
+          left:   rw >= 0 ? x : x + rw,
+          bottom: rh >= 0 ? y : y + rh,
+          right:  rw >= 0 ? x + rw : x,
+          top:    rh >= 0 ? y + rh : y,
+        });
+      }
+    }
+    return rects;
+  } catch { return []; }
+}
+
+// Detect the label crop region within a PDF page
+// Returns { left, bottom, right, top } in PDF points (origin bottom-left)
+async function detectLabelBounds(src, page) {
+  const media  = page.getMediaBox();
+  const pageW  = media.width;
+  const pageH  = media.height;
+  const pageNode = page.node;
+  const context  = src.context;
+
+  console.log('[label] mediaBox:', Math.round(pageW), 'x', Math.round(pageH));
+
+  // Strategy 1: explicit PDF box annotations (CropBox, TrimBox, ArtBox)
+  for (const boxName of ['CropBox', 'TrimBox', 'ArtBox']) {
+    const box = readPageBox(pageNode, context, boxName);
+    if (!box) continue;
+    const bw = box.right - box.left, bh = box.top - box.bottom;
+    if (bw < pageW * 0.99 && bh < pageH * 0.99 && bw > 50 && bh > 50) {
+      console.log(`[label] detected via ${boxName}: left=${Math.round(box.left)} bottom=${Math.round(box.bottom)} right=${Math.round(box.right)} top=${Math.round(box.top)}`);
+      return box;
+    }
+  }
+
+  // Strategy 2: scan content streams for large rectangle operators
+  try {
+    const contentsRef = pageNode.get(PDFName.of('Contents'));
+    if (contentsRef) {
+      const contentsObj = context.lookup(contentsRef);
+      const streamObjs = [];
+
+      // Contents can be a single stream or an array of streams
+      if (contentsObj && typeof contentsObj.asArray === 'function') {
+        // PDFArray
+        for (const ref of contentsObj.asArray()) {
+          const s = context.lookup(ref);
+          if (s) streamObjs.push(s);
+        }
+      } else if (contentsObj) {
+        streamObjs.push(contentsObj);
+      }
+
+      let allRects = [];
+      for (const streamObj of streamObjs) {
+        const bytes = decodeStreamObj(streamObj);
+        const rects = parseRects(bytes, pageW, pageH);
+        allRects = allRects.concat(rects);
+      }
+
+      if (allRects.length > 0) {
+        // Pick the largest rectangle by area — most likely the label border
+        allRects.sort((a, b) => {
+          const aA = (a.right - a.left) * (a.top - a.bottom);
+          const aB = (b.right - b.left) * (b.top - b.bottom);
+          return aB - aA;
+        });
+        const best = allRects[0];
+        const bw = best.right - best.left, bh = best.top - best.bottom;
+        console.log(`[label] detected via content stream rects (${allRects.length} found): left=${Math.round(best.left)} bottom=${Math.round(best.bottom)} ${Math.round(bw)}x${Math.round(bh)}`);
+        return best;
+      }
+    }
+  } catch (e) {
+    console.warn('[label] content stream parse error:', e.message);
+  }
+
+  // Strategy 3: heuristic based on page dimensions
+  // A4 portrait ≈ 595×842 — label is typically a 4×6 (288×432) area in the top portion
+  // centered horizontally, flush with the top
+  const isA4Portrait  = pageW > 550 && pageW < 640 && pageH > 800 && pageH < 900;
+  const isA4Landscape = pageH > 550 && pageH < 640 && pageW > 800 && pageW < 900;
+
+  if (isA4Portrait) {
+    // Most Vinted/Sendcloud labels: 4×6 label in upper portion, centered
+    const left   = (pageW - LABEL_W) / 2;
+    const bottom = pageH - LABEL_H;
+    console.log(`[label] heuristic A4-portrait: left=${Math.round(left)} bottom=${Math.round(bottom)} ${LABEL_W}x${LABEL_H}`);
+    return { left, bottom, right: left + LABEL_W, top: pageH };
+  }
+
+  if (isA4Landscape) {
+    // Landscape A4: label is typically left-aligned
+    const bottom = (pageH - LABEL_W) / 2;
+    console.log(`[label] heuristic A4-landscape: rotated label`);
+    return { left: 0, bottom, right: LABEL_H, top: bottom + LABEL_W };
+  }
+
+  // Unknown format: crop top-left 4×6 region, or use full page if smaller
+  const fallbackW = Math.min(pageW, LABEL_W);
+  const fallbackH = Math.min(pageH, LABEL_H);
+  const fallbackBottom = pageH - fallbackH;
+  console.log(`[label] heuristic fallback: top-left ${Math.round(fallbackW)}x${Math.round(fallbackH)}`);
+  return { left: 0, bottom: fallbackBottom, right: fallbackW, top: pageH };
+}
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -10,9 +167,6 @@ export default async function handler(req, res) {
   const label_url      = req.body?.label_url      || req.query?.label_url;
   const cookie         = req.headers['x-vinted-cookie'];
 
-  // Two paths:
-  // A) label_url provided (presigned) — no cookie needed
-  // B) transaction_id + cookie — proxy fetches from Vinted with cookie auth
   let pdfFetchUrl, fetchOptions;
 
   if (label_url) {
@@ -34,20 +188,85 @@ export default async function handler(req, res) {
   }
 
   const pdfBytes = await response.arrayBuffer();
-  const src = await PDFDocument.load(pdfBytes);
-  const out = await PDFDocument.create();
-  const [page] = src.getPages();
-  const { width: w, height: h } = page.getSize();
-  console.log('[label] src size', Math.round(w), 'x', Math.round(h));
+  const src = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
+  const srcPages = src.getPages();
+  const page = srcPages[0];
 
-  // Crop top half of A4 → 4×6 thermal (288×432pt)
-  const embedded = await out.embedPage(page, { left: 0, bottom: h * 0.5, right: w, top: h });
-  const newPage  = out.addPage([288, 432]);
-  newPage.drawPage(embedded, { x: 0, y: 0, width: 288, height: 432 });
+  const { width: pageW, height: pageH } = page.getSize();
+  const rotation = page.getRotation().angle;
+  console.log('[label] page size:', Math.round(pageW), 'x', Math.round(pageH), 'rotation:', rotation);
+
+  // If page is already 4×6 (within 5%), use the whole page
+  const alreadyLabel = Math.abs(pageW - LABEL_W) < 20 && Math.abs(pageH - LABEL_H) < 20;
+  if (alreadyLabel) {
+    console.log('[label] page is already 4x6 — using full page');
+    const out = await PDFDocument.create();
+    const [emb] = await out.embedPdf(src, [0]);
+    const newPage = out.addPage([LABEL_W, LABEL_H]);
+    newPage.drawPage(emb, { x: 0, y: 0, width: LABEL_W, height: LABEL_H });
+    const cropped = await out.save();
+    const ref = transaction_id || 'label';
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="label-${ref}-4x6.pdf"`);
+    res.setHeader('Cache-Control', 'no-store');
+    return res.send(Buffer.from(cropped));
+  }
+
+  // Detect where the label is within the page
+  const bounds = await detectLabelBounds(src, page);
+
+  // Crop region dimensions
+  const cropW = bounds.right - bounds.left;
+  const cropH = bounds.top  - bounds.bottom;
+  console.log('[label] crop region:', `${Math.round(bounds.left)},${Math.round(bounds.bottom)} → ${Math.round(bounds.right)},${Math.round(bounds.top)} (${Math.round(cropW)}x${Math.round(cropH)})`);
+
+  // Determine output orientation: if crop is wider than tall, rotate 90° to fit 4×6
+  let outW = LABEL_W, outH = LABEL_H;
+  const cropIsLandscape = cropW > cropH;
+  if (cropIsLandscape) {
+    console.log('[label] crop is landscape — rotating 90° to portrait');
+    outW = LABEL_H;
+    outH = LABEL_W;
+  }
+
+  const out = await PDFDocument.create();
+
+  // Embed the source page with the crop box
+  const embedded = await out.embedPage(page, {
+    left:   bounds.left,
+    bottom: bounds.bottom,
+    right:  bounds.right,
+    top:    bounds.top,
+  });
+
+  const newPage = out.addPage([outW, outH]);
+
+  if (cropIsLandscape) {
+    // Rotate 90° counter-clockwise to make landscape→portrait
+    newPage.drawPage(embedded, {
+      x:      0,
+      y:      outH,
+      width:  outH,
+      height: outW,
+      rotate: { type: 'degrees', angle: -90 },
+    });
+  } else {
+    // Scale the cropped region to exactly fill 4×6, preserving the label's own aspect ratio
+    // Use contain-fit (no distortion): scale uniformly, center in output
+    const scaleX = outW / cropW;
+    const scaleY = outH / cropH;
+    const scale  = Math.min(scaleX, scaleY);
+    const drawW  = cropW * scale;
+    const drawH  = cropH * scale;
+    const offsetX = (outW - drawW) / 2;
+    const offsetY = (outH - drawH) / 2;
+    console.log(`[label] scale=${scale.toFixed(3)} drawW=${Math.round(drawW)} drawH=${Math.round(drawH)} offset=(${Math.round(offsetX)},${Math.round(offsetY)})`);
+    newPage.drawPage(embedded, { x: offsetX, y: offsetY, width: drawW, height: drawH });
+  }
 
   const cropped = await out.save();
   const ref = transaction_id || 'label';
-  console.log('[label] cropped', cropped.length, 'bytes, ref:', ref);
+  console.log('[label] output', cropped.length, 'bytes, ref:', ref);
 
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="label-${ref}-4x6.pdf"`);
