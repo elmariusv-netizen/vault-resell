@@ -375,67 +375,26 @@
     }
   }
 
-  // Haal aankopen op van Vinted API
-  async function getPurchased() {
-    const c = await cGet('v_purchased');
-    if (c) { console.log('[Vault] getPurchased: cache —', c.length, 'orders'); return c; }
-
-    console.log('[Vault] getPurchased: ophalen…');
-    const path = '/api/v2/my_orders?order_type=purchased&per_page=100&page=1';
-    console.log('[Vault] getPurchased fetch URL:', `https://www.vinted.be${path}`);
-    const d   = await vGet(path);
-    const all = d.my_orders || d.orders || d.transactions || [];
-    console.log('[Vault] getPurchased: ontvangen:', all.length, 'orders');
-
-    const orders = all.map(o => ({
-      transactionId:  String(o.transaction_id || o.id || ''),
-      itemId:         String(o.item?.id || ''),
-      title:          o.item?.title || o.title || '?',
-      photo:          o.photos?.[0]?.url || o.photo?.url || o.item?.photos?.[0]?.url || o.item?.photo?.url || o.photo_url || null,
-      price:          parseFloat(o.price?.amount || o.total_price || o.item?.price_numeric || 0),
-      seller:         '',
-      sellerName:     '',
-      country:        '',
-      date:           (o.created_at || o.updated_at || '').slice(0, 10),
-      status:         o.status || '',
-      conversationId: String(o.conversation_id || o.thread_id || ''),
-      orderDirection: 'purchase',
-    }));
-
-    await cSet('v_purchased', orders);
-    return orders;
-  }
-
   // Enrich orders: foto + tegenpartij info ophalen via conversationId (max 20)
-  // direction: 'sale' → opp is koper; 'purchase' → opp is verkoper
-  async function enrichOrders(orders, direction = 'sale') {
-    const cacheKey = direction === 'purchase' ? 'v_purchased' : 'v_sold_v2';
+  async function enrichOrders(orders) {
     const needsDetail = orders.filter(o =>
-      (!o.photo || (direction === 'purchase' ? !o.seller : !o.buyer)) &&
-      (o.conversationId || o.convId)
+      (!o.photo || !o.buyer) && (o.conversationId || o.convId)
     ).slice(0, 20);
     if (!needsDetail.length) return;
 
-    console.log(`[Vault] enrichOrders(${direction}): detail ophalen voor ${needsDetail.length} orders`);
+    console.log(`[Vault] enrichOrders: detail ophalen voor ${needsDetail.length} orders`);
     let changed = false;
     await Promise.all(needsDetail.map(async o => {
       const id = o.conversationId || o.convId;
       const { photo, buyer, buyerName, country, currentUserSide } = await fetchConvDetail(id);
       console.log(`[Vault] conv detail txn ${o.transactionId}: opp="${buyer}" country="${country}" side="${currentUserSide}"`);
-      if (photo)   { o.photo   = photo;   changed = true; }
-      if (country) { o.country = country; changed = true; }
+      if (photo)           { o.photo           = photo;           changed = true; }
+      if (country)         { o.country         = country;         changed = true; }
       if (currentUserSide) { o.currentUserSide = currentUserSide; changed = true; }
-      if (direction === 'purchase') {
-        if (currentUserSide && currentUserSide !== 'buyer')
-          console.warn(`[Vault] WAARSCHUWING: side="${currentUserSide}" voor aankoop ${o.transactionId} — verwacht 'buyer'`);
-        if (buyer)     { o.seller     = buyer;     changed = true; }
-        if (buyerName) { o.sellerName = buyerName; changed = true; }
-      } else {
-        if (buyer)     { o.buyer     = buyer;     changed = true; }
-        if (buyerName) { o.buyerName = buyerName; changed = true; }
-      }
+      if (buyer)           { o.buyer           = buyer;           changed = true; }
+      if (buyerName)       { o.buyerName       = buyerName;       changed = true; }
     }));
-    if (changed) await cSet(cacheKey, orders);
+    if (changed) await cSet('v_sold_v2', orders);
   }
 
   // ── Supabase sync ──────────────────────────────────────────────────────────
@@ -778,7 +737,7 @@
     drawVerkopen(content, orders);
     drawVerkopenFooter(footer, orders);
 
-    enrichOrders(orders, 'sale').then(() => {
+    enrichOrders(orders).then(() => {
       if (activeTab !== 'verkopen') return;
       const visibleOrders = orders.filter(o => {
         if (o.currentUserSide === 'buyer') {
@@ -915,7 +874,7 @@
         let ok = 0, fail = 0;
 
         syncBtn.textContent = `⏳ Conversaties ophalen…`;
-        try { await enrichOrders(targets, 'sale'); } catch (e) { console.warn('[Vault] enrichOrders skip:', e.message); }
+        try { await enrichOrders(targets); } catch (e) { console.warn('[Vault] enrichOrders skip:', e.message); }
 
         for (let i = 0; i < targets.length; i++) {
           const o = targets[i];
@@ -944,18 +903,18 @@
 
   // ── Tab: Aankopen ──────────────────────────────────────────────────────────
   async function tabAankopen(content, footer) {
-    const allOrders = await getPurchased();
-    const orders = allOrders.filter(o => !isCancelled(o));
+    const allOrders = await getSold();
+    const active = allOrders.filter(o => !isCancelled(o));
     content.innerHTML = '';
-    if (!orders.length) { content.appendChild(emptyState('🛍', 'Geen aankopen', 'Nog geen aankopen gevonden.')); return; }
+    content.appendChild(emptyState('⏳', 'Aankopen laden…', 'Conversaties worden opgehaald om aankopen te identificeren…'));
 
-    drawAankopen(content, orders);
-    drawAankopenFooter(footer, orders);
-
-    enrichOrders(orders, 'purchase').then(() => {
+    enrichOrders(active).then(() => {
       if (activeTab !== 'aankopen') return;
-      drawAankopen(content, orders);
-      drawAankopenFooter(footer, orders);
+      const aankopen = active.filter(o => o.currentUserSide === 'buyer');
+      content.innerHTML = '';
+      if (!aankopen.length) { content.appendChild(emptyState('🛍', 'Geen aankopen', 'Geen aankopen gevonden in je orders.')); return; }
+      drawAankopen(content, aankopen);
+      drawAankopenFooter(footer, aankopen);
     });
   }
 
@@ -981,7 +940,7 @@
       }
 
       const subParts = [
-        o.seller ? `@${o.seller}` : '',
+        o.buyer ? `@${o.buyer}` : '',  // bij aankopen is opposite_user de verkoper, opgeslagen als o.buyer
         o.country || '',
         fmtD(o.date),
       ].filter(Boolean);
@@ -1037,7 +996,7 @@
       (async () => {
         let ok = 0, fail = 0;
         syncBtn.textContent = `⏳ Conversaties ophalen…`;
-        try { await enrichOrders(targets, 'purchase'); } catch (e) { console.warn('[Vault] enrichOrders skip:', e.message); }
+        try { await enrichOrders(targets); } catch (e) { console.warn('[Vault] enrichOrders skip:', e.message); }
 
         for (let i = 0; i < targets.length; i++) {
           const o = { ...targets[i], orderDirection: 'purchase' };
@@ -1227,7 +1186,7 @@
       try {
         const orders = await getSold()
         const active = orders.filter(o => !isCancelled(o))
-        await enrichOrders(active, 'sale')
+        await enrichOrders(active)
         await autoSync(active)
         sendResponse({ success: true, count: active.length })
       } catch (e) {
