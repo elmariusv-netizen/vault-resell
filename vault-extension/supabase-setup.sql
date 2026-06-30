@@ -46,3 +46,46 @@ ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS vault_sync_requested BOOLEAN 
 INSERT INTO storage.buckets (id, name, public)
   VALUES ('order-photos', 'order-photos', true)
   ON CONFLICT DO NOTHING;
+
+-- ══════════════════════════════════════════════════════════════════
+-- MULTI-USER AUTH — voer dit uit in Supabase SQL Editor
+-- Vereist: Authentication → Providers → Email ingeschakeld in dashboard
+-- ══════════════════════════════════════════════════════════════════
+
+-- 1. owner_id kolommen toevoegen
+ALTER TABLE vinted_orders  ADD COLUMN IF NOT EXISTS owner_id UUID REFERENCES auth.users(id);
+ALTER TABLE user_settings  ADD COLUMN IF NOT EXISTS owner_id UUID REFERENCES auth.users(id);
+
+-- 2. Verwijder de oude open (anon) lees-policy
+DROP POLICY IF EXISTS "anon kan lezen" ON vinted_orders;
+
+-- 3. Nieuwe policies: authenticated users zien alleen eigen data
+--    Anon INSERT/UPDATE blijft bestaan zodat de Chrome extensie kan blijven schrijven.
+CREATE POLICY "user ziet eigen orders"
+  ON vinted_orders FOR SELECT TO authenticated
+  USING (auth.uid() = owner_id);
+
+CREATE POLICY "user beheert eigen orders"
+  ON vinted_orders FOR ALL TO authenticated
+  USING (auth.uid() = owner_id)
+  WITH CHECK (auth.uid() = owner_id);
+
+-- 4. user_settings RLS
+ALTER TABLE user_settings ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "user ziet eigen settings" ON user_settings;
+CREATE POLICY "user beheert eigen settings"
+  ON user_settings FOR ALL TO authenticated
+  USING (auth.uid() = owner_id)
+  WITH CHECK (auth.uid() = owner_id);
+
+-- ══════════════════════════════════════════════════════════════════
+-- MIGRATIE — voer dit uit NA je eerste login in de webapp
+--
+-- 1. Zoek je Supabase user UUID op:
+--    Dashboard → Authentication → Users → kopieer je UUID
+--
+-- 2. Vervang <JOUW_UUID> hieronder en voer uit:
+-- ══════════════════════════════════════════════════════════════════
+
+-- UPDATE vinted_orders  SET owner_id = '<JOUW_UUID>' WHERE owner_id IS NULL;
+-- UPDATE user_settings  SET owner_id = '<JOUW_UUID>' WHERE owner_id IS NULL;

@@ -8,6 +8,7 @@ import Settings from './pages/Settings'
 import Labels from './pages/Labels'
 import Verkopen from './pages/Verkopen'
 import Aankopen from './pages/Aankopen'
+import Auth from './pages/Auth'
 import Onboarding from './pages/Onboarding'
 import {
   loadData, saveData, getBackupMeta, saveBackupMeta,
@@ -40,6 +41,20 @@ export default function App() {
   const [bannerDismissed, setBannerDismissed] = useState(false)
   const [ready, setReady] = useState(false)
   const [vintedCookie, setVintedCookie] = useState(() => localStorage.getItem('vault-vinted-cookie') || null)
+  const [supabaseUser, setSupabaseUser] = useState(null)
+  const [authChecked, setAuthChecked] = useState(false)
+
+  // ── Supabase Auth ─────────────────────────────────────────────────────────
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSupabaseUser(session?.user ?? null)
+      setAuthChecked(true)
+    })
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSupabaseUser(session?.user ?? null)
+    })
+    return () => subscription.unsubscribe()
+  }, [])
 
   useEffect(() => { localStorage.setItem('vault-page', page) }, [page])
 
@@ -168,6 +183,17 @@ export default function App() {
     return Math.floor((Date.now() - new Date(backupMeta.lastExportDate)) / (1000 * 60 * 60 * 24))
   }, [backupMeta])
 
+  if (!authChecked) {
+    return (
+      <div className="loading">
+        <span style={{ color: 'var(--green)' }}>●</span>
+        Laden…
+      </div>
+    )
+  }
+
+  if (!supabaseUser) return <Auth />
+
   if (!ready) {
     return (
       <div className="loading">
@@ -225,7 +251,7 @@ export default function App() {
           {page === 'verkopen'  && <Verkopen data={data} onDeleteSale={handleDeleteSale} onUpdateSale={handleUpdateSale} updateData={updateData} vintedCookie={vintedCookie} activeUserId={activeUserId} />}
           {page === 'aankopen'  && <Aankopen />}
           {page === 'stats'     && <Stats data={data} theme={theme} />}
-          {page === 'settings'  && <Settings {...props} onExport={handleExport} activeUserId={activeUserId} vintedCookie={vintedCookie} onVintedCookieChange={setVintedCookie} />}
+          {page === 'settings'  && <Settings {...props} onExport={handleExport} activeUserId={activeUserId} vintedCookie={vintedCookie} onVintedCookieChange={setVintedCookie} supabaseUser={supabaseUser} onSignOut={() => supabase.auth.signOut()} />}
           {page === 'labels'    && <Labels data={data} vintedCookie={vintedCookie} />}
         </main>
       </div>

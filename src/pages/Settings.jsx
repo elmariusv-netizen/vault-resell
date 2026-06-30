@@ -355,7 +355,7 @@ function PlatformsSection() {
   )
 }
 
-export default function Settings({ data, updateData, onExport, activeUserId, vintedCookie, onVintedCookieChange }) {
+export default function Settings({ data, updateData, onExport, activeUserId, vintedCookie, onVintedCookieChange, supabaseUser, onSignOut }) {
   const { suppliers, batches, sales } = data
   const documents = data.documents || []
 
@@ -662,6 +662,23 @@ export default function Settings({ data, updateData, onExport, activeUserId, vin
             </div>
           ))}
         </div>
+
+        {/* Account */}
+        {supabaseUser && (
+          <div className="glass-card">
+            <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 16 }}>Account</div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)' }}>{supabaseUser.email}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 3, fontFamily: 'monospace' }}>{supabaseUser.id}</div>
+              </div>
+              <button
+                className="btn btn-danger btn-sm"
+                onClick={onSignOut}
+              >Uitloggen</button>
+            </div>
+          </div>
+        )}
 
         {/* Info */}
         <div className="glass-card">
