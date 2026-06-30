@@ -1151,9 +1151,14 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
             <button
               className="btn btn-secondary"
               style={{ fontSize: 12, padding: '4px 12px' }}
+              onClick={() => window.open('https://www.vinted.be/my_orders', '_blank')}
+            >🔗 Open Vinted</button>
+            <button
+              className="btn btn-secondary"
+              style={{ fontSize: 12, padding: '4px 12px' }}
               onClick={handleSync}
               disabled={syncing}
-            >{syncing ? '⏳ Synchroniseren…' : '🔄 Synchroniseer Vinted'}</button>
+            >{syncing ? '⏳ Synchroniseren…' : '⚡ Auto-sync'}</button>
             <button
               className="btn btn-primary"
               style={{ fontSize: 12, padding: '4px 12px' }}
