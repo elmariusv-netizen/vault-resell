@@ -557,10 +557,11 @@ function SkuPickerModal({ batches, onPick, onClose }) {
 
 // ── Order rij (Vinteer-stijl) ──────────────────────────────────────────────
 function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegister, onDetail, batches, checked, onCheck }) {
-  const [skuPickerOpen, setSkuPickerOpen] = useState(false)
-  const [hoverPos,      setHoverPos]      = useState(null)
-  const [cogsEditing,   setCogsEditing]   = useState(false)
-  const [cogsVal,       setCogsVal]       = useState(String(order.cost_price ?? ''))
+  const [skuPickerOpen,  setSkuPickerOpen]  = useState(false)
+  const [hoverPos,       setHoverPos]       = useState(null)
+  const [cogsEditing,    setCogsEditing]    = useState(false)
+  const [cogsVal,        setCogsVal]        = useState(String(order.cost_price ?? ''))
+  const [photoUploading, setPhotoUploading] = useState(false)
 
   useEffect(() => setCogsVal(String(order.cost_price ?? '')), [order.cost_price])
 
@@ -634,7 +635,34 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
                 onClick={() => onPhotoClick(allPhotos)}
               />
             ) : (
-              <div style={{ width: 100, height: 124, borderRadius: 8, background: '#1e293b', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 32 }}>📦</div>
+              <div style={{ position: 'relative', width: 100, height: 124, flexShrink: 0 }}>
+                <div style={{ width: 100, height: 124, borderRadius: 8, background: '#1e293b', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 32 }}>
+                  {photoUploading ? '⏳' : '📦'}
+                </div>
+                {!photoUploading && (
+                  <label style={{ position: 'absolute', bottom: 6, right: 6, background: '#334155', border: '1px solid rgba(255,255,255,0.15)', color: '#94a3b8', borderRadius: '50%', width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 16, lineHeight: 1, userSelect: 'none' }} title="Foto toevoegen">
+                    +
+                    <input
+                      type="file"
+                      accept="image/*"
+                      style={{ display: 'none' }}
+                      onChange={async e => {
+                        const file = e.target.files?.[0]
+                        if (!file) return
+                        setPhotoUploading(true)
+                        const ext  = file.name.split('.').pop()
+                        const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+                        const { error } = await supabase.storage.from('order-photos').upload(path, file)
+                        if (!error) {
+                          const { data } = supabase.storage.from('order-photos').getPublicUrl(path)
+                          onSave(order.id, 'photo_url', data.publicUrl)
+                        }
+                        setPhotoUploading(false)
+                      }}
+                    />
+                  </label>
+                )}
+              </div>
             )}
           </div>
 
@@ -1161,8 +1189,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
       {/* ── Vinted Orders ── */}
       {(() => {
         const visibleVtOrders = vtOrders.filter(o =>
-          !/geannuleerd|cancel/i.test(o.status || '') &&
-          !o.seller && !o.seller_id
+          !/geannuleerd|cancel/i.test(o.status || '')
         )
         const toggleId = (id, on) => setSelectedIds(prev => {
           const next = new Set(prev)
