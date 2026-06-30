@@ -87,6 +87,8 @@ async function syncToSupabase(order) {
     sale_date:       order.date || null,
     label_available: !!(order.transactionUserStatus === 'needs_action' || /verzendlabel/i.test(order.status || '')),
     conversation_id: order.conversationId  || null,
+    order_direction: order.orderDirection  || 'sale',
+    seller_name:     order.sellerName      || null,
   };
 
   console.log('[Vault] price:', order.price);

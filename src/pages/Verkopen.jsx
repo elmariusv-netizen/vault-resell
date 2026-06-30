@@ -1189,7 +1189,8 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
       {/* ── Vinted Orders ── */}
       {(() => {
         const visibleVtOrders = vtOrders.filter(o =>
-          !/geannuleerd|cancel/i.test(o.status || '')
+          !/geannuleerd|cancel/i.test(o.status || '') &&
+          (o.order_direction === 'sale' || !o.order_direction)
         )
         const toggleId = (id, on) => setSelectedIds(prev => {
           const next = new Set(prev)

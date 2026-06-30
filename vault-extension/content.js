@@ -375,24 +375,67 @@
     }
   }
 
-  // Enrich sold orders: foto + buyer info ophalen via conversationId (max 20)
-  async function enrichSold(orders) {
-    const noPhoto = orders.filter(o => (!o.photo || !o.buyer) && (o.conversationId || o.convId)).slice(0, 20);
-    if (!noPhoto.length) return;
+  // Haal aankopen op van Vinted API
+  async function getPurchased() {
+    const c = await cGet('v_purchased');
+    if (c) { console.log('[Vault] getPurchased: cache —', c.length, 'orders'); return c; }
 
-    console.log(`[Vault] enrichSold: detail ophalen voor ${noPhoto.length} orders via conversationId`);
+    console.log('[Vault] getPurchased: ophalen…');
+    const path = '/api/v2/my_orders?order_type=purchased&per_page=100&page=1';
+    console.log('[Vault] getPurchased fetch URL:', `https://www.vinted.be${path}`);
+    const d   = await vGet(path);
+    const all = d.my_orders || d.orders || d.transactions || [];
+    console.log('[Vault] getPurchased: ontvangen:', all.length, 'orders');
+
+    const orders = all.map(o => ({
+      transactionId:  String(o.transaction_id || o.id || ''),
+      itemId:         String(o.item?.id || ''),
+      title:          o.item?.title || o.title || '?',
+      photo:          o.photos?.[0]?.url || o.photo?.url || o.item?.photos?.[0]?.url || o.item?.photo?.url || o.photo_url || null,
+      price:          parseFloat(o.price?.amount || o.total_price || o.item?.price_numeric || 0),
+      seller:         '',
+      sellerName:     '',
+      country:        '',
+      date:           (o.created_at || o.updated_at || '').slice(0, 10),
+      status:         o.status || '',
+      conversationId: String(o.conversation_id || o.thread_id || ''),
+      orderDirection: 'purchase',
+    }));
+
+    await cSet('v_purchased', orders);
+    return orders;
+  }
+
+  // Enrich orders: foto + tegenpartij info ophalen via conversationId (max 20)
+  // direction: 'sale' → opp is koper; 'purchase' → opp is verkoper
+  async function enrichOrders(orders, direction = 'sale') {
+    const cacheKey = direction === 'purchase' ? 'v_purchased' : 'v_sold_v2';
+    const needsDetail = orders.filter(o =>
+      (!o.photo || (direction === 'purchase' ? !o.seller : !o.buyer)) &&
+      (o.conversationId || o.convId)
+    ).slice(0, 20);
+    if (!needsDetail.length) return;
+
+    console.log(`[Vault] enrichOrders(${direction}): detail ophalen voor ${needsDetail.length} orders`);
     let changed = false;
-    await Promise.all(noPhoto.map(async o => {
+    await Promise.all(needsDetail.map(async o => {
       const id = o.conversationId || o.convId;
       const { photo, buyer, buyerName, country, currentUserSide } = await fetchConvDetail(id);
-      console.log(`[Vault] conv detail txn ${o.transactionId}: buyer="${buyer}" country="${country}" side="${currentUserSide}"`);
-      if (photo)           { o.photo           = photo;           changed = true; }
-      if (buyer)           { o.buyer           = buyer;           changed = true; }
-      if (buyerName)       { o.buyerName       = buyerName;       changed = true; }
-      if (country)         { o.country         = country;         changed = true; }
+      console.log(`[Vault] conv detail txn ${o.transactionId}: opp="${buyer}" country="${country}" side="${currentUserSide}"`);
+      if (photo)   { o.photo   = photo;   changed = true; }
+      if (country) { o.country = country; changed = true; }
       if (currentUserSide) { o.currentUserSide = currentUserSide; changed = true; }
+      if (direction === 'purchase') {
+        if (currentUserSide && currentUserSide !== 'buyer')
+          console.warn(`[Vault] WAARSCHUWING: side="${currentUserSide}" voor aankoop ${o.transactionId} — verwacht 'buyer'`);
+        if (buyer)     { o.seller     = buyer;     changed = true; }
+        if (buyerName) { o.sellerName = buyerName; changed = true; }
+      } else {
+        if (buyer)     { o.buyer     = buyer;     changed = true; }
+        if (buyerName) { o.buyerName = buyerName; changed = true; }
+      }
     }));
-    if (changed) await cSet('v_sold_v2', orders);
+    if (changed) await cSet(cacheKey, orders);
   }
 
   // ── Supabase sync ──────────────────────────────────────────────────────────
@@ -639,6 +682,7 @@
     const TABS = [
       { id:'zoekertjes', label:'🏪 Listings'  },
       { id:'verkopen',   label:'📦 Verkopen'  },
+      { id:'aankopen',   label:'🛍 Aankopen'  },
       { id:'labels',     label:'🏷 Labels'    },
     ];
     TABS.forEach(({ id, label }) => {
@@ -680,6 +724,7 @@
     try {
       if (id === 'zoekertjes') await tabZoekertjes(content, footer);
       if (id === 'verkopen')   await tabVerkopen(content, footer);
+      if (id === 'aankopen')   await tabAankopen(content, footer);
       if (id === 'labels')     await tabLabels(content, footer);
     } catch (err) {
       console.error('[Vault]', err);
@@ -733,7 +778,7 @@
     drawVerkopen(content, orders);
     drawVerkopenFooter(footer, orders);
 
-    enrichSold(orders).then(() => {
+    enrichOrders(orders, 'sale').then(() => {
       if (activeTab !== 'verkopen') return;
       const visibleOrders = orders.filter(o => {
         if (o.currentUserSide === 'buyer') {
@@ -870,7 +915,7 @@
         let ok = 0, fail = 0;
 
         syncBtn.textContent = `⏳ Conversaties ophalen…`;
-        try { await enrichSold(targets); } catch (e) { console.warn('[Vault] enrichSold skip:', e.message); }
+        try { await enrichOrders(targets, 'sale'); } catch (e) { console.warn('[Vault] enrichOrders skip:', e.message); }
 
         for (let i = 0; i < targets.length; i++) {
           const o = targets[i];
@@ -889,6 +934,118 @@
         toast(fail === 0
           ? `✓ ${ok} orders gesynchroniseerd`
           : `✓ ${ok}/${targets.length} — ${fail} mislukt`);
+        syncBtn.disabled = false;
+        updateSyncBtnLabel();
+      })();
+    });
+
+    footer.append(selAll, deselAll, syncBtn);
+  }
+
+  // ── Tab: Aankopen ──────────────────────────────────────────────────────────
+  async function tabAankopen(content, footer) {
+    const allOrders = await getPurchased();
+    const orders = allOrders.filter(o => !isCancelled(o));
+    content.innerHTML = '';
+    if (!orders.length) { content.appendChild(emptyState('🛍', 'Geen aankopen', 'Nog geen aankopen gevonden.')); return; }
+
+    drawAankopen(content, orders);
+    drawAankopenFooter(footer, orders);
+
+    enrichOrders(orders, 'purchase').then(() => {
+      if (activeTab !== 'aankopen') return;
+      drawAankopen(content, orders);
+      drawAankopenFooter(footer, orders);
+    });
+  }
+
+  function drawAankopen(content, orders) {
+    const prev = content.querySelector('.vlt-buy-wrap');
+    if (prev) prev.remove();
+    const wrap = el('div', '');
+    wrap.className = 'vlt-buy-wrap';
+    wrap.appendChild(sectionHead('Aankopen', `${orders.length} orders`));
+
+    const rows = orders.map((o, i) => {
+      const photoCol = el('div', 'flex-shrink:0');
+      if (o.photo) {
+        const img = document.createElement('img');
+        img.src = o.photo; img.loading = 'lazy';
+        img.style.cssText = 'width:72px;height:72px;border-radius:10px;object-fit:cover;display:block';
+        img.onerror = () => img.style.visibility = 'hidden';
+        photoCol.appendChild(img);
+      } else {
+        photoCol.appendChild(el('div',
+          'width:72px;height:72px;border-radius:10px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:24px',
+          '🛍'));
+      }
+
+      const subParts = [
+        o.seller ? `@${o.seller}` : '',
+        o.country || '',
+        fmtD(o.date),
+      ].filter(Boolean);
+
+      const infoCol = el('div', 'flex:1;min-width:0');
+      infoCol.appendChild(el('div',
+        `font-size:13px;font-weight:600;color:${D.text};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3`,
+        esc(o.title)));
+      infoCol.appendChild(el('div',
+        `font-size:11px;color:${D.sub};margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis`,
+        esc(subParts.join(' · '))));
+
+      const cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.dataset.idx = i; cb.checked = false;
+      Object.assign(cb.style, { cursor:'pointer', accentColor:D.accent, flexShrink:'0', width:'16px', height:'16px', margin:'0' });
+      cb.addEventListener('change', updateSyncBtnLabel);
+
+      const lbl = document.createElement('label');
+      lbl.style.cssText = `display:flex;align-items:center;gap:12px;padding:12px 16px;cursor:pointer;${i < orders.length - 1 ? 'border-bottom:1px solid #f9fafb;' : ''}`;
+      lbl.append(photoCol, infoCol, priceTag(o.price), cb);
+      return lbl;
+    });
+
+    wrap.appendChild(cardWrap(rows));
+    content.appendChild(wrap);
+  }
+
+  function drawAankopenFooter(footer, orders) {
+    footer.innerHTML = '';
+
+    const selAll = btn('☑ Alles', `background:${D.badge};color:#374151;flex-shrink:0`);
+    selAll.addEventListener('click', () => {
+      document.querySelectorAll('#vlt-content [data-idx]').forEach(cb => { cb.checked = true; });
+      updateSyncBtnLabel();
+    });
+
+    const deselAll = btn('☐ Geen', `background:${D.badge};color:#374151;flex-shrink:0`);
+    deselAll.addEventListener('click', () => {
+      document.querySelectorAll('#vlt-content [data-idx]').forEach(cb => { cb.checked = false; });
+      updateSyncBtnLabel();
+    });
+
+    const syncBtn = btn('☁ Sync geselecteerde', `background:${D.accent};color:#fff;flex:1`);
+    syncBtn.id = 'vlt-sync';
+    syncBtn.addEventListener('click', () => {
+      const targets = [...document.querySelectorAll('#vlt-content [data-idx]:checked')]
+        .map(cb => orders[parseInt(cb.dataset.idx, 10)])
+        .filter(o => o?.transactionId);
+
+      if (!targets.length) { toast('Vink eerst aankopen aan om te synchroniseren', false); return; }
+
+      syncBtn.disabled = true;
+      (async () => {
+        let ok = 0, fail = 0;
+        syncBtn.textContent = `⏳ Conversaties ophalen…`;
+        try { await enrichOrders(targets, 'purchase'); } catch (e) { console.warn('[Vault] enrichOrders skip:', e.message); }
+
+        for (let i = 0; i < targets.length; i++) {
+          const o = { ...targets[i], orderDirection: 'purchase' };
+          syncBtn.textContent = `⏳ ${i + 1}/${targets.length} — sync…`;
+          const res = await sendMsg({ type: 'SYNC_TO_SUPABASE', order: o }, 20000);
+          res?.success ? ok++ : fail++;
+        }
+        toast(fail === 0 ? `✓ ${ok} aankopen gesynchroniseerd` : `✓ ${ok}/${targets.length} — ${fail} mislukt`);
         syncBtn.disabled = false;
         updateSyncBtnLabel();
       })();
@@ -1070,7 +1227,7 @@
       try {
         const orders = await getSold()
         const active = orders.filter(o => !isCancelled(o))
-        await enrichSold(active)
+        await enrichOrders(active, 'sale')
         await autoSync(active)
         sendResponse({ success: true, count: active.length })
       } catch (e) {
