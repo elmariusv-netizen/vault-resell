@@ -222,7 +222,9 @@
     if (c) { console.log('[Vault] getSold: cache —', c.length, 'orders'); return c; }
 
     console.log('[Vault] getSold: ophalen…');
-    const d   = await vGet('/api/v2/my_orders?order_type=sold&per_page=100&page=1');
+    const path = '/api/v2/my_orders?order_type=sold&per_page=100&page=1';
+    console.log('[Vault] getSold fetch URL:', `https://www.vinted.be${path}`);
+    const d   = await vGet(path);
     const all = d.my_orders || d.orders || d.transactions || [];
     console.log('[Vault] getSold: ontvangen:', all.length, 'orders');
     if (all[0]) {
@@ -234,11 +236,21 @@
       console.log('[Vault] user object:', JSON.stringify(all[0].user));
     }
 
-    const orders = all.map(o => {
+    const MY_USER_ID = 268018729;
+    const sold = all.filter(o => {
+      const sellerId = o.seller_id || o.seller?.id || o.transaction?.seller_id;
+      if (sellerId && String(sellerId) !== String(MY_USER_ID)) {
+        console.log('[Vault] gefilterd (geen seller):', o.item?.title || o.title || '?', '| seller_id:', sellerId);
+        return false;
+      }
+      return true;
+    });
+
+    const orders = sold.map(o => {
       const photo = o.photos?.[0]?.url || o.photo?.url ||
         o.item?.photos?.[0]?.url || o.item?.photo?.url ||
         o.photo_url || null;
-      if (o === all[0]) console.log(`[Vault] photo txn ${o.transaction_id || o.id}: resolved →`, photo || '(leeg)');
+      if (o === sold[0]) console.log(`[Vault] photo txn ${o.transaction_id || o.id}: resolved →`, photo || '(leeg)');
       const _title = o.item?.title || o.title || ''
       if (/short de bain/i.test(_title)) console.log('[Vault] DEBUG aankoop-check:', JSON.stringify(o));
       return {
