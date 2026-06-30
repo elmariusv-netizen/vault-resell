@@ -30,10 +30,16 @@ export async function loadCloudData(userId) {
 }
 
 export async function saveCloudData(userId, payload) {
-  await supabase
+  const { error } = await supabase
     .from('user_data')
     .upsert(
       { owner_id: userId, payload, updated_at: new Date().toISOString() },
       { onConflict: 'owner_id' }
     )
+  if (error) {
+    const err = new Error(error.message)
+    err.status = error.status ?? error.statusCode
+    err.code   = error.code
+    throw err
+  }
 }

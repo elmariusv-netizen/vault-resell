@@ -53,6 +53,35 @@ export default function App() {
     return () => subscription.unsubscribe()
   }, [])
 
+  // ── Sessie-bewaking: uitloggen bij verwijderde gebruiker ──────────────────
+  const forceSignOut = useCallback(() => supabase.auth.signOut(), [])
+
+  const isAuthError = (err) =>
+    err?.status === 401 || err?.status === 403 ||
+    /jwt|unauthorized|row.level security|not authenticated/i.test(err?.message || '')
+
+  const checkSession = useCallback(async () => {
+    if (!supabaseUser) return
+    const { error } = await supabase.auth.getUser()
+    if (error) {
+      console.warn('[Vault] sessiecheck mislukt — uitloggen:', error.message)
+      forceSignOut()
+    }
+  }, [supabaseUser, forceSignOut])
+
+  // Elke 30s controleren
+  useEffect(() => {
+    const id = setInterval(checkSession, 30_000)
+    return () => clearInterval(id)
+  }, [checkSession])
+
+  // Bij terugkeer op tabblad
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === 'visible') checkSession() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [checkSession])
+
   useEffect(() => { localStorage.setItem('vault-page', page) }, [page])
 
   // Theme + backup meta (no localStorage user system anymore)
@@ -104,23 +133,23 @@ export default function App() {
   }, [theme])
 
   const updateData = useCallback((updates) => {
-    setData((prev) => {
-      const next = { ...prev, ...updates }
-      saveCloudData(activeUserId, next)
-      return next
-    })
-  }, [activeUserId])
+    let next
+    setData((prev) => { next = { ...prev, ...updates }; return next })
+    saveCloudData(activeUserId, next).catch(err => { if (isAuthError(err)) forceSignOut() })
+  }, [activeUserId, forceSignOut])
 
   const handleUpdateSale = useCallback((updatedSale) => {
+    let next
     setData((prev) => {
       if (!prev) return prev
-      const next = { ...prev, sales: prev.sales.map((s) => s.id === updatedSale.id ? updatedSale : s) }
-      saveCloudData(activeUserId, next)
+      next = { ...prev, sales: prev.sales.map((s) => s.id === updatedSale.id ? updatedSale : s) }
       return next
     })
-  }, [activeUserId])
+    if (next) saveCloudData(activeUserId, next).catch(err => { if (isAuthError(err)) forceSignOut() })
+  }, [activeUserId, forceSignOut])
 
   const handleDeleteSale = useCallback((saleId) => {
+    let next
     setData((prev) => {
       if (!prev) return prev
       const sale = prev.sales.find((s) => s.id === saleId)
@@ -134,11 +163,11 @@ export default function App() {
             : b
         )
       }
-      const next = { ...prev, sales: nextSales, batches: nextBatches }
-      saveCloudData(activeUserId, next)
+      next = { ...prev, sales: nextSales, batches: nextBatches }
       return next
     })
-  }, [activeUserId])
+    if (next) saveCloudData(activeUserId, next).catch(err => { if (isAuthError(err)) forceSignOut() })
+  }, [activeUserId, forceSignOut])
 
   const handleExport = useCallback(() => {
     if (!data) return
