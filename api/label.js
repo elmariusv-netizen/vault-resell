@@ -134,10 +134,12 @@ async function detectLabelBounds(src, page) {
     return bounds;
   }
 
-  // Stap 2b: Vinted Go — klein formaat (geen A4), label + zwarte header bovenaan
+  // Stap 2b: Vinted Go — klein formaat (geen A4), label + zwarte header bovenaan.
+  // Het label neemt maar ~35-40% van de paginahoogte in, dus bovenste 40% behouden
+  // (bottom=0 is onderaan in PDF-coördinaten, dus bottom = pageH * 0.6 → bovenste 40%).
   if (pageH < 700) {
-    const bottom = pageH * 0.4; // bovenste 60% behouden (incl. "Laat je code scannen"-balk)
-    console.log(`[label] heuristic Vinted Go (${Math.round(pageW)}x${Math.round(pageH)}): bovenste 60% → bottom=${bottom.toFixed(0)}`);
+    const bottom = pageH * 0.6;
+    console.log(`[label] heuristic Vinted Go (${Math.round(pageW)}x${Math.round(pageH)}): bovenste 40% → bottom=${bottom.toFixed(0)}`);
     return { left: 0, bottom, right: pageW, top: pageH };
   }
 
