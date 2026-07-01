@@ -8,37 +8,32 @@ const OUT_H = 432
 
 // ── Ondersteunde carriers ─────────────────────────────────────────────────────
 const CARRIERS = [
-  { name: 'PostNL',        abbr: 'PNL', color: '#FF6200' },
-  { name: 'Mondial Relay', abbr: 'MR',  color: '#002D62' },
-  { name: 'Vinted Go',     abbr: 'VG',  color: '#007782' },
-  { name: 'Bpost',         abbr: 'bp',  color: '#E30613' },
-  { name: 'DPD',           abbr: 'DPD', color: '#DC0032' },
+  { name: 'PostNL',        label: 'PostNL',        color: '#FF6200', width: 76 },
+  { name: 'Mondial Relay', label: 'Mondial Relay', color: '#002D62', width: 120 },
+  { name: 'Vinted Go',     label: 'Vinted Go',     color: '#007782', width: 90 },
+  { name: 'Bpost',         label: 'bpost',         color: '#E30613', width: 68 },
+  { name: 'DPD',           label: 'DPD',           color: '#DC0032', width: 58 },
 ]
 
 function CarrierBadges() {
   return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
-      {CARRIERS.map((c) => (
-        <div
-          key={c.name}
-          style={{
-            display: 'flex', alignItems: 'center', gap: 7,
-            background: c.color, color: '#fff',
-            padding: '5px 12px 5px 6px', borderRadius: 100,
-            fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
-          }}
-        >
-          <span style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            width: 22, height: 22, borderRadius: '50%',
-            background: 'rgba(255,255,255,0.22)',
-            fontSize: 9, fontWeight: 800, letterSpacing: '0.2px',
-          }}>
-            {c.abbr}
-          </span>
-          {c.name}
-        </div>
-      ))}
+    <div>
+      <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-3)', marginBottom: 8 }}>
+        Compatible met alle grote verzendpartners
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+        {CARRIERS.map((c) => (
+          <svg key={c.name} width={c.width} height={28} viewBox={`0 0 ${c.width} 28`} role="img" aria-label={c.name}>
+            <rect width={c.width} height={28} rx={14} fill={c.color} />
+            <text
+              x="50%" y="52%" textAnchor="middle" dominantBaseline="middle"
+              fill="#fff" fontSize={12} fontWeight={700}
+            >
+              {c.label}
+            </text>
+          </svg>
+        ))}
+      </div>
     </div>
   )
 }
@@ -148,31 +143,36 @@ function OrderCard({ order, onDownload, isDownloading, isDone }) {
 // ── Handmatig label toevoegen (modal) ──────────────────────────────────────────
 function ManualLabelModal({ onClose, onAdd }) {
   const [dragOver, setDragOver] = useState(false)
-  const [phase, setPhase]       = useState('idle') // idle | uploading | preview | error
+  const [phase, setPhase]       = useState('idle') // idle | uploading | batch | preview | error
   const [error, setError]       = useState(null)
   const [preview, setPreview]   = useState(null)   // { name, blob, previewUrl }
+  const [batchProgress, setBatchProgress] = useState({ done: 0, total: 0 })
   const fileInputRef = useRef(null)
 
   useEffect(() => {
     return () => { if (preview?.previewUrl) URL.revokeObjectURL(preview.previewUrl) }
   }, [preview])
 
-  const cropFile = async (file) => {
+  const cropViaApi = async (file) => {
+    const res = await fetch('/api/label', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/pdf' },
+      body: file,
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.error || `HTTP ${res.status}`)
+    }
+    return { name: file.name, blob: await res.blob() }
+  }
+
+  const cropSingle = async (file) => {
     setPhase('uploading')
     setError(null)
     try {
-      const res = await fetch('/api/label', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/pdf' },
-        body: file,
-      })
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}))
-        throw new Error(err.error || `HTTP ${res.status}`)
-      }
-      const blob = await res.blob()
+      const { name, blob } = await cropViaApi(file)
       const previewUrl = URL.createObjectURL(blob)
-      setPreview({ name: file.name, blob, previewUrl })
+      setPreview({ name, blob, previewUrl })
       setPhase('preview')
     } catch (e) {
       setError(`Croppen mislukt: ${e.message}`)
@@ -180,10 +180,36 @@ function ManualLabelModal({ onClose, onAdd }) {
     }
   }
 
+  // Meerdere bestanden: elk apart croppen via de API, voortgang tonen, en
+  // succesvolle labels meteen aan de lijst toevoegen (geen individuele
+  // preview/bevestiging per bestand — dat zou omslachtig zijn bij een batch).
+  const cropBatch = async (files) => {
+    setPhase('batch')
+    setError(null)
+    setBatchProgress({ done: 0, total: files.length })
+    let failCount = 0
+    for (let i = 0; i < files.length; i++) {
+      try {
+        onAdd(await cropViaApi(files[i]))
+      } catch (e) {
+        failCount++
+        console.warn('[Vault] batch crop mislukt:', files[i].name, e.message)
+      }
+      setBatchProgress({ done: i + 1, total: files.length })
+    }
+    if (failCount === files.length) {
+      setError(`Geen van de ${files.length} bestanden kon worden gecropt.`)
+      setPhase('error')
+    } else {
+      onClose()
+    }
+  }
+
   const handleFiles = (fileList) => {
-    const file = Array.from(fileList).find((f) => f.type === 'application/pdf')
-    if (!file) { setError('Kies een PDF-bestand.'); setPhase('error'); return }
-    cropFile(file)
+    const files = Array.from(fileList).filter((f) => f.type === 'application/pdf')
+    if (!files.length) { setError('Kies één of meer PDF-bestanden.'); setPhase('error'); return }
+    if (files.length === 1) cropSingle(files[0])
+    else cropBatch(files)
   }
 
   const confirmAdd = () => {
@@ -216,11 +242,11 @@ function ManualLabelModal({ onClose, onAdd }) {
           >
             <div className="drop-icon">📄</div>
             <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-2)', marginBottom: 6 }}>
-              Sleep een PDF-label hier
+              Sleep één of meer PDF-labels hier
             </div>
             <div style={{ fontSize: 12, color: 'var(--text-3)' }}>of klik om te bladeren</div>
             <input
-              ref={fileInputRef} type="file" accept=".pdf,application/pdf"
+              ref={fileInputRef} type="file" accept=".pdf,application/pdf" multiple
               onChange={(e) => { if (e.target.files.length) handleFiles(e.target.files); e.target.value = '' }}
               style={{ display: 'none' }}
             />
@@ -232,6 +258,15 @@ function ManualLabelModal({ onClose, onAdd }) {
             <div style={{ fontSize: 32, marginBottom: 10 }}>⏳</div>
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)' }}>
               Label wordt gecropt naar 4×6…
+            </div>
+          </div>
+        )}
+
+        {phase === 'batch' && (
+          <div style={{ marginTop: 16, padding: '40px 0', textAlign: 'center' }}>
+            <div style={{ fontSize: 32, marginBottom: 10 }}>⏳</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)' }}>
+              {batchProgress.done}/{batchProgress.total} verwerkt…
             </div>
           </div>
         )}
