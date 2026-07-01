@@ -95,6 +95,116 @@ function findLargestContentRect(src, page, pageW, pageH) {
   }
 }
 
+// Multiply 2D affine PDF matrices: applies `cm` (nieuw) NA `base` (bestaande CTM)
+function multiplyMatrix(base, cm) {
+  const [a0, b0, c0, d0, e0, f0] = base;
+  const [a, b, c, d, e, f] = cm;
+  return [
+    a * a0 + b * c0, a * b0 + b * d0,
+    c * a0 + d * c0, c * b0 + d * d0,
+    e * a0 + f * c0 + e0, e * b0 + f * d0 + f0,
+  ];
+}
+
+// Detecteer of de pagina simpelweg één ingebedde Form XObject tekent (typisch
+// resultaat van een eerdere embedPdf/embedPage + drawPage-bewerking zonder
+// crop). Retourneert de naam van de XObject en de samengestelde CTM op het
+// moment van de `Do`-operator, of null als er geen enkele Form-XObject-oproep
+// gevonden wordt.
+function findWrappedFormXObjectRef(text) {
+  try {
+    const tokenRe = /(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+cm\b|\/(\S+)\s+Do\b|\bq\b|\bQ\b/g;
+    let stack = [[1, 0, 0, 1, 0, 0]];
+    let m;
+    while ((m = tokenRe.exec(text)) !== null) {
+      if (m[0] === 'q') { stack.push(stack[stack.length - 1].slice()); continue; }
+      if (m[0] === 'Q') { if (stack.length > 1) stack.pop(); continue; }
+      if (m[7] !== undefined) return { name: m[7], ctm: stack[stack.length - 1].slice() };
+      const cm = [+m[1], +m[2], +m[3], +m[4], +m[5], +m[6]];
+      stack[stack.length - 1] = multiplyMatrix(stack[stack.length - 1], cm);
+    }
+    return null;
+  } catch (e) {
+    console.warn('[label] findWrappedFormXObjectRef fout:', e.message);
+    return null;
+  }
+}
+
+// Als de pagina niets anders doet dan één ingebedde Form XObject tekenen (een
+// "domme" volledige-pagina-embed zonder crop), lever dan diens eigen BBox en
+// content-bytes plus de CTM om terug naar pagina-coördinaten te mappen.
+function unwrapFormXObject(src, page) {
+  try {
+    const pageNode = page.node;
+    const context  = src.context;
+    const contentsRef = pageNode.get(PDFName.of('Contents'));
+    if (!contentsRef) return null;
+    const contentsObj = context.lookup(contentsRef);
+    const streamObjs = [];
+    if (contentsObj && typeof contentsObj.asArray === 'function') {
+      for (const ref of contentsObj.asArray()) {
+        const s = context.lookup(ref);
+        if (s) streamObjs.push(s);
+      }
+    } else if (contentsObj) {
+      streamObjs.push(contentsObj);
+    }
+    if (streamObjs.length !== 1) return null;
+
+    const bytes = decodeStreamObj(streamObjs[0]);
+    if (!bytes) return null;
+    const text = Buffer.from(bytes).toString('binary');
+
+    const found = findWrappedFormXObjectRef(text);
+    if (!found) return null;
+
+    const resourcesRef = pageNode.get(PDFName.of('Resources'));
+    const resources    = resourcesRef && context.lookup(resourcesRef);
+    const xobjectsRef  = resources?.get(PDFName.of('XObject'));
+    const xobjects     = xobjectsRef && context.lookup(xobjectsRef);
+    const xref         = xobjects?.get(PDFName.of(found.name));
+    const xobj         = xref && context.lookup(xref);
+    if (!xobj || xobj.dict?.get(PDFName.of('Subtype'))?.toString() !== '/Form') return null;
+
+    const bboxRef = xobj.dict.get(PDFName.of('BBox'));
+    const bboxArr = bboxRef && context.lookup(bboxRef);
+    if (!bboxArr) return null;
+    const nums = [0, 1, 2, 3].map((i) => {
+      const item = bboxArr.get(i);
+      return item.asNumber ? item.asNumber() : item.numberValue;
+    });
+    if (nums.some((n) => n == null || isNaN(n))) return null;
+    const [bx1, by1, bx2, by2] = nums;
+
+    return {
+      vw: Math.abs(bx2 - bx1),
+      vh: Math.abs(by2 - by1),
+      ctm: found.ctm,
+      xobjBytes: decodeStreamObj(xobj),
+    };
+  } catch (e) {
+    console.warn('[label] unwrapFormXObject fout:', e.message);
+    return null;
+  }
+}
+
+// Map een bounds-object (in de coördinaten van de ingebedde XObject) terug naar
+// pagina-coördinaten via de CTM.
+function mapBoundsThroughCtm(bounds, ctm, pageW, pageH) {
+  const [a, b, c, d, e, f] = ctm;
+  const corners = [
+    [bounds.left, bounds.bottom],
+    [bounds.right, bounds.top],
+  ].map(([x, y]) => [a * x + c * y + e, b * x + d * y + f]);
+  const xs = corners.map((p) => p[0]), ys = corners.map((p) => p[1]);
+  return {
+    left:   Math.max(0, Math.min(...xs)),
+    right:  Math.min(pageW, Math.max(...xs)),
+    bottom: Math.max(0, Math.min(...ys)),
+    top:    Math.min(pageH, Math.max(...ys)),
+  };
+}
+
 // Detect the label crop region within a PDF page
 // Returns { left, bottom, right, top, rotate } in PDF points (origin bottom-left).
 // `rotate` is true ONLY when the label content itself is physically rotated 90°
@@ -149,9 +259,47 @@ export async function detectLabelBounds(src, page) {
     return bounds;
   }
 
-  // Stap 2b: Vinted Go — klein formaat (geen A4), label + zwarte header bovenaan.
-  // Het label neemt maar ~35-40% van de paginahoogte in, dus bovenste 40% behouden
-  // (bottom=0 is onderaan in PDF-coördinaten, dus bottom = pageH * 0.6 → bovenste 40%).
+  // Stap 2b: de pagina zelf tekent niets anders dan één ingebedde Form XObject
+  // (een "domme" volledige-pagina-embed van een eerdere embedPdf/embedPage +
+  // drawPage-bewerking, zonder crop). Kijk naar de ECHTE inhoud daarbinnen i.p.v.
+  // de hele ingebedde pagina te vertrouwen — geverifieerd op een echt bestand
+  // waarbij de ingebedde XObject een volledige 595×842-pagina bleek (BBox
+  // 0,0,595,842) met de daadwerkelijke content maar in de bovenste ~35% ervan.
+  const wrapped = unwrapFormXObject(src, page);
+  if (wrapped) {
+    console.log(`[label] wrapper gedetecteerd: ingebedde XObject ${wrapped.vw.toFixed(0)}x${wrapped.vh.toFixed(0)}`);
+    const innerRects = parseRects(wrapped.xobjBytes, wrapped.vw, wrapped.vh);
+    let innerBounds;
+    if (innerRects.length) {
+      innerRects.sort((a, b) => (b.right - b.left) * (b.top - b.bottom) - (a.right - a.left) * (a.top - a.bottom));
+      innerBounds = innerRects[0];
+      console.log(`[label] wrapper: content-rect binnenin gevonden (${(innerBounds.right - innerBounds.left).toFixed(0)}x${(innerBounds.top - innerBounds.bottom).toFixed(0)})`);
+    } else if (wrapped.vw > wrapped.vh) {
+      innerBounds = { left: 0, bottom: wrapped.vh * 0.45, right: wrapped.vw * 0.55, top: wrapped.vh };
+      console.log('[label] wrapper: geen rect binnenin — landscape-heuristiek op virtuele pagina');
+    } else {
+      innerBounds = { left: 0, bottom: wrapped.vh * 0.6, right: wrapped.vw, top: wrapped.vh };
+      console.log('[label] wrapper: geen rect binnenin — bovenste 40% op virtuele pagina');
+    }
+    const mapped = mapBoundsThroughCtm(innerBounds, wrapped.ctm, pageW, pageH);
+    mapped.rotate = false;
+    console.log(`[label] wrapper: gemapt naar pagina-coördinaten: left=${mapped.left.toFixed(0)} bottom=${mapped.bottom.toFixed(0)} right=${mapped.right.toFixed(0)} top=${mapped.top.toFixed(0)}`);
+    return mapped;
+  }
+
+  // Stap 2c: pagina is al ~4×6 groot en GEEN wrapper — waarschijnlijk al een
+  // correcte crop (bv. opnieuw geüpload na eerdere verwerking) — vertrouw de
+  // volledige pagina i.p.v. een percentage te gokken.
+  const isAlready4x6 = Math.abs(pageW - LABEL_W) < 20 && Math.abs(pageH - LABEL_H) < 20;
+  if (isAlready4x6) {
+    console.log(`[label] pagina is al ~4x6 (${Math.round(pageW)}x${Math.round(pageH)}), geen wrapper — volledige pagina vertrouwen`);
+    return { left: 0, bottom: 0, right: pageW, top: pageH, rotate: false };
+  }
+
+  // Stap 2d: Vinted Go — écht klein, niet-4×6 nativ formaat (bv. ~595x490),
+  // label + zwarte header bovenaan. Het label neemt in dat geval maar ~35-40%
+  // van de paginahoogte in, dus bovenste 40% behouden (bottom=0 is onderaan in
+  // PDF-coördinaten, dus bottom = pageH * 0.6 → bovenste 40%).
   if (pageH < 700) {
     const bottom = pageH * 0.6;
     console.log(`[label] heuristic Vinted Go (${Math.round(pageW)}x${Math.round(pageH)}): bovenste 40% → bottom=${bottom.toFixed(0)}`);
