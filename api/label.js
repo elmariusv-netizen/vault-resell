@@ -243,8 +243,11 @@ export async function detectLabelBounds(src, page) {
       bounds.rotate = true;
       console.log(`[label] content-rect in onderste helft → Mondial Relay (gedraaid): left=${bounds.left.toFixed(0)} bottom=${bounds.bottom.toFixed(0)} right=${bounds.right.toFixed(0)} top=${bounds.top.toFixed(0)} (${rw.toFixed(0)}x${rh.toFixed(0)})`);
     } else {
-      bounds.rotate = false;
-      console.log(`[label] content-rect in bovenste helft → PostNL: left=${bounds.left.toFixed(0)} bottom=${bounds.bottom.toFixed(0)} right=${bounds.right.toFixed(0)} top=${bounds.top.toFixed(0)} (${rw.toFixed(0)}x${rh.toFixed(0)})`);
+      // PostNL: roteer 90° naar landscape voor de 4×6 thermische printer als
+      // de gevonden rechthoek zelf breder dan hoog is; laat staan als hij al
+      // hoger dan breed is.
+      bounds.rotate = rw > rh;
+      console.log(`[label] content-rect in bovenste helft → PostNL: left=${bounds.left.toFixed(0)} bottom=${bounds.bottom.toFixed(0)} right=${bounds.right.toFixed(0)} top=${bounds.top.toFixed(0)} (${rw.toFixed(0)}x${rh.toFixed(0)}), roteer=${bounds.rotate}`);
     }
     return bounds;
   }
