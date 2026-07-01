@@ -225,18 +225,6 @@ export async function detectLabelBounds(src, page) {
   console.log('[label] mediaBox:', Math.round(pageW), 'x', Math.round(pageH));
   console.log('[label] DETECT START pageW:', pageW.toFixed(1), 'pageH:', pageH.toFixed(1));
 
-  // Stap 0: Vinted Go — kleiner dan A4 (pageH < 500). Het label (zwarte header +
-  // QR) staat altijd in de bovenste ~45% van de pagina; de rest is wit. Dit is
-  // een vaste, simpele regel die vóór alle andere detectie loopt — de eerdere
-  // aanpak (rechthoek-detectie / ingebedde-XObject-BBox-detectie) bleek in
-  // productie op Vercel niet betrouwbaar genoeg voor dit formaat.
-  console.log('[label] Vinted Go check: pageH < 500?', pageH < 500);
-  if (pageH < 500) {
-    const bottom = pageH * 0.55;
-    console.log(`[label] Vinted Go (pageH=${pageH.toFixed(0)} < 500): vaste bovenste 45% → bottom=${bottom.toFixed(1)}`);
-    return { left: 0, bottom, right: pageW, top: pageH, rotate: false };
-  }
-
   // Stap 1: zoek de grootste rechthoek in de content streams (labelkader)
   const rect = findLargestContentRect(src, page, pageW, pageH);
 
@@ -263,7 +251,20 @@ export async function detectLabelBounds(src, page) {
 
   console.log('[label] geen bruikbare content-rechthoek gevonden — val terug op pagina-heuristiek');
 
-  // Stap 2a: Bpost — A4 landscape (breder dan hoog), label linksboven kwadrant.
+  // Stap 2a: Vinted Go — A4 portrait (595×842), maar GEEN kader rond het label
+  // (in tegenstelling tot PostNL, waar stap 1 hierboven wél een content-
+  // rechthoek vindt — dat is precies het onderscheid: content-rechthoek
+  // gevonden → PostNL/Mondial Relay/Bpost; geen rechthoek + portrait A4 →
+  // Vinted Go). Het label (zwarte header + QR) staat in de bovenste ~38% van
+  // de pagina — geverifieerd op de échte productie-versie (595x842pt).
+  const isA4Portrait = pageW > 550 && pageW < 640 && pageH > 800 && pageH < 900;
+  if (isA4Portrait) {
+    const bottom = pageH * 0.62;
+    console.log('[label] heuristic Vinted Go A4: bovenste 38%');
+    return { left: 0, bottom, right: pageW, top: pageH, rotate: false };
+  }
+
+  // Stap 2b: Bpost — A4 landscape (breder dan hoog), label linksboven kwadrant.
   // Moet vóór de Vinted Go-check komen: A4 landscape (842x595) heeft ook hoogte < 700.
   // De inhoud zelf staat rechtop (niet gedraaid) — enkel de crop-box is landscape-vormig.
   if (pageW > pageH) {
@@ -272,7 +273,7 @@ export async function detectLabelBounds(src, page) {
     return bounds;
   }
 
-  // Stap 2b: de pagina zelf tekent niets anders dan één ingebedde Form XObject
+  // Stap 2c: de pagina zelf tekent niets anders dan één ingebedde Form XObject
   // (een "domme" volledige-pagina-embed van een eerdere embedPdf/embedPage +
   // drawPage-bewerking, zonder crop). Kijk naar de ECHTE inhoud daarbinnen i.p.v.
   // de hele ingebedde pagina te vertrouwen — geverifieerd op een echt bestand
@@ -300,7 +301,7 @@ export async function detectLabelBounds(src, page) {
     return mapped;
   }
 
-  // Stap 2c: pagina is al ~4×6 groot en GEEN wrapper — waarschijnlijk al een
+  // Stap 2d: pagina is al ~4×6 groot en GEEN wrapper — waarschijnlijk al een
   // correcte crop (bv. opnieuw geüpload na eerdere verwerking) — vertrouw de
   // volledige pagina i.p.v. een percentage te gokken.
   const isAlready4x6 = Math.abs(pageW - LABEL_W) < 20 && Math.abs(pageH - LABEL_H) < 20;
@@ -309,9 +310,9 @@ export async function detectLabelBounds(src, page) {
     return { left: 0, bottom: 0, right: pageW, top: pageH, rotate: false };
   }
 
-  // Stap 2d: Vinted Go — écht klein, niet-4×6 nativ formaat (bv. ~595x490),
-  // label + zwarte header bovenaan. Het label neemt in dat geval maar ~35-40%
-  // van de paginahoogte in, dus bovenste 40% behouden (bottom=0 is onderaan in
+  // Stap 2e: écht klein, niet-A4, niet-4×6 formaat (bv. ~595x490), label +
+  // zwarte header bovenaan. Het label neemt in dat geval maar ~35-40% van de
+  // paginahoogte in, dus bovenste 40% behouden (bottom=0 is onderaan in
   // PDF-coördinaten, dus bottom = pageH * 0.6 → bovenste 40%).
   if (pageH < 700) {
     const bottom = pageH * 0.6;
