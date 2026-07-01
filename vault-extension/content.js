@@ -266,6 +266,21 @@
       if (o === sold[0]) console.log(`[Vault] photo txn ${o.transaction_id || o.id}: resolved →`, photo || '(leeg)');
       const _title = o.item?.title || o.title || ''
       if (/short de bain/i.test(_title)) console.log('[Vault] DEBUG aankoop-check:', JSON.stringify(o));
+
+      const resolvedDate =
+        o.created_at || o.updated_at || o.transaction?.created_at ||
+        o.date || o.shipment?.created_at || '';
+      if (o === sold[0]) {
+        console.log('[Vault] datum veld:', JSON.stringify({
+          created_at:              o.created_at,
+          updated_at:              o.updated_at,
+          'transaction.created_at': o.transaction?.created_at,
+          date:                    o.date,
+          'shipment.created_at':   o.shipment?.created_at,
+          resolved:                resolvedDate,
+        }));
+      }
+
       return {
         transactionId:         String(o.transaction_id || o.id || ''),
         itemId:                String(o.item?.id || ''),
@@ -275,7 +290,7 @@
         buyer:                 o.buyer?.login || o.user?.login || '',
         buyer_name:            o.buyer?.real_name || o.buyer?.display_name || o.buyer?.name || o.user?.real_name || o.user?.display_name || '',
         country:               o.buyer?.country_iso_code || o.country_iso_code || '',
-        date:                  (o.created_at || o.updated_at || '').slice(0, 10),
+        date:                  (resolvedDate || '').slice(0, 10),
         status:                o.status || '',
         transactionUserStatus: o.transaction_user_status ?? null,
         conversationId:        String(o.conversation_id || o.thread_id || ''),

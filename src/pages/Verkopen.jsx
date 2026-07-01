@@ -302,6 +302,25 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave }
           >×</button>
         </div>
 
+        {/* Foto-galerij (max 4) — enkel als er meerdere foto's zijn */}
+        {allPhotos.length > 1 && (
+          <div style={{ display: 'flex', gap: 6, padding: '10px 24px 0', flexShrink: 0 }}>
+            {allPhotos.slice(0, 4).map((url, i) => (
+              <img
+                key={i}
+                src={url}
+                alt=""
+                onClick={() => onPhotoClick([...allPhotos.slice(i), ...allPhotos.slice(0, i)])}
+                style={{
+                  width: 56, height: 56, borderRadius: 8, objectFit: 'cover',
+                  cursor: 'zoom-in', flexShrink: 0,
+                  border: i === 0 ? '2px solid var(--green)' : '1px solid var(--border)',
+                }}
+              />
+            ))}
+          </div>
+        )}
+
         {/* Scrollbare inhoud */}
         <div style={{ padding: '20px 24px 24px', overflowY: 'auto', flex: 1 }}>
 
@@ -622,18 +641,29 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
           </div>
 
           {/* Foto */}
-          <div style={{ flexShrink: 0 }}>
+          <div style={{ flexShrink: 0, position: 'relative' }}>
             {allPhotos.length ? (
-              <img
-                src={allPhotos[0]} alt=""
-                style={{ width: 100, height: 124, borderRadius: 8, objectFit: 'cover', display: 'block', cursor: 'zoom-in' }}
-                onMouseEnter={e => {
-                  const r = e.currentTarget.getBoundingClientRect()
-                  setHoverPos({ x: r.right + 12, y: Math.max(8, r.top - 40) })
-                }}
-                onMouseLeave={() => setHoverPos(null)}
-                onClick={() => onPhotoClick(allPhotos)}
-              />
+              <>
+                <img
+                  src={allPhotos[0]} alt=""
+                  style={{ width: 100, height: 124, borderRadius: 8, objectFit: 'cover', display: 'block', cursor: 'zoom-in' }}
+                  onMouseEnter={e => {
+                    const r = e.currentTarget.getBoundingClientRect()
+                    setHoverPos({ x: r.right + 12, y: Math.max(8, r.top - 40) })
+                  }}
+                  onMouseLeave={() => setHoverPos(null)}
+                  onClick={() => onPhotoClick(allPhotos)}
+                />
+                {allPhotos.length > 1 && (
+                  <span style={{
+                    position: 'absolute', bottom: 6, right: 6,
+                    background: 'rgba(0,0,0,0.65)', color: '#fff', fontSize: 10, fontWeight: 700,
+                    padding: '2px 6px', borderRadius: 20, pointerEvents: 'none',
+                  }}>
+                    📷 {allPhotos.length}
+                  </span>
+                )}
+              </>
             ) : (
               <div style={{ position: 'relative', width: 100, height: 124, flexShrink: 0 }}>
                 <div style={{ width: 100, height: 124, borderRadius: 8, background: '#1e293b', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 32 }}>
