@@ -6,6 +6,43 @@ import { genId } from '../utils/skuUtils'
 const OUT_W = 288
 const OUT_H = 432
 
+// ── Ondersteunde carriers ─────────────────────────────────────────────────────
+const CARRIERS = [
+  { name: 'PostNL',        abbr: 'PNL', color: '#FF6200' },
+  { name: 'Mondial Relay', abbr: 'MR',  color: '#002D62' },
+  { name: 'Vinted Go',     abbr: 'VG',  color: '#007782' },
+  { name: 'Bpost',         abbr: 'bp',  color: '#E30613' },
+  { name: 'DPD',           abbr: 'DPD', color: '#DC0032' },
+]
+
+function CarrierBadges() {
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+      {CARRIERS.map((c) => (
+        <div
+          key={c.name}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 7,
+            background: c.color, color: '#fff',
+            padding: '5px 12px 5px 6px', borderRadius: 100,
+            fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
+          }}
+        >
+          <span style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: 22, height: 22, borderRadius: '50%',
+            background: 'rgba(255,255,255,0.22)',
+            fontSize: 9, fontWeight: 800, letterSpacing: '0.2px',
+          }}>
+            {c.abbr}
+          </span>
+          {c.name}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 // ── Formatters ─────────────────────────────────────────────────────────────
 function formatPrice(price, currency = 'EUR') {
   try { return new Intl.NumberFormat('nl-BE', { style: 'currency', currency }).format(price) }
@@ -376,6 +413,11 @@ export default function Labels({ vintedCookie }) {
         <button className="btn btn-secondary" onClick={() => setModalOpen(true)}>
           ➕ Handmatig label toevoegen
         </button>
+      </div>
+
+      <CarrierBadges />
+      <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 20 }}>
+        Alle verzendlabels worden automatisch herkend en uitgeknipt op 4×6 voor je Munbyn printer.
       </div>
 
       {/* ── Vinted labels ────────────────────────────────────────────────── */}
