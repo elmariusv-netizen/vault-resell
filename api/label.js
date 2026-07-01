@@ -148,7 +148,13 @@ async function detectLabelBounds(src, page) {
   return { left: 0, bottom: 0, right: pageW, top: pageH };
 }
 
-// Crop ruwe PDF-bytes (welke bron dan ook) naar een exacte 4×6 (288×432pt) label-PDF
+// Crop ruwe PDF-bytes (welke bron dan ook) naar een exacte 4×6 (288×432pt) label-PDF.
+//
+// Aanpak: embed de VOLLEDIGE bronpagina (geen crop-parameters aan embedPage),
+// en vergroot/verschuif die dan via drawPage() zodat enkel de gedetecteerde
+// label-zone wordt uitvergroot naar de volledige 288×432 doelpagina. Alles
+// buiten de doelpagina wordt door de output-pagina zelf niet weergegeven —
+// er is dus geen aparte clip/crop-stap nodig.
 async function cropToLabel(pdfBytes) {
   const src  = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
   const page = src.getPages()[0];
@@ -157,60 +163,52 @@ async function cropToLabel(pdfBytes) {
   const rotation = page.getRotation().angle;
   console.log('[label] page size:', Math.round(pageW), 'x', Math.round(pageH), 'rotation:', rotation);
 
-  // If page is already 4×6 (within 5%), use the whole page
+  const out = await PDFDocument.create();
+
+  // If page is already 4×6 (within tolerance), gebruik de volledige pagina 1-op-1
   const alreadyLabel = Math.abs(pageW - LABEL_W) < 20 && Math.abs(pageH - LABEL_H) < 20;
   if (alreadyLabel) {
     console.log('[label] page is already 4x6 — using full page');
-    const out = await PDFDocument.create();
-    const [emb] = await out.embedPdf(src, [0]);
-    const newPage = out.addPage([LABEL_W, LABEL_H]);
-    newPage.drawPage(emb, { x: 0, y: 0, width: LABEL_W, height: LABEL_H });
+    const embedded = await out.embedPage(page);
+    const newPage  = out.addPage([LABEL_W, LABEL_H]);
+    newPage.drawPage(embedded, { x: 0, y: 0, width: LABEL_W, height: LABEL_H });
     return Buffer.from(await out.save());
   }
 
-  // Detect where the label is within the page
+  // Detecteer de label-zone (left,bottom,right,top) in bron-coördinaten
   const bounds = await detectLabelBounds(src, page);
-
-  // Crop region dimensions
   const cropW = bounds.right - bounds.left;
   const cropH = bounds.top  - bounds.bottom;
   console.log(`[label] FINAL BOUNDS gebruikt: left=${bounds.left.toFixed(1)} bottom=${bounds.bottom.toFixed(1)} right=${bounds.right.toFixed(1)} top=${bounds.top.toFixed(1)} → crop ${cropW.toFixed(1)}x${cropH.toFixed(1)}`);
 
-  const out = await PDFDocument.create();
+  // Embed de VOLLEDIGE pagina zonder crop-parameters
+  const embedded = await out.embedPage(page);
+  const newPage  = out.addPage([LABEL_W, LABEL_H]);
 
-  // Embed the source page with the crop box
-  const embedded = await out.embedPage(page, {
-    left:   bounds.left,
-    bottom: bounds.bottom,
-    right:  bounds.right,
-    top:    bounds.top,
-  });
-
-  // Output is altijd exact 4×6 (288×432pt), portrait — nooit een ander paginaformaat
-  const newPage = out.addPage([LABEL_W, LABEL_H]);
-
-  // Als de crop breder dan hoog is, roteer 90° zodat hij in de portrait 4×6 past
   const cropIsLandscape = cropW > cropH;
 
   if (cropIsLandscape) {
-    // Stretch-to-fill: het label vult de volledige 4×6 pagina, geen witte randen.
-    // Aspect ratio wordt niet behouden — na rotatie van -90° wisselen breedte/hoogte,
-    // dus drawH moet exact LABEL_W worden (visuele breedte) en drawW exact LABEL_H
-    // (visuele hoogte).
-    const drawW = LABEL_H;
-    const drawH = LABEL_W;
-    console.log(`[label] rotate -90° + stretch-to-fill: drawW=${drawW} drawH=${drawH} (volledige pagina, geen marge)`);
-    newPage.drawPage(embedded, {
-      x:      0,
-      y:      drawW,
-      width:  drawW,
-      height: drawH,
-      rotate: { type: 'degrees', angle: -90 },
-    });
+    // Roteer -90° en vergroot de (landscape) label-zone naar de volledige 4×6.
+    // Na rotatie wisselen breedte/hoogte: de bron-breedte-as wordt de visuele
+    // hoogte (LABEL_H) en de bron-hoogte-as wordt de visuele breedte (LABEL_W).
+    const xScale = LABEL_H / cropW;
+    const yScale = LABEL_W / cropH;
+    const x      = -bounds.bottom * yScale;
+    const y      = bounds.right   * xScale;
+    const width  = xScale * pageW;
+    const height = yScale * pageH;
+    console.log(`[label] rotate -90° + overscale: xScale=${xScale.toFixed(3)} yScale=${yScale.toFixed(3)} x=${x.toFixed(1)} y=${y.toFixed(1)} width=${width.toFixed(1)} height=${height.toFixed(1)}`);
+    newPage.drawPage(embedded, { x, y, width, height, rotate: { type: 'degrees', angle: -90 } });
   } else {
-    // Portrait crop: stretch-to-fill, geen witte randen (aspect ratio niet behouden)
-    console.log(`[label] stretch-to-fill: drawW=${LABEL_W} drawH=${LABEL_H} (volledige pagina, geen marge)`);
-    newPage.drawPage(embedded, { x: 0, y: 0, width: LABEL_W, height: LABEL_H });
+    // Vergroot de (portrait) label-zone naar de volledige 4×6, geen rotatie.
+    const scaleX = LABEL_W / cropW;
+    const scaleY = LABEL_H / cropH;
+    const x      = -bounds.left   * scaleX;
+    const y      = -bounds.bottom * scaleY;
+    const width  = scaleX * pageW;
+    const height = scaleY * pageH;
+    console.log(`[label] overscale: scaleX=${scaleX.toFixed(3)} scaleY=${scaleY.toFixed(3)} x=${x.toFixed(1)} y=${y.toFixed(1)} width=${width.toFixed(1)} height=${height.toFixed(1)}`);
+    newPage.drawPage(embedded, { x, y, width, height });
   }
 
   const cropped = await out.save();
