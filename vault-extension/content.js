@@ -1056,6 +1056,12 @@
 
     content.appendChild(sectionHead('Labels', `${labelOrders.length} beschikbaar`));
 
+    // Debug: log het transactionUserStatus-veld per order zodat we kunnen zien
+    // of Vinted dat veld daadwerkelijk teruggeeft voor deze orders
+    labelOrders.forEach(o => {
+      console.log(`[Vault] label order txn ${o.transactionId}: status="${o.status}" transactionUserStatus="${o.transactionUserStatus}"`);
+    });
+
     const dlBtns = new Map();
     const rows = labelOrders.map((o, i) => {
       const printed = dlIds.has(o.transactionId);
@@ -1071,8 +1077,13 @@
       const actions = el('div', 'display:flex;gap:6px;flex-shrink:0');
       actions.appendChild(dlBtn);
 
-      // "Verzendlabel is naar de verkoper gestuurd." → needs_action
-      if (o.transactionUserStatus === 'needs_action') {
+      // "Verzendlabel is naar de verkoper gestuurd." → needs_action.
+      // Als transactionUserStatus leeg is (Vinted geeft het veld niet altijd terug),
+      // val terug op de status-tekst.
+      const hasTxStatus = !!(o.transactionUserStatus || '').trim();
+      const needsAction = o.transactionUserStatus === 'needs_action'
+        || (!hasTxStatus && /verzendlabel/i.test(o.status || ''));
+      if (needsAction) {
         const sendBtn = btn('📤 Stuur naar app', `background:${D.badge};color:#374151;flex-shrink:0`);
         sendBtn.addEventListener('click', () => sendLabelAvailable(o.transactionId, sendBtn));
         actions.appendChild(sendBtn);

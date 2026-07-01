@@ -135,11 +135,11 @@ async function detectLabelBounds(src, page) {
   const isA4Landscape = pageH > 550 && pageH < 640 && pageW > 800 && pageW < 900;
 
   if (isA4Portrait) {
-    // Most Vinted/Sendcloud labels: 4×6 label in upper portion, centered
-    const left   = (pageW - LABEL_W) / 2;
-    const bottom = pageH - LABEL_H;
-    console.log(`[label] heuristic A4-portrait: left=${Math.round(left)} bottom=${Math.round(bottom)} ${LABEL_W}x${LABEL_H}`);
-    return { left, bottom, right: left + LABEL_W, top: pageH };
+    // Vinted rendert het label als vast blok van ±400×280pt, gecentreerd op de A4-pagina
+    // (bevestigd via handmatige meting — CropBox/re-operator-detectie vinden dit blok niet)
+    const bounds = { left: 97, bottom: 281, right: 497, top: 561 };
+    console.log(`[label] heuristic A4-portrait (vaste coördinaten): left=${bounds.left} bottom=${bounds.bottom} right=${bounds.right} top=${bounds.top} (${bounds.right - bounds.left}x${bounds.top - bounds.bottom})`);
+    return bounds;
   }
 
   if (isA4Landscape) {
@@ -252,16 +252,7 @@ export default async function handler(req, res) {
   // Crop region dimensions
   const cropW = bounds.right - bounds.left;
   const cropH = bounds.top  - bounds.bottom;
-  console.log('[label] crop region:', `${Math.round(bounds.left)},${Math.round(bounds.bottom)} → ${Math.round(bounds.right)},${Math.round(bounds.top)} (${Math.round(cropW)}x${Math.round(cropH)})`);
-
-  // Determine output orientation: if crop is wider than tall, rotate 90° to fit 4×6
-  let outW = LABEL_W, outH = LABEL_H;
-  const cropIsLandscape = cropW > cropH;
-  if (cropIsLandscape) {
-    console.log('[label] crop is landscape — rotating 90° to portrait');
-    outW = LABEL_H;
-    outH = LABEL_W;
-  }
+  console.log(`[label] FINAL BOUNDS gebruikt: left=${bounds.left.toFixed(1)} bottom=${bounds.bottom.toFixed(1)} right=${bounds.right.toFixed(1)} top=${bounds.top.toFixed(1)} → crop ${cropW.toFixed(1)}x${cropH.toFixed(1)}`);
 
   const out = await PDFDocument.create();
 
@@ -273,28 +264,39 @@ export default async function handler(req, res) {
     top:    bounds.top,
   });
 
-  const newPage = out.addPage([outW, outH]);
+  // Output is altijd exact 4×6 (288×432pt), portrait — nooit een ander paginaformaat
+  const newPage = out.addPage([LABEL_W, LABEL_H]);
+
+  // Als de crop breder dan hoog is, roteer 90° zodat hij in de portrait 4×6 past
+  const cropIsLandscape = cropW > cropH;
 
   if (cropIsLandscape) {
-    // Rotate 90° counter-clockwise to make landscape→portrait
+    // Na rotatie van -90° wisselen breedte/hoogte: de (pre-rotatie) drawW wordt de
+    // visuele hoogte en drawH wordt de visuele breedte. Schaal zodat dat exact past
+    // binnen LABEL_W x LABEL_H, zonder distortie (scale-to-fit), en centreer.
+    const scale   = Math.min(LABEL_W / cropH, LABEL_H / cropW);
+    const drawW   = cropW * scale;
+    const drawH   = cropH * scale;
+    const visualW = drawH;
+    const visualH = drawW;
+    const offsetX = (LABEL_W - visualW) / 2;
+    const offsetY = (LABEL_H - visualH) / 2;
+    console.log(`[label] rotate -90° + scale-to-fit: scale=${scale.toFixed(3)} visual=${Math.round(visualW)}x${Math.round(visualH)} offset=(${Math.round(offsetX)},${Math.round(offsetY)})`);
     newPage.drawPage(embedded, {
-      x:      0,
-      y:      outH,
-      width:  outH,
-      height: outW,
+      x:      offsetX,
+      y:      offsetY + drawW,
+      width:  drawW,
+      height: drawH,
       rotate: { type: 'degrees', angle: -90 },
     });
   } else {
-    // Scale the cropped region to exactly fill 4×6, preserving the label's own aspect ratio
-    // Use contain-fit (no distortion): scale uniformly, center in output
-    const scaleX = outW / cropW;
-    const scaleY = outH / cropH;
-    const scale  = Math.min(scaleX, scaleY);
-    const drawW  = cropW * scale;
-    const drawH  = cropH * scale;
-    const offsetX = (outW - drawW) / 2;
-    const offsetY = (outH - drawH) / 2;
-    console.log(`[label] scale=${scale.toFixed(3)} drawW=${Math.round(drawW)} drawH=${Math.round(drawH)} offset=(${Math.round(offsetX)},${Math.round(offsetY)})`);
+    // Portrait crop: scale-to-fit, gecentreerd, geen distortie
+    const scale   = Math.min(LABEL_W / cropW, LABEL_H / cropH);
+    const drawW   = cropW * scale;
+    const drawH   = cropH * scale;
+    const offsetX = (LABEL_W - drawW) / 2;
+    const offsetY = (LABEL_H - drawH) / 2;
+    console.log(`[label] scale-to-fit: scale=${scale.toFixed(3)} drawW=${Math.round(drawW)} drawH=${Math.round(drawH)} offset=(${Math.round(offsetX)},${Math.round(offsetY)})`);
     newPage.drawPage(embedded, { x: offsetX, y: offsetY, width: drawW, height: drawH });
   }
 
