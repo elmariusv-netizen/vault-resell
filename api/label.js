@@ -4,25 +4,6 @@ import { inflateSync } from 'zlib';
 const LABEL_W = 288;  // 4 inch × 72 pt/inch
 const LABEL_H = 432;  // 6 inch × 72 pt/inch
 
-// Read a PDF box array [x1, y1, x2, y2] from the page node dictionary
-function readPageBox(pageNode, context, name) {
-  try {
-    const ref = pageNode.get(PDFName.of(name));
-    if (!ref) return null;
-    const arr = context.lookup(ref);
-    if (!arr || typeof arr.get !== 'function') return null;
-    const nums = [0, 1, 2, 3].map(i => {
-      const item = arr.get(i);
-      if (!item) return null;
-      const v = item.numberValue ?? item.asNumber?.() ?? parseFloat(item.toString());
-      return isNaN(v) ? null : v;
-    });
-    if (nums.some(n => n === null)) return null;
-    const [x1, y1, x2, y2] = nums;
-    return { left: Math.min(x1, x2), bottom: Math.min(y1, y2), right: Math.max(x1, x2), top: Math.max(y1, y2) };
-  } catch { return null; }
-}
-
 // Decompress a PDF stream object (handles FlateDecode)
 function decodeStreamObj(obj) {
   try {
@@ -50,8 +31,8 @@ function parseRects(bytes, pageW, pageH) {
     while ((m = re.exec(text)) !== null) {
       const x = +m[1], y = +m[2], rw = +m[3], rh = +m[4];
       const aw = Math.abs(rw), ah = Math.abs(rh);
-      // Ignore tiny rects (barcodes, lines) and full-page rects
-      if (aw > 80 && ah > 80 && aw < pageW * 0.98 && ah < pageH * 0.98) {
+      // Alleen kandidaten > 200x200pt en < 98% van de pagina (negeer barcodes, lijnen, volledige pagina)
+      if (aw > 200 && ah > 200 && aw < pageW * 0.98 && ah < pageH * 0.98) {
         rects.push({
           left:   rw >= 0 ? x : x + rw,
           bottom: rh >= 0 ? y : y + rh,
@@ -64,97 +45,105 @@ function parseRects(bytes, pageW, pageH) {
   } catch { return []; }
 }
 
+// Zoek de grootste rechthoek-operator (`re`) in de content streams van de pagina.
+// Retourneert null als er geen bruikbare kandidaat gevonden wordt.
+function findLargestContentRect(src, page, pageW, pageH) {
+  try {
+    const pageNode = page.node;
+    const context  = src.context;
+    const contentsRef = pageNode.get(PDFName.of('Contents'));
+    if (!contentsRef) return null;
+
+    const contentsObj = context.lookup(contentsRef);
+    const streamObjs = [];
+
+    // Contents can be a single stream or an array of streams
+    if (contentsObj && typeof contentsObj.asArray === 'function') {
+      for (const ref of contentsObj.asArray()) {
+        const s = context.lookup(ref);
+        if (s) streamObjs.push(s);
+      }
+    } else if (contentsObj) {
+      streamObjs.push(contentsObj);
+    }
+
+    let allRects = [];
+    for (const streamObj of streamObjs) {
+      const bytes = decodeStreamObj(streamObj);
+      allRects = allRects.concat(parseRects(bytes, pageW, pageH));
+    }
+    if (!allRects.length) return null;
+
+    // Pick de grootste rechthoek — meest waarschijnlijk het labelkader
+    allRects.sort((a, b) => {
+      const aA = (a.right - a.left) * (a.top - a.bottom);
+      const aB = (b.right - b.left) * (b.top - b.bottom);
+      return aB - aA;
+    });
+    return allRects[0];
+  } catch (e) {
+    console.warn('[label] content stream parse error:', e.message);
+    return null;
+  }
+}
+
 // Detect the label crop region within a PDF page
 // Returns { left, bottom, right, top } in PDF points (origin bottom-left)
+//
+// Carrier-specifieke aanpak (gebaseerd op geanalyseerde echte labels):
+//  - Mondial Relay: A4 portrait, label (gedraaid) in de onderste helft
+//  - Vinted Go:     klein formaat (geen A4), label + zwarte header bovenaan
+//  - Bpost:         A4 landscape, label linksboven kwadrant
+//  - PostNL:        A4 portrait, label met kader bovenaan
 async function detectLabelBounds(src, page) {
   const media  = page.getMediaBox();
   const pageW  = media.width;
   const pageH  = media.height;
-  const pageNode = page.node;
-  const context  = src.context;
 
   console.log('[label] mediaBox:', Math.round(pageW), 'x', Math.round(pageH));
 
-  // Strategy 1: explicit PDF box annotations (CropBox, TrimBox, ArtBox)
-  for (const boxName of ['CropBox', 'TrimBox', 'ArtBox']) {
-    const box = readPageBox(pageNode, context, boxName);
-    if (!box) continue;
-    const bw = box.right - box.left, bh = box.top - box.bottom;
-    if (bw < pageW * 0.99 && bh < pageH * 0.99 && bw > 50 && bh > 50) {
-      console.log(`[label] detected via ${boxName}: left=${Math.round(box.left)} bottom=${Math.round(box.bottom)} right=${Math.round(box.right)} top=${Math.round(box.top)}`);
-      return box;
+  // Stap 1: zoek de grootste rechthoek in de content streams (labelkader)
+  const rect = findLargestContentRect(src, page, pageW, pageH);
+
+  if (rect) {
+    const margin = 3;
+    const bounds = {
+      left:   Math.max(0, rect.left - margin),
+      bottom: Math.max(0, rect.bottom - margin),
+      right:  Math.min(pageW, rect.right + margin),
+      top:    Math.min(pageH, rect.top + margin),
+    };
+    const rw = bounds.right - bounds.left, rh = bounds.top - bounds.bottom;
+    const centerY = (bounds.top + bounds.bottom) / 2;
+
+    if (centerY < pageH / 2) {
+      console.log(`[label] content-rect in onderste helft → Mondial Relay: left=${bounds.left.toFixed(0)} bottom=${bounds.bottom.toFixed(0)} right=${bounds.right.toFixed(0)} top=${bounds.top.toFixed(0)} (${rw.toFixed(0)}x${rh.toFixed(0)})`);
+    } else {
+      console.log(`[label] content-rect in bovenste helft → PostNL: left=${bounds.left.toFixed(0)} bottom=${bounds.bottom.toFixed(0)} right=${bounds.right.toFixed(0)} top=${bounds.top.toFixed(0)} (${rw.toFixed(0)}x${rh.toFixed(0)})`);
     }
-  }
-
-  // Strategy 2: scan content streams for large rectangle operators
-  try {
-    const contentsRef = pageNode.get(PDFName.of('Contents'));
-    if (contentsRef) {
-      const contentsObj = context.lookup(contentsRef);
-      const streamObjs = [];
-
-      // Contents can be a single stream or an array of streams
-      if (contentsObj && typeof contentsObj.asArray === 'function') {
-        // PDFArray
-        for (const ref of contentsObj.asArray()) {
-          const s = context.lookup(ref);
-          if (s) streamObjs.push(s);
-        }
-      } else if (contentsObj) {
-        streamObjs.push(contentsObj);
-      }
-
-      let allRects = [];
-      for (const streamObj of streamObjs) {
-        const bytes = decodeStreamObj(streamObj);
-        const rects = parseRects(bytes, pageW, pageH);
-        allRects = allRects.concat(rects);
-      }
-
-      if (allRects.length > 0) {
-        // Pick the largest rectangle by area — most likely the label border
-        allRects.sort((a, b) => {
-          const aA = (a.right - a.left) * (a.top - a.bottom);
-          const aB = (b.right - b.left) * (b.top - b.bottom);
-          return aB - aA;
-        });
-        const best = allRects[0];
-        const bw = best.right - best.left, bh = best.top - best.bottom;
-        console.log(`[label] detected via content stream rects (${allRects.length} found): left=${Math.round(best.left)} bottom=${Math.round(best.bottom)} ${Math.round(bw)}x${Math.round(bh)}`);
-        return best;
-      }
-    }
-  } catch (e) {
-    console.warn('[label] content stream parse error:', e.message);
-  }
-
-  // Strategy 3: heuristic based on page dimensions
-  // A4 portrait ≈ 595×842 — label is typically a 4×6 (288×432) area in the top portion
-  // centered horizontally, flush with the top
-  const isA4Portrait  = pageW > 550 && pageW < 640 && pageH > 800 && pageH < 900;
-  const isA4Landscape = pageH > 550 && pageH < 640 && pageW > 800 && pageW < 900;
-
-  if (isA4Portrait) {
-    // Vinted rendert het label als vast blok van ±400×280pt, gecentreerd op de A4-pagina
-    // (bevestigd via handmatige meting — CropBox/re-operator-detectie vinden dit blok niet)
-    const bounds = { left: 97, bottom: 281, right: 497, top: 561 };
-    console.log(`[label] heuristic A4-portrait (vaste coördinaten): left=${bounds.left} bottom=${bounds.bottom} right=${bounds.right} top=${bounds.top} (${bounds.right - bounds.left}x${bounds.top - bounds.bottom})`);
     return bounds;
   }
 
-  if (isA4Landscape) {
-    // Landscape A4: label is typically left-aligned
-    const bottom = (pageH - LABEL_W) / 2;
-    console.log(`[label] heuristic A4-landscape: rotated label`);
-    return { left: 0, bottom, right: LABEL_H, top: bottom + LABEL_W };
+  console.log('[label] geen bruikbare content-rechthoek gevonden — val terug op pagina-heuristiek');
+
+  // Stap 2a: Bpost — A4 landscape (breder dan hoog), label linksboven kwadrant.
+  // Moet vóór de Vinted Go-check komen: A4 landscape (842x595) heeft ook hoogte < 700.
+  if (pageW > pageH) {
+    const bounds = { left: 0, bottom: pageH * 0.45, right: pageW * 0.55, top: pageH };
+    console.log(`[label] heuristic Bpost (landscape ${Math.round(pageW)}x${Math.round(pageH)}): left=0 bottom=${bounds.bottom.toFixed(0)} right=${bounds.right.toFixed(0)} top=${bounds.top.toFixed(0)}`);
+    return bounds;
   }
 
-  // Unknown format: crop top-left 4×6 region, or use full page if smaller
-  const fallbackW = Math.min(pageW, LABEL_W);
-  const fallbackH = Math.min(pageH, LABEL_H);
-  const fallbackBottom = pageH - fallbackH;
-  console.log(`[label] heuristic fallback: top-left ${Math.round(fallbackW)}x${Math.round(fallbackH)}`);
-  return { left: 0, bottom: fallbackBottom, right: fallbackW, top: pageH };
+  // Stap 2b: Vinted Go — klein formaat (geen A4), label + zwarte header bovenaan
+  if (pageH < 700) {
+    const bottom = pageH * 0.4; // bovenste 60% behouden (incl. "Laat je code scannen"-balk)
+    console.log(`[label] heuristic Vinted Go (${Math.round(pageW)}x${Math.round(pageH)}): bovenste 60% → bottom=${bottom.toFixed(0)}`);
+    return { left: 0, bottom, right: pageW, top: pageH };
+  }
+
+  // Onbekend formaat — geen enkele carrier-heuristiek matcht, gebruik de volledige pagina
+  console.log('[label] geen carrier-match — volledige pagina als crop');
+  return { left: 0, bottom: 0, right: pageW, top: pageH };
 }
 
 // Crop ruwe PDF-bytes (welke bron dan ook) naar een exacte 4×6 (288×432pt) label-PDF
