@@ -53,9 +53,9 @@ function parseRects(bytes, pageW, pageH) {
   } catch { return []; }
 }
 
-// Zoek de grootste rechthoek-operator (`re`) in de content streams van de pagina.
-// Retourneert null als er geen bruikbare kandidaat gevonden wordt.
-function findLargestContentRect(src, page, pageW, pageH) {
+// Haal de gedecodeerde content-stream tekst van een pagina op (kan uit meerdere
+// streams bestaan). Retourneert null als er geen Contents-entry is.
+function getPageContentText(src, page) {
   try {
     const pageNode = page.node;
     const context  = src.context;
@@ -75,24 +75,79 @@ function findLargestContentRect(src, page, pageW, pageH) {
       streamObjs.push(contentsObj);
     }
 
-    let allRects = [];
+    let text = '';
     for (const streamObj of streamObjs) {
       const bytes = decodeStreamObj(streamObj);
-      allRects = allRects.concat(parseRects(bytes, pageW, pageH));
+      if (bytes) text += Buffer.from(bytes).toString('binary');
     }
-    if (!allRects.length) return null;
-
-    // Pick de grootste rechthoek — meest waarschijnlijk het labelkader
-    allRects.sort((a, b) => {
-      const aA = (a.right - a.left) * (a.top - a.bottom);
-      const aB = (b.right - b.left) * (b.top - b.bottom);
-      return aB - aA;
-    });
-    return allRects[0];
+    return text || null;
   } catch (e) {
     console.warn('[label] content stream parse error:', e.message);
     return null;
   }
+}
+
+// Zoek de grootste rechthoek-operator (`re`) in de content streams van de pagina.
+// Retourneert null als er geen bruikbare kandidaat gevonden wordt.
+function findLargestContentRect(src, page, pageW, pageH) {
+  const text = getPageContentText(src, page);
+  if (!text) return null;
+  const allRects = parseRects(Buffer.from(text, 'binary'), pageW, pageH);
+  if (!allRects.length) return null;
+
+  // Pick de grootste rechthoek — meest waarschijnlijk het labelkader
+  allRects.sort((a, b) => {
+    const aA = (a.right - a.left) * (a.top - a.bottom);
+    const aB = (b.right - b.left) * (b.top - b.bottom);
+    return aB - aA;
+  });
+  return allRects[0];
+}
+
+// Zoek de bounding box van alle gestreepte lijn-tekeningen (m ... l ... S) in
+// de content-stream van de pagina — sommige carriers (bv. DPD) tekenen hun
+// label-tabel als losse lijnsegmenten i.p.v. een 're'-rechthoek, dus die
+// worden door findLargestContentRect gemist. Enkel bruikbaar op het
+// top-level (niet binnen een cm-getransformeerd blok) content-stream, wat
+// voor de geanalyseerde echte bestanden klopt.
+function extractLineArtBounds(text) {
+  if (!text) return null;
+  try {
+    const tokenRe = /(-?[\d.]+)\s+(-?[\d.]+)\s+m\b|(-?[\d.]+)\s+(-?[\d.]+)\s+l\b|\bS\b/g;
+    let points = [];
+    let bounds = null;
+    let m;
+    const flush = () => {
+      if (points.length >= 2) {
+        const xs = points.map((p) => p[0]), ys = points.map((p) => p[1]);
+        const left = Math.min(...xs), right = Math.max(...xs);
+        const bottom = Math.min(...ys), top = Math.max(...ys);
+        if (!bounds) {
+          bounds = { left, bottom, right, top };
+        } else {
+          bounds.left   = Math.min(bounds.left, left);
+          bounds.right  = Math.max(bounds.right, right);
+          bounds.bottom = Math.min(bounds.bottom, bottom);
+          bounds.top    = Math.max(bounds.top, top);
+        }
+      }
+      points = [];
+    };
+    while ((m = tokenRe.exec(text)) !== null) {
+      if (m[0] === 'S') { flush(); continue; }
+      if (m[1] !== undefined) { points.push([+m[1], +m[2]]); continue; }
+      if (m[3] !== undefined) { points.push([+m[3], +m[4]]); continue; }
+    }
+    return bounds;
+  } catch (e) {
+    console.warn('[label] extractLineArtBounds fout:', e.message);
+    return null;
+  }
+}
+
+function findLineArtBounds(src, page) {
+  const text = getPageContentText(src, page);
+  return text ? extractLineArtBounds(text) : null;
 }
 
 // Multiply 2D affine PDF matrices: applies `cm` (nieuw) NA `base` (bestaande CTM)
@@ -259,13 +314,34 @@ export async function detectLabelBounds(src, page) {
   // barcode bovenaan, via lijnen/tabel-structuur getekend i.p.v. een 're'-rect)
   // — in tegenstelling tot PostNL, waar stap 1 hierboven wél een content-
   // rechthoek vindt. Beide labels staan al correct leesbaar (geen rotatie
-  // nodig) in de bovenste helft van de pagina, dus we nemen de bovenste 50%
-  // en laten rotate op false staan.
+  // nodig) in de bovenste helft van de pagina, dus we nemen de bovenste 50%.
+  //
+  // DPD's inhoud vult echter maar de linkerhelft van de paginabreedte (i.p.v.
+  // vrijwel de volledige breedte zoals Vinted Go) — als we blind de volledige
+  // breedte croppen, blijft er met scale-to-fit te veel wit over, en snijdt
+  // scale-to-fill juist het adres/de barcode af omdat die links staan i.p.v.
+  // gecentreerd. Oplossing: verfijn left/right met de bounding box van de
+  // lijn-tekeningen (DPD's tabelraster) als die significant smaller is dan de
+  // volledige paginabreedte — dat geeft een crop-zone waarvan de aspect ratio
+  // al dicht bij 4×6 ligt, zodat scale-to-fit vanzelf nauwelijks wit overlaat.
   const isA4Portrait = pageW > 550 && pageW < 640 && pageH > 800 && pageH < 900;
   if (isA4Portrait) {
     const bottom = pageH * 0.5;
-    console.log('[label] heuristic portrait A4 zonder rect (Vinted Go / DPD): bovenste 50%, geen rotatie');
-    return { left: 0, bottom, right: pageW, top: pageH, rotate: false };
+    let left = 0, right = pageW;
+
+    const lineBounds = findLineArtBounds(src, page);
+    if (lineBounds) {
+      const lineW = lineBounds.right - lineBounds.left;
+      if (lineW > 50 && lineW < pageW * 0.85) {
+        const margin = 5;
+        left  = Math.max(0, lineBounds.left - margin);
+        right = Math.min(pageW, lineBounds.right + margin);
+        console.log(`[label] heuristic portrait A4 (DPD): breedte verfijnd via lijn-tekeningen → left=${left.toFixed(0)} right=${right.toFixed(0)}`);
+      }
+    }
+
+    console.log(`[label] heuristic portrait A4 zonder rect (Vinted Go / DPD): bovenste 50%, geen rotatie, left=${left.toFixed(0)} right=${right.toFixed(0)}`);
+    return { left, bottom, right, top: pageH, rotate: false };
   }
 
   // Stap 2b: Bpost — A4 landscape (breder dan hoog), label linksboven kwadrant.
@@ -297,10 +373,22 @@ export async function detectLabelBounds(src, page) {
       console.log('[label] wrapper: geen rect binnenin — landscape-heuristiek op virtuele pagina');
     } else {
       // Vinted Go/DPD-achtige situatie: label staat al correct leesbaar
-      // bovenaan, geen rotatie nodig — bovenste 50% behouden.
-      innerBounds = { left: 0, bottom: wrapped.vh * 0.5, right: wrapped.vw, top: wrapped.vh };
+      // bovenaan, geen rotatie nodig — bovenste 50% behouden. Verfijn de
+      // breedte via lijn-tekeningen als DPD's tabelraster gevonden wordt
+      // (zie de analoge stap voor de niet-ingebedde pagina hierboven).
+      let left = 0, right = wrapped.vw;
+      const lineBounds = extractLineArtBounds(Buffer.from(wrapped.xobjBytes).toString('binary'));
+      if (lineBounds) {
+        const lineW = lineBounds.right - lineBounds.left;
+        if (lineW > 50 && lineW < wrapped.vw * 0.85) {
+          const margin = 5;
+          left  = Math.max(0, lineBounds.left - margin);
+          right = Math.min(wrapped.vw, lineBounds.right + margin);
+        }
+      }
+      innerBounds = { left, bottom: wrapped.vh * 0.5, right, top: wrapped.vh };
       innerRotate = false;
-      console.log('[label] wrapper: geen rect binnenin — bovenste 50% op virtuele pagina, geen rotatie');
+      console.log(`[label] wrapper: geen rect binnenin — bovenste 50% op virtuele pagina, geen rotatie, left=${left.toFixed(0)} right=${right.toFixed(0)}`);
     }
     const mapped = mapBoundsThroughCtm(innerBounds, wrapped.ctm, pageW, pageH);
     mapped.rotate = innerRotate;
@@ -386,7 +474,7 @@ export async function cropToLabel(pdfBytes) {
       rotate: { type: 'degrees', angle: 90 },
     });
   } else {
-    // Portrait crop: scale-to-fit, gecentreerd, geen distortie
+    // Portrait crop: schaal, gecentreerd, geen distortie
     const scale   = Math.min(LABEL_W / cropW, LABEL_H / cropH);
     const drawW   = cropW * scale;
     const drawH   = cropH * scale;
