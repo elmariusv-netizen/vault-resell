@@ -224,6 +224,17 @@ export async function detectLabelBounds(src, page) {
 
   console.log('[label] mediaBox:', Math.round(pageW), 'x', Math.round(pageH));
 
+  // Stap 0: Vinted Go — kleiner dan A4 (pageH < 500). Het label (zwarte header +
+  // QR) staat altijd in de bovenste ~45% van de pagina; de rest is wit. Dit is
+  // een vaste, simpele regel die vóór alle andere detectie loopt — de eerdere
+  // aanpak (rechthoek-detectie / ingebedde-XObject-BBox-detectie) bleek in
+  // productie op Vercel niet betrouwbaar genoeg voor dit formaat.
+  if (pageH < 500) {
+    const bottom = pageH * 0.55;
+    console.log(`[label] Vinted Go (pageH=${pageH.toFixed(0)} < 500): vaste bovenste 45% → bottom=${bottom.toFixed(1)}`);
+    return { left: 0, bottom, right: pageW, top: pageH, rotate: false };
+  }
+
   // Stap 1: zoek de grootste rechthoek in de content streams (labelkader)
   const rect = findLargestContentRect(src, page, pageW, pageH);
 
