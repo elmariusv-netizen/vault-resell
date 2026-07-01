@@ -1,6 +1,14 @@
 import { PDFDocument, PDFName } from 'pdf-lib';
 import { inflateSync } from 'zlib';
 
+// Vercel's standaard body parser verminkt ruwe binary PDF-bytes bij een POST met
+// Content-Type: application/pdf. We lezen de body daarom altijd zelf in via de stream.
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
+
 const LABEL_W = 288;  // 4 inch × 72 pt/inch
 const LABEL_H = 432;  // 6 inch × 72 pt/inch
 
@@ -216,11 +224,11 @@ async function cropToLabel(pdfBytes) {
   return Buffer.from(cropped);
 }
 
-// Lees de ruwe request body handmatig in (fallback wanneer Vercel de body nog niet als Buffer heeft geparsed)
+// Lees de ruwe request body zelf in — nodig omdat bodyParser hierboven is uitgeschakeld
 async function readRawBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
-    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
     req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
@@ -261,20 +269,20 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-vinted-cookie');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  const transaction_id = req.body?.transaction_id || req.query?.transaction_id;
-  const label_url      = req.body?.label_url      || req.query?.label_url;
-  const contentType     = req.headers['content-type'] || '';
-  let cookie            = req.headers['x-vinted-cookie'];
+  const contentType = req.headers['content-type'] || '';
+
+  // bodyParser staat uit, dus we lezen de raw body zelf in (leeg voor GET-requests
+  // die enkel query-params gebruiken). req.query blijft door Vercel zelf gevuld.
+  const rawBody = req.method === 'POST' ? await readRawBody(req) : null;
 
   // Pad 3: handmatig geüploade PDF — binary body, geen transaction_id/label_url
-  if (!transaction_id && !label_url && contentType.includes('application/pdf')) {
+  if (contentType.includes('application/pdf')) {
     try {
-      const bodyBytes = Buffer.isBuffer(req.body) ? req.body : await readRawBody(req);
-      if (!bodyBytes?.length) {
+      if (!rawBody?.length) {
         return res.status(400).json({ error: 'lege PDF-body' });
       }
-      console.log('[label] handmatige upload:', bodyBytes.length, 'bytes');
-      const cropped = await cropToLabel(bodyBytes);
+      console.log('[label] handmatige upload:', rawBody.length, 'bytes');
+      const cropped = await cropToLabel(rawBody);
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', 'attachment; filename="label-manual-4x6.pdf"');
       res.setHeader('Cache-Control', 'no-store');
@@ -284,6 +292,18 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: `Croppen mislukt: ${e.message}` });
     }
   }
+
+  // JSON-body handmatig parsen (bodyParser staat uit voor alle content-types)
+  let jsonBody = {};
+  if (rawBody?.length && contentType.includes('application/json')) {
+    try { jsonBody = JSON.parse(rawBody.toString('utf8')); } catch (e) {
+      console.warn('[label] JSON body parse fout:', e.message);
+    }
+  }
+
+  const transaction_id = jsonBody.transaction_id || req.query?.transaction_id;
+  const label_url      = jsonBody.label_url      || req.query?.label_url;
+  let cookie            = req.headers['x-vinted-cookie'];
 
   if (!cookie && transaction_id && !label_url) {
     cookie = await lookupVintedCookie(transaction_id);
