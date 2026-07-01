@@ -254,19 +254,18 @@ export async function detectLabelBounds(src, page) {
 
   console.log('[label] geen bruikbare content-rechthoek gevonden — val terug op pagina-heuristiek');
 
-  // Stap 2a: Vinted Go — A4 portrait (595×842), maar GEEN kader rond het label
-  // (in tegenstelling tot PostNL, waar stap 1 hierboven wél een content-
-  // rechthoek vindt — dat is precies het onderscheid: content-rechthoek
-  // gevonden → PostNL/Mondial Relay/Bpost; geen rechthoek + portrait A4 →
-  // Vinted Go). Het label (zwarte header + QR) staat in de bovenste ~38% van
-  // de pagina — geverifieerd op de échte productie-versie (595x842pt).
+  // Stap 2a: portrait A4 (595×842) zonder detecteerbare content-rechthoek —
+  // dit dekt zowel Vinted Go (zwarte header + QR bovenaan) als DPD (adres +
+  // barcode bovenaan, via lijnen/tabel-structuur getekend i.p.v. een 're'-rect)
+  // — in tegenstelling tot PostNL, waar stap 1 hierboven wél een content-
+  // rechthoek vindt. Beide labels staan al correct leesbaar (geen rotatie
+  // nodig) in de bovenste helft van de pagina, dus we nemen de bovenste 50%
+  // en laten rotate op false staan.
   const isA4Portrait = pageW > 550 && pageW < 640 && pageH > 800 && pageH < 900;
   if (isA4Portrait) {
-    const bottom = pageH * 0.62;
-    // Deze crop-zone is landscape-vormig (breed en kort) — roteer 90° zodat
-    // hij goed past op een portrait 4×6 thermische printer.
-    console.log('[label] heuristic Vinted Go A4: bovenste 38%, roteer 90°');
-    return { left: 0, bottom, right: pageW, top: pageH, rotate: true };
+    const bottom = pageH * 0.5;
+    console.log('[label] heuristic portrait A4 zonder rect (Vinted Go / DPD): bovenste 50%, geen rotatie');
+    return { left: 0, bottom, right: pageW, top: pageH, rotate: false };
   }
 
   // Stap 2b: Bpost — A4 landscape (breder dan hoog), label linksboven kwadrant.
@@ -297,11 +296,11 @@ export async function detectLabelBounds(src, page) {
       innerBounds = { left: 0, bottom: wrapped.vh * 0.45, right: wrapped.vw * 0.55, top: wrapped.vh };
       console.log('[label] wrapper: geen rect binnenin — landscape-heuristiek op virtuele pagina');
     } else {
-      // Vinted Go-achtige situatie (bovenste 40%) — deze crop-zone is landscape-
-      // vormig, dus roteer 90° zodat hij goed past op de portrait 4×6-pagina.
-      innerBounds = { left: 0, bottom: wrapped.vh * 0.6, right: wrapped.vw, top: wrapped.vh };
-      innerRotate = true;
-      console.log('[label] wrapper: geen rect binnenin — bovenste 40% op virtuele pagina, roteer 90°');
+      // Vinted Go/DPD-achtige situatie: label staat al correct leesbaar
+      // bovenaan, geen rotatie nodig — bovenste 50% behouden.
+      innerBounds = { left: 0, bottom: wrapped.vh * 0.5, right: wrapped.vw, top: wrapped.vh };
+      innerRotate = false;
+      console.log('[label] wrapper: geen rect binnenin — bovenste 50% op virtuele pagina, geen rotatie');
     }
     const mapped = mapBoundsThroughCtm(innerBounds, wrapped.ctm, pageW, pageH);
     mapped.rotate = innerRotate;
