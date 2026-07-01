@@ -96,14 +96,18 @@ function findLargestContentRect(src, page, pageW, pageH) {
 }
 
 // Detect the label crop region within a PDF page
-// Returns { left, bottom, right, top } in PDF points (origin bottom-left)
+// Returns { left, bottom, right, top, rotate } in PDF points (origin bottom-left).
+// `rotate` is true ONLY when the label content itself is physically rotated 90°
+// within the source page (confirmed on a real Mondial Relay label) — it must NOT
+// be derived from the crop box's own aspect ratio, since e.g. Bpost's crop box is
+// landscape-shaped too even though that content is already upright.
 //
 // Carrier-specifieke aanpak (gebaseerd op geanalyseerde echte labels):
 //  - Mondial Relay: A4 portrait, label (gedraaid) in de onderste helft
 //  - Vinted Go:     klein formaat (geen A4), label + zwarte header bovenaan
-//  - Bpost:         A4 landscape, label linksboven kwadrant
+//  - Bpost:         A4 landscape, label linksboven kwadrant (niet gedraaid)
 //  - PostNL:        A4 portrait, label met kader bovenaan
-async function detectLabelBounds(src, page) {
+export async function detectLabelBounds(src, page) {
   const media  = page.getMediaBox();
   const pageW  = media.width;
   const pageH  = media.height;
@@ -125,8 +129,10 @@ async function detectLabelBounds(src, page) {
     const centerY = (bounds.top + bounds.bottom) / 2;
 
     if (centerY < pageH / 2) {
-      console.log(`[label] content-rect in onderste helft → Mondial Relay: left=${bounds.left.toFixed(0)} bottom=${bounds.bottom.toFixed(0)} right=${bounds.right.toFixed(0)} top=${bounds.top.toFixed(0)} (${rw.toFixed(0)}x${rh.toFixed(0)})`);
+      bounds.rotate = true;
+      console.log(`[label] content-rect in onderste helft → Mondial Relay (gedraaid): left=${bounds.left.toFixed(0)} bottom=${bounds.bottom.toFixed(0)} right=${bounds.right.toFixed(0)} top=${bounds.top.toFixed(0)} (${rw.toFixed(0)}x${rh.toFixed(0)})`);
     } else {
+      bounds.rotate = false;
       console.log(`[label] content-rect in bovenste helft → PostNL: left=${bounds.left.toFixed(0)} bottom=${bounds.bottom.toFixed(0)} right=${bounds.right.toFixed(0)} top=${bounds.top.toFixed(0)} (${rw.toFixed(0)}x${rh.toFixed(0)})`);
     }
     return bounds;
@@ -136,9 +142,10 @@ async function detectLabelBounds(src, page) {
 
   // Stap 2a: Bpost — A4 landscape (breder dan hoog), label linksboven kwadrant.
   // Moet vóór de Vinted Go-check komen: A4 landscape (842x595) heeft ook hoogte < 700.
+  // De inhoud zelf staat rechtop (niet gedraaid) — enkel de crop-box is landscape-vormig.
   if (pageW > pageH) {
-    const bounds = { left: 0, bottom: pageH * 0.45, right: pageW * 0.55, top: pageH };
-    console.log(`[label] heuristic Bpost (landscape ${Math.round(pageW)}x${Math.round(pageH)}): left=0 bottom=${bounds.bottom.toFixed(0)} right=${bounds.right.toFixed(0)} top=${bounds.top.toFixed(0)}`);
+    const bounds = { left: 0, bottom: pageH * 0.45, right: pageW * 0.55, top: pageH, rotate: false };
+    console.log(`[label] heuristic Bpost (landscape ${Math.round(pageW)}x${Math.round(pageH)}, niet gedraaid): left=0 bottom=${bounds.bottom.toFixed(0)} right=${bounds.right.toFixed(0)} top=${bounds.top.toFixed(0)}`);
     return bounds;
   }
 
@@ -148,12 +155,12 @@ async function detectLabelBounds(src, page) {
   if (pageH < 700) {
     const bottom = pageH * 0.6;
     console.log(`[label] heuristic Vinted Go (${Math.round(pageW)}x${Math.round(pageH)}): bovenste 40% → bottom=${bottom.toFixed(0)}`);
-    return { left: 0, bottom, right: pageW, top: pageH };
+    return { left: 0, bottom, right: pageW, top: pageH, rotate: false };
   }
 
   // Onbekend formaat — geen enkele carrier-heuristiek matcht, gebruik de volledige pagina
   console.log('[label] geen carrier-match — volledige pagina als crop');
-  return { left: 0, bottom: 0, right: pageW, top: pageH };
+  return { left: 0, bottom: 0, right: pageW, top: pageH, rotate: false };
 }
 
 // Crop ruwe PDF-bytes (welke bron dan ook) naar een exacte 4×6 (288×432pt) label-PDF.
@@ -163,7 +170,7 @@ async function detectLabelBounds(src, page) {
 // label-zone wordt uitvergroot naar de volledige 288×432 doelpagina. Alles
 // buiten de doelpagina wordt door de output-pagina zelf niet weergegeven —
 // er is dus geen aparte clip/crop-stap nodig.
-async function cropToLabel(pdfBytes) {
+export async function cropToLabel(pdfBytes) {
   const src  = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
   const page = src.getPages()[0];
 
@@ -173,15 +180,10 @@ async function cropToLabel(pdfBytes) {
 
   const out = await PDFDocument.create();
 
-  // If page is already 4×6 (within tolerance), gebruik de volledige pagina 1-op-1
-  const alreadyLabel = Math.abs(pageW - LABEL_W) < 20 && Math.abs(pageH - LABEL_H) < 20;
-  if (alreadyLabel) {
-    console.log('[label] page is already 4x6 — using full page');
-    const embedded = await out.embedPage(page);
-    const newPage  = out.addPage([LABEL_W, LABEL_H]);
-    newPage.drawPage(embedded, { x: 0, y: 0, width: LABEL_W, height: LABEL_H });
-    return Buffer.from(await out.save());
-  }
+  // Let op: een pagina die toevallig al 288×432pt groot is, betekent niet dat de
+  // inhoud ook al de volledige pagina vult (bv. een echt Vinted Go-label dat al op
+  // 4×6 geëxporteerd is, maar waarvan de content maar de bovenste ~40% inneemt).
+  // Daarom draait ALLE input door dezelfde detectie + overscale-pipeline.
 
   // Detecteer de label-zone (left,bottom,right,top) in bron-coördinaten
   const bounds = await detectLabelBounds(src, page);
@@ -193,20 +195,23 @@ async function cropToLabel(pdfBytes) {
   const embedded = await out.embedPage(page);
   const newPage  = out.addPage([LABEL_W, LABEL_H]);
 
-  const cropIsLandscape = cropW > cropH;
-
-  if (cropIsLandscape) {
-    // Roteer -90° en vergroot de (landscape) label-zone naar de volledige 4×6.
+  // Rotatie is een carrier-beslissing (Mondial Relay), NIET afgeleid van de
+  // vorm van de crop-box — Bpost's crop-box is bv. ook landscape-vormig terwijl
+  // die inhoud al rechtop staat.
+  if (bounds.rotate) {
+    // Roteer +90° en vergroot de (landscape) label-zone naar de volledige 4×6.
     // Na rotatie wisselen breedte/hoogte: de bron-breedte-as wordt de visuele
     // hoogte (LABEL_H) en de bron-hoogte-as wordt de visuele breedte (LABEL_W).
+    // (Met -90° stond de inhoud 180° op zijn kop — geverifieerd op een echt
+    // Mondial Relay-label; +90° is de juiste, rechtopstaande richting.)
     const xScale = LABEL_H / cropW;
     const yScale = LABEL_W / cropH;
-    const x      = -bounds.bottom * yScale;
-    const y      = bounds.right   * xScale;
+    const x      = bounds.top  * yScale;
+    const y      = -bounds.left * xScale;
     const width  = xScale * pageW;
     const height = yScale * pageH;
-    console.log(`[label] rotate -90° + overscale: xScale=${xScale.toFixed(3)} yScale=${yScale.toFixed(3)} x=${x.toFixed(1)} y=${y.toFixed(1)} width=${width.toFixed(1)} height=${height.toFixed(1)}`);
-    newPage.drawPage(embedded, { x, y, width, height, rotate: { type: 'degrees', angle: -90 } });
+    console.log(`[label] rotate +90° + overscale: xScale=${xScale.toFixed(3)} yScale=${yScale.toFixed(3)} x=${x.toFixed(1)} y=${y.toFixed(1)} width=${width.toFixed(1)} height=${height.toFixed(1)}`);
+    newPage.drawPage(embedded, { x, y, width, height, rotate: { type: 'degrees', angle: 90 } });
   } else {
     // Vergroot de (portrait) label-zone naar de volledige 4×6, geen rotatie.
     const scaleX = LABEL_W / cropW;
