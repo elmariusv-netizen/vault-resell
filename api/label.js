@@ -370,8 +370,8 @@ export async function detectLabelBounds(src, page) {
   // moet dus vlak tegen de labelrand zelf aansluiten (niet tegen de kniplijn)
   // om de schaartjes volledig te weren.
   if (pageW > pageH) {
-    const bounds = { left: 0, bottom: pageH * 0.528, right: pageW * 0.487, top: pageH, rotate: false };
-    console.log(`[label] heuristic Bpost (landscape ${Math.round(pageW)}x${Math.round(pageH)}, niet gedraaid): left=0 bottom=${bounds.bottom.toFixed(0)} right=${bounds.right.toFixed(0)} top=${bounds.top.toFixed(0)}`);
+    const bounds = { left: 0, bottom: pageH * 0.528, right: pageW * 0.487, top: pageH, rotate: true };
+    console.log(`[label] heuristic Bpost (landscape ${Math.round(pageW)}x${Math.round(pageH)}, roteer 90°): left=0 bottom=${bounds.bottom.toFixed(0)} right=${bounds.right.toFixed(0)} top=${bounds.top.toFixed(0)}`);
     return bounds;
   }
 
