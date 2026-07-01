@@ -191,33 +191,24 @@ async function cropToLabel(pdfBytes) {
   const cropIsLandscape = cropW > cropH;
 
   if (cropIsLandscape) {
-    // Na rotatie van -90° wisselen breedte/hoogte: de (pre-rotatie) drawW wordt de
-    // visuele hoogte en drawH wordt de visuele breedte. Schaal zodat dat exact past
-    // binnen LABEL_W x LABEL_H, zonder distortie (scale-to-fit), en centreer.
-    const scale   = Math.min(LABEL_W / cropH, LABEL_H / cropW);
-    const drawW   = cropW * scale;
-    const drawH   = cropH * scale;
-    const visualW = drawH;
-    const visualH = drawW;
-    const offsetX = (LABEL_W - visualW) / 2;
-    const offsetY = (LABEL_H - visualH) / 2;
-    console.log(`[label] rotate -90° + scale-to-fit: scale=${scale.toFixed(3)} visual=${Math.round(visualW)}x${Math.round(visualH)} offset=(${Math.round(offsetX)},${Math.round(offsetY)})`);
+    // Stretch-to-fill: het label vult de volledige 4×6 pagina, geen witte randen.
+    // Aspect ratio wordt niet behouden — na rotatie van -90° wisselen breedte/hoogte,
+    // dus drawH moet exact LABEL_W worden (visuele breedte) en drawW exact LABEL_H
+    // (visuele hoogte).
+    const drawW = LABEL_H;
+    const drawH = LABEL_W;
+    console.log(`[label] rotate -90° + stretch-to-fill: drawW=${drawW} drawH=${drawH} (volledige pagina, geen marge)`);
     newPage.drawPage(embedded, {
-      x:      offsetX,
-      y:      offsetY + drawW,
+      x:      0,
+      y:      drawW,
       width:  drawW,
       height: drawH,
       rotate: { type: 'degrees', angle: -90 },
     });
   } else {
-    // Portrait crop: scale-to-fit, gecentreerd, geen distortie
-    const scale   = Math.min(LABEL_W / cropW, LABEL_H / cropH);
-    const drawW   = cropW * scale;
-    const drawH   = cropH * scale;
-    const offsetX = (LABEL_W - drawW) / 2;
-    const offsetY = (LABEL_H - drawH) / 2;
-    console.log(`[label] scale-to-fit: scale=${scale.toFixed(3)} drawW=${Math.round(drawW)} drawH=${Math.round(drawH)} offset=(${Math.round(offsetX)},${Math.round(offsetY)})`);
-    newPage.drawPage(embedded, { x: offsetX, y: offsetY, width: drawW, height: drawH });
+    // Portrait crop: stretch-to-fill, geen witte randen (aspect ratio niet behouden)
+    console.log(`[label] stretch-to-fill: drawW=${LABEL_W} drawH=${LABEL_H} (volledige pagina, geen marge)`);
+    newPage.drawPage(embedded, { x: 0, y: 0, width: LABEL_W, height: LABEL_H });
   }
 
   const cropped = await out.save();
