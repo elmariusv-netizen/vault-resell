@@ -111,12 +111,46 @@ function OrderCard({ order, onDownload, isDownloading, isDone }) {
 // ── Handmatig label toevoegen (modal) ──────────────────────────────────────────
 function ManualLabelModal({ onClose, onAdd }) {
   const [dragOver, setDragOver] = useState(false)
+  const [phase, setPhase]       = useState('idle') // idle | uploading | preview | error
+  const [error, setError]       = useState(null)
+  const [preview, setPreview]   = useState(null)   // { name, blob, previewUrl }
   const fileInputRef = useRef(null)
+
+  useEffect(() => {
+    return () => { if (preview?.previewUrl) URL.revokeObjectURL(preview.previewUrl) }
+  }, [preview])
+
+  const cropFile = async (file) => {
+    setPhase('uploading')
+    setError(null)
+    try {
+      const res = await fetch('/api/label', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/pdf' },
+        body: file,
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.error || `HTTP ${res.status}`)
+      }
+      const blob = await res.blob()
+      const previewUrl = URL.createObjectURL(blob)
+      setPreview({ name: file.name, blob, previewUrl })
+      setPhase('preview')
+    } catch (e) {
+      setError(`Croppen mislukt: ${e.message}`)
+      setPhase('error')
+    }
+  }
 
   const handleFiles = (fileList) => {
     const file = Array.from(fileList).find((f) => f.type === 'application/pdf')
-    if (!file) { alert('Kies een PDF-bestand.'); return }
-    onAdd(file)
+    if (!file) { setError('Kies een PDF-bestand.'); setPhase('error'); return }
+    cropFile(file)
+  }
+
+  const confirmAdd = () => {
+    onAdd({ name: preview.name, blob: preview.blob })
     onClose()
   }
 
@@ -133,25 +167,74 @@ function ManualLabelModal({ onClose, onAdd }) {
           <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Handmatig label toevoegen</h2>
           <button className="modal-close" onClick={onClose}>×</button>
         </div>
-        <div
-          className={`drop-zone${dragOver ? ' drag-over' : ''}`}
-          style={{ marginTop: 16 }}
-          onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={(e) => { e.preventDefault(); setDragOver(false); handleFiles(e.dataTransfer.files) }}
-          onClick={() => fileInputRef.current?.click()}
-        >
-          <div className="drop-icon">📄</div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-2)', marginBottom: 6 }}>
-            Sleep een PDF-label hier
+
+        {phase === 'idle' && (
+          <div
+            className={`drop-zone${dragOver ? ' drag-over' : ''}`}
+            style={{ marginTop: 16 }}
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => { e.preventDefault(); setDragOver(false); handleFiles(e.dataTransfer.files) }}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <div className="drop-icon">📄</div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-2)', marginBottom: 6 }}>
+              Sleep een PDF-label hier
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-3)' }}>of klik om te bladeren</div>
+            <input
+              ref={fileInputRef} type="file" accept=".pdf,application/pdf"
+              onChange={(e) => { if (e.target.files.length) handleFiles(e.target.files); e.target.value = '' }}
+              style={{ display: 'none' }}
+            />
           </div>
-          <div style={{ fontSize: 12, color: 'var(--text-3)' }}>of klik om te bladeren</div>
-          <input
-            ref={fileInputRef} type="file" accept=".pdf,application/pdf"
-            onChange={(e) => { if (e.target.files.length) handleFiles(e.target.files); e.target.value = '' }}
-            style={{ display: 'none' }}
-          />
-        </div>
+        )}
+
+        {phase === 'uploading' && (
+          <div style={{ marginTop: 16, padding: '40px 0', textAlign: 'center' }}>
+            <div style={{ fontSize: 32, marginBottom: 10 }}>⏳</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)' }}>
+              Label wordt gecropt naar 4×6…
+            </div>
+          </div>
+        )}
+
+        {phase === 'error' && (
+          <div style={{ marginTop: 16 }}>
+            <div style={{
+              padding: '12px 14px', borderRadius: 10, fontSize: 13,
+              background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.15)',
+              color: 'var(--red)', lineHeight: 1.6, marginBottom: 12,
+            }}>
+              {error}
+            </div>
+            <button className="btn btn-secondary" onClick={() => setPhase('idle')} style={{ width: '100%' }}>
+              Opnieuw proberen
+            </button>
+          </div>
+        )}
+
+        {phase === 'preview' && preview && (
+          <div style={{ marginTop: 16 }}>
+            <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 10 }}>
+              Voorbeeld van het gecropte 4×6 label:
+            </div>
+            <div style={{
+              display: 'flex', justifyContent: 'center', marginBottom: 16,
+              background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 8, padding: 12,
+            }}>
+              <embed
+                src={`${preview.previewUrl}#toolbar=0&navpanes=0&scrollbar=0`}
+                type="application/pdf"
+                style={{ width: 120, height: 180, border: '1px solid var(--border)', borderRadius: 4 }}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-secondary" onClick={onClose} style={{ flex: 1 }}>Annuleer</button>
+              <button className="btn btn-primary" onClick={confirmAdd} style={{ flex: 1 }}>✓ Toevoegen</button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -218,11 +301,18 @@ export default function Labels({ vintedCookie }) {
     setDownloading((prev) => { const n = new Set(prev); n.delete(order.id); return n })
   }, [vintedCookie])
 
-  // ── Handmatige labels ─────────────────────────────────────────────────────
-  const addManualItem = (file) => {
-    setManualItems((prev) => [...prev, { id: genId(), name: file.name, file }])
+  // ── Handmatige labels (al gecropt naar 4×6 door /api/label) ───────────────
+  const addManualItem = ({ name, blob }) => {
+    const previewUrl = URL.createObjectURL(blob)
+    setManualItems((prev) => [...prev, { id: genId(), name, blob, previewUrl }])
   }
-  const removeManualItem = (id) => setManualItems((prev) => prev.filter((i) => i.id !== id))
+  const removeManualItem = (id) => {
+    setManualItems((prev) => {
+      const item = prev.find((i) => i.id === id)
+      if (item?.previewUrl) URL.revokeObjectURL(item.previewUrl)
+      return prev.filter((i) => i.id !== id)
+    })
+  }
 
   // ── Alle labels printen (combineren tot één PDF) ──────────────────────────
   const printAll = async () => {
@@ -245,16 +335,12 @@ export default function Labels({ vintedCookie }) {
 
       for (const item of manualItems) {
         try {
-          const bytes    = await item.file.arrayBuffer()
-          const srcPdf   = await PDFDocument.load(new Uint8Array(bytes), { ignoreEncryption: true })
-          const embedded = await outPdf.embedPdf(srcPdf, srcPdf.getPageIndices())
-          for (const ep of embedded) {
-            const { width: ew, height: eh } = ep
-            const scale = Math.min(OUT_W / ew, OUT_H / eh)
-            const dw = ew * scale, dh = eh * scale
-            const page = outPdf.addPage([OUT_W, OUT_H])
-            page.drawPage(ep, { x: (OUT_W - dw) / 2, y: (OUT_H - dh) / 2, width: dw, height: dh })
-          }
+          // item.blob is al door /api/label gecropt naar exact 4×6 — gewoon embedden
+          const bytes = new Uint8Array(await item.blob.arrayBuffer())
+          const srcPdf = await PDFDocument.load(bytes, { ignoreEncryption: true })
+          const [embedded] = await outPdf.embedPdf(srcPdf, [0])
+          const page = outPdf.addPage([OUT_W, OUT_H])
+          page.drawPage(embedded, { x: 0, y: 0, width: OUT_W, height: OUT_H })
         } catch (e) { console.warn('[Vault] printAll manueel mislukt:', item.name, e.message) }
       }
 
@@ -369,7 +455,17 @@ export default function Labels({ vintedCookie }) {
                   borderRadius: 'var(--r-lg)', padding: '10px 14px',
                 }}
               >
-                <span style={{ fontSize: 20, flexShrink: 0 }}>📄</span>
+                <div style={{
+                  width: 36, height: 36, borderRadius: 'var(--r-sm, 6px)',
+                  background: 'var(--surface)', border: '1px solid var(--border)',
+                  flexShrink: 0, overflow: 'hidden',
+                }}>
+                  <embed
+                    src={`${item.previewUrl}#toolbar=0&navpanes=0&scrollbar=0`}
+                    type="application/pdf"
+                    style={{ width: '100%', height: '100%', pointerEvents: 'none' }}
+                  />
+                </div>
                 <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {item.name}
                 </div>
