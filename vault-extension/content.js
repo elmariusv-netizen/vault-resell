@@ -1067,9 +1067,20 @@
       );
       dlBtn.addEventListener('click', () => doDownloadLabel(dlBtn, o, null));
       dlBtns.set(o.transactionId, dlBtn);
+
+      const actions = el('div', 'display:flex;gap:6px;flex-shrink:0');
+      actions.appendChild(dlBtn);
+
+      // "Verzendlabel is naar de verkoper gestuurd." → needs_action
+      if (o.transactionUserStatus === 'needs_action') {
+        const sendBtn = btn('📤 Stuur naar app', `background:${D.badge};color:#374151;flex-shrink:0`);
+        sendBtn.addEventListener('click', () => sendLabelAvailable(o.transactionId, sendBtn));
+        actions.appendChild(sendBtn);
+      }
+
       const sub = [o.buyer ? `@${o.buyer}` : '', fmtD(o.date)].filter(Boolean).join(' · ');
       return rowDiv(
-        [photoThumb(o.photo), textStack(o.title, sub), priceTag(o.price), dlBtn],
+        [photoThumb(o.photo), textStack(o.title, sub), priceTag(o.price), actions],
         i < labelOrders.length - 1,
       );
     });
@@ -1080,7 +1091,30 @@
     footer.appendChild(printAll);
   }
 
-  const PROXY_URL = 'https://vault-resell.vercel.app/api/label';
+  const PROXY_URL      = 'https://vault-resell.vercel.app/api/label';
+  const SYNC_PROXY_URL = 'https://vault-resell.vercel.app/api/sync-order';
+
+  // Meld bij de app dat er een verzendlabel klaarstaat voor deze transactie
+  async function sendLabelAvailable(txId, sendBtn) {
+    sendBtn.textContent = '⏳ Versturen…'; sendBtn.disabled = true;
+    try {
+      const resp = await fetch(SYNC_PROXY_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: txId, transaction_id: txId, label_available: true }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${resp.status}`);
+      }
+      sendBtn.textContent = '✓ Verstuurd';
+      sendBtn.style.background = '#dcfce7'; sendBtn.style.color = '#15803d';
+    } catch (e) {
+      console.warn('[Vault] sendLabelAvailable mislukt:', e.message);
+      sendBtn.textContent = '✗ Opnieuw'; sendBtn.disabled = false;
+      sendBtn.style.background = '#fee2e2'; sendBtn.style.color = '#dc2626';
+    }
+  }
 
   // Vintedge approach: transaction → shipment ID → presigned label URL
   async function fetchLabelViaShipment(txId) {

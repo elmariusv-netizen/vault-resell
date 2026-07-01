@@ -157,6 +157,35 @@ async function detectLabelBounds(src, page) {
   return { left: 0, bottom: fallbackBottom, right: fallbackW, top: pageH };
 }
 
+// Zoek de opgeslagen Vinted-cookie op via de owner van de order (vinted_orders.owner_id → user_settings.vinted_cookie)
+async function lookupVintedCookie(transactionId) {
+  const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
+  const SERVICE_KEY  = process.env.SUPABASE_SERVICE_KEY;
+  if (!SUPABASE_URL || !SERVICE_KEY || !transactionId) return null;
+
+  const hdrs = { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}` };
+  try {
+    const orderRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/vinted_orders?transaction_id=eq.${encodeURIComponent(transactionId)}&select=owner_id&limit=1`,
+      { headers: hdrs }
+    );
+    if (!orderRes.ok) return null;
+    const [orderRow] = await orderRes.json();
+    if (!orderRow?.owner_id) return null;
+
+    const settingsRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/user_settings?user_id=eq.${encodeURIComponent(orderRow.owner_id)}&select=vinted_cookie&limit=1`,
+      { headers: hdrs }
+    );
+    if (!settingsRes.ok) return null;
+    const [settingsRow] = await settingsRes.json();
+    return settingsRow?.vinted_cookie || null;
+  } catch (e) {
+    console.warn('[label] lookupVintedCookie fout:', e.message);
+    return null;
+  }
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -165,7 +194,12 @@ export default async function handler(req, res) {
 
   const transaction_id = req.body?.transaction_id || req.query?.transaction_id;
   const label_url      = req.body?.label_url      || req.query?.label_url;
-  const cookie         = req.headers['x-vinted-cookie'];
+  let cookie            = req.headers['x-vinted-cookie'];
+
+  if (!cookie && transaction_id && !label_url) {
+    cookie = await lookupVintedCookie(transaction_id);
+    if (cookie) console.log('[label] cookie automatisch opgehaald uit user_settings voor txn', transaction_id);
+  }
 
   let pdfFetchUrl, fetchOptions;
 

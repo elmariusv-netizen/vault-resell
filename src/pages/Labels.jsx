@@ -1,33 +1,12 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
+import { PDFDocument } from 'pdf-lib'
+import { supabase } from '../utils/supabase'
 import { genId } from '../utils/skuUtils'
 
 const OUT_W = 288
 const OUT_H = 432
-const SKU_H = 28
 
-// ── PDF helpers (bestaand) ────────────────────────────────────────────────────
-function drawSkuStrip(page, font, sku) {
-  page.drawRectangle({ x: 0, y: 0, width: OUT_W, height: SKU_H, color: rgb(0.12, 0.12, 0.12) })
-  const size = 11
-  const textW = font.widthOfTextAtSize(sku, size)
-  page.drawText(sku, { x: (OUT_W - textW) / 2, y: (SKU_H - size) / 2 + 2, size, font, color: rgb(0.9, 0.9, 0.9) })
-}
-
-function formatBytes(n) {
-  if (!n) return ''
-  if (n < 1024) return `${n} B`
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`
-}
-
-function formatTs(iso) {
-  if (!iso) return ''
-  try { return new Date(iso).toLocaleString('nl-BE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) }
-  catch { return iso }
-}
-
-// ── Vinted order helpers ──────────────────────────────────────────────────────
+// ── Formatters ─────────────────────────────────────────────────────────────
 function formatPrice(price, currency = 'EUR') {
   try { return new Intl.NumberFormat('nl-BE', { style: 'currency', currency }).format(price) }
   catch { return `€${Number(price).toFixed(2)}` }
@@ -37,6 +16,15 @@ function formatOrderDate(iso) {
   if (!iso) return ''
   try { return new Date(iso).toLocaleDateString('nl-BE', { day: '2-digit', month: 'short', year: 'numeric' }) }
   catch { return iso }
+}
+
+function getStatusBadge(status) {
+  const s = (status || '').toLowerCase()
+  if (s.includes('verzendlabel')) return { label: 'Label gereed', color: '#d97706', bg: 'rgba(245,158,11,0.12)' }
+  if (s.includes('verzond') || s.includes('shipped') || s.includes('onderweg')) return { label: 'Onderweg', color: '#2563eb', bg: 'rgba(37,99,235,0.1)' }
+  if (s.includes('geleverd') || s.includes('delivered')) return { label: 'Geleverd', color: '#16a34a', bg: 'rgba(22,163,74,0.1)' }
+  if (status) return { label: status.length > 36 ? status.slice(0, 36) + '…' : status, color: '#6b7280', bg: 'rgba(107,114,128,0.08)' }
+  return { label: 'Label gereed', color: '#d97706', bg: 'rgba(245,158,11,0.12)' }
 }
 
 // ── Skeleton card ─────────────────────────────────────────────────────────────
@@ -62,6 +50,9 @@ function SkeletonCard() {
 
 // ── Vinted order kaart ────────────────────────────────────────────────────────
 function OrderCard({ order, onDownload, isDownloading, isDone }) {
+  const badge = getStatusBadge(order.status)
+  const buyer = order.buyer_name || order.buyer || ''
+
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 14,
@@ -89,8 +80,11 @@ function OrderCard({ order, onDownload, isDownloading, isDone }) {
         </div>
         <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 3, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           <span style={{ color: 'var(--green)', fontWeight: 700 }}>{formatPrice(order.price, order.currency)}</span>
-          {order.buyer && <span>· {order.buyer}</span>}
-          {order.date && <span>· {formatOrderDate(order.date)}</span>}
+          {buyer && <span>· {buyer}</span>}
+          {order.sale_date && <span>· {formatOrderDate(order.sale_date)}</span>}
+          <span style={{ fontSize: 10, color: badge.color, background: badge.bg, padding: '2px 8px', borderRadius: 5, fontWeight: 700, border: `1px solid ${badge.color}30` }}>
+            {badge.label}
+          </span>
         </div>
       </div>
 
@@ -114,75 +108,98 @@ function OrderCard({ order, onDownload, isDownloading, isDone }) {
   )
 }
 
+// ── Handmatig label toevoegen (modal) ──────────────────────────────────────────
+function ManualLabelModal({ onClose, onAdd }) {
+  const [dragOver, setDragOver] = useState(false)
+  const fileInputRef = useRef(null)
+
+  const handleFiles = (fileList) => {
+    const file = Array.from(fileList).find((f) => f.type === 'application/pdf')
+    if (!file) { alert('Kies een PDF-bestand.'); return }
+    onAdd(file)
+    onClose()
+  }
+
+  useEffect(() => {
+    const close = (e) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', close)
+    return () => window.removeEventListener('keydown', close)
+  }, [onClose])
+
+  return (
+    <div className="modal-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal" style={{ maxWidth: 420, padding: 24 }}>
+        <div className="modal-header">
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Handmatig label toevoegen</h2>
+          <button className="modal-close" onClick={onClose}>×</button>
+        </div>
+        <div
+          className={`drop-zone${dragOver ? ' drag-over' : ''}`}
+          style={{ marginTop: 16 }}
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => { e.preventDefault(); setDragOver(false); handleFiles(e.dataTransfer.files) }}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          <div className="drop-icon">📄</div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-2)', marginBottom: 6 }}>
+            Sleep een PDF-label hier
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-3)' }}>of klik om te bladeren</div>
+          <input
+            ref={fileInputRef} type="file" accept=".pdf,application/pdf"
+            onChange={(e) => { if (e.target.files.length) handleFiles(e.target.files); e.target.value = '' }}
+            style={{ display: 'none' }}
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Hoofdcomponent ────────────────────────────────────────────────────────────
 export default function Labels({ vintedCookie }) {
-  // Bestaande staat: handmatige upload
-  const [items, setItems]           = useState([])
-  const [generating, setGenerating] = useState(false)
-  const [dragOver, setDragOver]     = useState(false)
-  const fileInputRef                = useRef(null)
-
-  // Bestaande staat: onderschepte labels (Chrome extensie)
-  const [intercepted, setIntercepted] = useState([])
-  const [selectedIds, setSelectedIds] = useState(new Set())
-  const [merging, setMerging]         = useState(false)
-
-  // Nieuw: Vinted orders staat
   const [orders, setOrders]           = useState([])
-  const [ordersLoading, setOrdersLoading] = useState(false)
+  const [ordersLoading, setOrdersLoading] = useState(true)
   const [ordersError, setOrdersError] = useState(null)
   const [downloading, setDownloading] = useState(new Set())
   const [downloaded, setDownloaded]   = useState(new Set())
 
-  // ── Bestaand: onderschepte labels laden uit localStorage ────────────────
-  const loadIntercepted = useCallback(() => {
-    try {
-      const raw = localStorage.getItem('vault-vinted-labels')
-      setIntercepted(raw ? JSON.parse(raw) : [])
-    } catch { setIntercepted([]) }
-  }, [])
+  const [manualItems, setManualItems] = useState([])
+  const [modalOpen, setModalOpen]     = useState(false)
+  const [printing, setPrinting]       = useState(false)
 
-  useEffect(() => {
-    loadIntercepted()
-    const onStorage = (e) => { if (e.key === 'vault-vinted-labels') loadIntercepted() }
-    window.addEventListener('storage', onStorage)
-    return () => window.removeEventListener('storage', onStorage)
-  }, [loadIntercepted])
-
-  // ── Nieuw: Vinted orders ophalen ─────────────────────────────────────────
+  // ── Vinted orders met beschikbaar label ophalen ─────────────────────────
   const fetchOrders = useCallback(() => {
-    if (!vintedCookie) return
     setOrdersLoading(true)
     setOrdersError(null)
-    fetch('/api/vinted-orders', {
-      headers: { 'x-vinted-cookie': vintedCookie },
-    })
-      .then((r) => r.json().then((d) => ({ ok: r.ok, status: r.status, data: d })))
-      .then(({ ok, data }) => {
-        if (!ok) throw new Error(data.error || `HTTP ${data.status}`)
-        setOrders(data.orders || [])
+    supabase
+      .from('vinted_orders')
+      .select('*')
+      .eq('label_available', true)
+      .order('synced_at', { ascending: false })
+      .then(({ data, error }) => {
+        if (error) { setOrdersError(error.message); setOrdersLoading(false); return }
+        setOrders(data || [])
         setOrdersLoading(false)
       })
-      .catch((e) => {
-        setOrdersError(e.message)
-        setOrdersLoading(false)
-      })
-  }, [vintedCookie])
+  }, [])
 
   useEffect(() => { fetchOrders() }, [fetchOrders])
 
-  // ── Nieuw: label downloaden ───────────────────────────────────────────────
+  const labelParams = (order) => new URLSearchParams(
+    order.label_url
+      ? { label_url: order.label_url }
+      : { transaction_id: order.transaction_id || order.id }
+  )
+
+  const labelHeaders = () => (vintedCookie ? { 'x-vinted-cookie': vintedCookie } : {})
+
+  // ── Label downloaden ───────────────────────────────────────────────────────
   const downloadLabel = useCallback(async (order) => {
     setDownloading((prev) => new Set([...prev, order.id]))
     try {
-      const params = new URLSearchParams(
-        order.label_url
-          ? { label_url: order.label_url }
-          : { transaction_id: order.transaction_id }
-      )
-      const res = await fetch(`/api/label?${params}`, {
-        headers: { 'x-vinted-cookie': vintedCookie },
-      })
+      const res = await fetch(`/api/label?${labelParams(order)}`, { headers: labelHeaders() })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
         throw new Error(err.error || `HTTP ${res.status}`)
@@ -191,7 +208,7 @@ export default function Labels({ vintedCookie }) {
       const url  = URL.createObjectURL(blob)
       const a    = document.createElement('a')
       a.href     = url
-      a.download = `label-${order.transaction_id}-4x6.pdf`
+      a.download = `label-${order.transaction_id || order.id}-4x6.pdf`
       a.click()
       URL.revokeObjectURL(url)
       setDownloaded((prev) => new Set([...prev, order.id]))
@@ -201,125 +218,52 @@ export default function Labels({ vintedCookie }) {
     setDownloading((prev) => { const n = new Set(prev); n.delete(order.id); return n })
   }, [vintedCookie])
 
-  // ── Bestaand: onderschepte labels ────────────────────────────────────────
-  const toggleSelect = (id) =>
-    setSelectedIds((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
-
-  const removeIntercepted = (id) => {
-    setIntercepted((prev) => prev.filter((l) => l.id !== id))
-    setSelectedIds((prev) => { const n = new Set(prev); n.delete(id); return n })
-    localStorage.removeItem(`vault-vinted-label-${id}`)
-    try {
-      const m = JSON.parse(localStorage.getItem('vault-vinted-labels') || '[]')
-      localStorage.setItem('vault-vinted-labels', JSON.stringify(m.filter((l) => l.id !== id)))
-    } catch {}
+  // ── Handmatige labels ─────────────────────────────────────────────────────
+  const addManualItem = (file) => {
+    setManualItems((prev) => [...prev, { id: genId(), name: file.name, file }])
   }
+  const removeManualItem = (id) => setManualItems((prev) => prev.filter((i) => i.id !== id))
 
-  const mergeIntercepted = async () => {
-    if (!selectedIds.size) return
-    setMerging(true)
+  // ── Alle labels printen (combineren tot één PDF) ──────────────────────────
+  const printAll = async () => {
+    if (!orders.length && !manualItems.length) return
+    setPrinting(true)
     try {
       const outPdf = await PDFDocument.create()
-      for (const id of selectedIds) {
-        const dataUrl = localStorage.getItem(`vault-vinted-label-${id}`) || ''
-        if (!dataUrl) continue
+
+      for (const order of orders) {
         try {
-          const b64    = dataUrl.split(',')[1]
-          const binary = atob(b64)
-          const bytes  = new Uint8Array(binary.length)
-          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-          const srcPdf   = await PDFDocument.load(bytes, { ignoreEncryption: true })
-          const embedded = await outPdf.embedPdf(srcPdf, srcPdf.getPageIndices())
-          for (const ep of embedded) {
-            const { width: ew, height: eh } = ep
-            const scale = Math.min(OUT_W / ew, OUT_H / eh)
-            const page  = outPdf.addPage([OUT_W, OUT_H])
-            page.drawPage(ep, {
-              x: (OUT_W - ew * scale) / 2, y: (OUT_H - eh * scale) / 2,
-              width: ew * scale, height: eh * scale,
-            })
-          }
-        } catch (e) { console.error('[Vault] label merge error:', id, e) }
+          const res = await fetch(`/api/label?${labelParams(order)}`, { headers: labelHeaders() })
+          if (!res.ok) continue
+          const bytes   = new Uint8Array(await res.arrayBuffer())
+          const srcPdf  = await PDFDocument.load(bytes, { ignoreEncryption: true })
+          const [embedded] = await outPdf.embedPdf(srcPdf, [0])
+          const page = outPdf.addPage([OUT_W, OUT_H])
+          page.drawPage(embedded, { x: 0, y: 0, width: OUT_W, height: OUT_H })
+        } catch (e) { console.warn('[Vault] printAll order mislukt:', order.id, e.message) }
       }
-      const pdfBytes = await outPdf.save()
-      const url = URL.createObjectURL(new Blob([pdfBytes], { type: 'application/pdf' }))
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `vinted-labels-${new Date().toISOString().split('T')[0]}.pdf`
-      a.click()
-      URL.revokeObjectURL(url)
-    } catch (err) {
-      alert('Fout bij samenvoegen: ' + err.message)
-    }
-    setMerging(false)
-  }
 
-  // ── Bestaand: handmatige upload ──────────────────────────────────────────
-  const processFiles = async (fileList) => {
-    const files = Array.from(fileList).filter(
-      (f) => f.type === 'application/pdf' || f.type.startsWith('image/')
-    )
-    if (!files.length) return
-    const newItems = await Promise.all(
-      files.map(async (file) => {
-        const id = genId()
-        if (file.type.startsWith('image/')) {
-          return { id, name: file.name, type: 'image', file, previewUrl: URL.createObjectURL(file), sku: '', pageCount: 1 }
-        }
-        let pageCount = 1
+      for (const item of manualItems) {
         try {
-          const bytes = await file.arrayBuffer()
-          const pdf = await PDFDocument.load(new Uint8Array(bytes), { ignoreEncryption: true })
-          pageCount = pdf.getPageCount()
-        } catch {}
-        return { id, name: file.name, type: 'pdf', file, previewUrl: null, sku: '', pageCount }
-      })
-    )
-    setItems((prev) => [...prev, ...newItems])
-  }
-
-  const handleFiles = (e) => { processFiles(e.target.files); e.target.value = '' }
-  const handleDrop  = (e) => { e.preventDefault(); setDragOver(false); processFiles(e.dataTransfer.files) }
-  const removeItem  = (id) => {
-    setItems((prev) => { const item = prev.find((i) => i.id === id); if (item?.previewUrl) URL.revokeObjectURL(item.previewUrl); return prev.filter((i) => i.id !== id) })
-  }
-  const updateSku = (id, sku) => setItems((prev) => prev.map((i) => (i.id === id ? { ...i, sku } : i)))
-
-  const generate = async () => {
-    if (!items.length) return
-    setGenerating(true)
-    try {
-      const outPdf = await PDFDocument.create()
-      const font   = await outPdf.embedFont(StandardFonts.HelveticaBold)
-      for (const item of items) {
-        if (item.type === 'pdf') {
           const bytes    = await item.file.arrayBuffer()
           const srcPdf   = await PDFDocument.load(new Uint8Array(bytes), { ignoreEncryption: true })
           const embedded = await outPdf.embedPdf(srcPdf, srcPdf.getPageIndices())
           for (const ep of embedded) {
-            const hasSku = !!item.sku.trim()
-            const contentH = hasSku ? OUT_H - SKU_H : OUT_H
             const { width: ew, height: eh } = ep
-            const scale = Math.min(OUT_W / ew, contentH / eh)
+            const scale = Math.min(OUT_W / ew, OUT_H / eh)
             const dw = ew * scale, dh = eh * scale
             const page = outPdf.addPage([OUT_W, OUT_H])
-            page.drawPage(ep, { x: (OUT_W - dw) / 2, y: (hasSku ? SKU_H : 0) + (contentH - dh) / 2, width: dw, height: dh })
-            if (hasSku) drawSkuStrip(page, font, item.sku.trim())
+            page.drawPage(ep, { x: (OUT_W - dw) / 2, y: (OUT_H - dh) / 2, width: dw, height: dh })
           }
-        } else {
-          const imgBytes = await item.file.arrayBuffer()
-          const img = item.file.type === 'image/png'
-            ? await outPdf.embedPng(new Uint8Array(imgBytes))
-            : await outPdf.embedJpg(new Uint8Array(imgBytes))
-          const hasSku = !!item.sku.trim()
-          const contentH = hasSku ? OUT_H - SKU_H : OUT_H
-          const { width: iw, height: ih } = img
-          const scale = Math.min(OUT_W / iw, contentH / ih)
-          const page = outPdf.addPage([OUT_W, OUT_H])
-          page.drawImage(img, { x: (OUT_W - iw * scale) / 2, y: (hasSku ? SKU_H : 0) + (contentH - ih * scale) / 2, width: iw * scale, height: ih * scale })
-          if (hasSku) drawSkuStrip(page, font, item.sku.trim())
-        }
+        } catch (e) { console.warn('[Vault] printAll manueel mislukt:', item.name, e.message) }
       }
+
+      if (!outPdf.getPageCount()) {
+        alert('Geen labels konden worden opgehaald.')
+        setPrinting(false)
+        return
+      }
+
       const pdfBytes = await outPdf.save()
       const url = URL.createObjectURL(new Blob([pdfBytes], { type: 'application/pdf' }))
       const a = document.createElement('a')
@@ -327,11 +271,13 @@ export default function Labels({ vintedCookie }) {
       a.download = `vault-labels-${new Date().toISOString().split('T')[0]}.pdf`
       a.click()
       URL.revokeObjectURL(url)
-    } catch (err) { alert('Fout bij genereren: ' + err.message) }
-    setGenerating(false)
+    } catch (err) {
+      alert('Fout bij printen: ' + err.message)
+    }
+    setPrinting(false)
   }
 
-  const totalPages = items.reduce((s, i) => s + (i.pageCount || 1), 0)
+  const totalCount = orders.length + manualItems.length
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -339,21 +285,19 @@ export default function Labels({ vintedCookie }) {
       <div className="page-header">
         <div>
           <h1>Labels</h1>
-          <div className="page-subtitle">Openstaande Vinted orders en handmatige labels</div>
+          <div className="page-subtitle">Klaarstaande Vinted verzendlabels</div>
         </div>
-        {items.length > 0 && (
-          <button className="btn btn-primary" onClick={generate} disabled={generating}>
-            {generating ? 'Genereren…' : `Genereer PDF (${totalPages} pagina${totalPages !== 1 ? "'s" : ''})`}
-          </button>
-        )}
+        <button className="btn btn-secondary" onClick={() => setModalOpen(true)}>
+          ➕ Handmatig label toevoegen
+        </button>
       </div>
 
-      {/* ── Vinted openstaande orders ───────────────────────────────────── */}
+      {/* ── Vinted labels ────────────────────────────────────────────────── */}
       <div className="glass-card" style={{ marginBottom: 20 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontWeight: 700, fontSize: 15 }}>Openstaande Vinted labels</span>
+              <span style={{ fontWeight: 700, fontSize: 15 }}>Beschikbare labels</span>
               {!ordersLoading && orders.length > 0 && (
                 <span style={{
                   fontSize: 11, fontWeight: 700, color: '#818cf8',
@@ -362,36 +306,23 @@ export default function Labels({ vintedCookie }) {
               )}
             </div>
             <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2 }}>
-              {vintedCookie
-                ? 'Betaalde orders die wachten op verzending'
-                : 'Koppel je Vinted account in Instellingen om orders te zien'}
+              Orders waarvoor Vinted een verzendlabel klaar heeft staan
             </div>
           </div>
-          {vintedCookie && !ordersLoading && (
+          {!ordersLoading && (
             <button className="btn btn-ghost btn-sm" onClick={fetchOrders}>
               ↻ Vernieuwen
             </button>
           )}
         </div>
 
-        {/* Geen cookie */}
-        {!vintedCookie && (
-          <div style={{
-            padding: '20px 0', textAlign: 'center', fontSize: 13, color: 'var(--text-3)',
-          }}>
-            Ga naar <strong>Instellingen → Koppel Vinted account</strong> om je sessie-cookie op te slaan.
-          </div>
-        )}
-
-        {/* Laad skeleton */}
-        {vintedCookie && ordersLoading && (
+        {ordersLoading && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {[1, 2, 3].map((i) => <SkeletonCard key={i} />)}
           </div>
         )}
 
-        {/* Fout */}
-        {vintedCookie && !ordersLoading && ordersError && (
+        {!ordersLoading && ordersError && (
           <div style={{
             padding: '12px 14px', borderRadius: 10, fontSize: 13,
             background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.15)',
@@ -401,14 +332,12 @@ export default function Labels({ vintedCookie }) {
           </div>
         )}
 
-        {/* Lege staat */}
-        {vintedCookie && !ordersLoading && !ordersError && orders.length === 0 && (
+        {!ordersLoading && !ordersError && orders.length === 0 && (
           <div style={{ padding: '20px 0', textAlign: 'center', fontSize: 13, color: 'var(--text-3)' }}>
-            Geen openstaande labels — alles is verzonden!
+            Geen labels beschikbaar. Gebruik de Chrome-extensie op Vinted om labels naar de app te sturen.
           </div>
         )}
 
-        {/* Orders lijst */}
         {!ordersLoading && !ordersError && orders.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {orders.map((order) => (
@@ -424,157 +353,51 @@ export default function Labels({ vintedCookie }) {
         )}
       </div>
 
-      {/* ── Onderschepte labels (Chrome extensie) ─────────────────────────── */}
-      {intercepted.length > 0 && (
+      {/* ── Handmatig toegevoegde labels ───────────────────────────────────── */}
+      {manualItems.length > 0 && (
         <div className="glass-card" style={{ marginBottom: 20 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-            <div>
-              <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>
-                Onderschepte labels ({intercepted.length})
-              </div>
-              <div style={{ fontSize: 11, color: 'var(--text-3)' }}>
-                Automatisch onderschept via de Chrome extensie
-              </div>
-            </div>
-            {selectedIds.size > 0 && (
-              <button
-                className="btn btn-primary btn-sm"
-                onClick={mergeIntercepted}
-                disabled={merging}
-                style={{ whiteSpace: 'nowrap' }}
-              >
-                {merging ? 'Samenvoegen…' : `Merge & Print 4×6 (${selectedIds.size})`}
-              </button>
-            )}
+          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12 }}>
+            Handmatig toegevoegd ({manualItems.length})
           </div>
-
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {intercepted.map((label) => {
-              const checked = selectedIds.has(label.id)
-              return (
-                <div
-                  key={label.id}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 10,
-                    background: checked ? 'var(--indigo-soft, rgba(79,70,229,0.08))' : 'var(--bg-2)',
-                    border: `1px solid ${checked ? 'var(--indigo, #4f46e5)' : 'var(--border)'}`,
-                    borderRadius: 'var(--r-lg)', padding: '10px 14px',
-                    cursor: 'pointer', transition: 'all .15s',
-                  }}
-                  onClick={() => toggleSelect(label.id)}
-                >
-                  <input
-                    type="checkbox" checked={checked}
-                    onChange={() => toggleSelect(label.id)}
-                    onClick={(e) => e.stopPropagation()}
-                    style={{ width: 15, height: 15, accentColor: '#4f46e5', flexShrink: 0 }}
-                  />
-                  <span style={{ fontSize: 20, flexShrink: 0 }}>📄</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {label.filename}
-                    </div>
-                    <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 1 }}>
-                      {formatTs(label.capturedAt)}
-                      {label.orderId ? ` · bestelling #${label.orderId}` : ''}
-                      {label.size ? ` · ${formatBytes(label.size)}` : ''}
-                    </div>
-                  </div>
-                  <button
-                    className="btn btn-ghost btn-sm"
-                    onClick={(e) => { e.stopPropagation(); removeIntercepted(label.id) }}
-                    style={{ padding: '3px 8px', flexShrink: 0, fontSize: 14 }}
-                  >×</button>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* ── Handmatige upload ─────────────────────────────────────────────── */}
-      <div
-        className={`drop-zone${dragOver ? ' drag-over' : ''}`}
-        style={{ marginBottom: 20 }}
-        onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={handleDrop}
-        onClick={() => fileInputRef.current?.click()}
-      >
-        <div className="drop-icon">📤</div>
-        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-2)', marginBottom: 6 }}>
-          Sleep PDF of afbeelding hier
-        </div>
-        <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
-          of klik om te bladeren · PDF, JPG, PNG
-        </div>
-        <input
-          ref={fileInputRef} type="file" accept=".pdf,image/jpeg,image/png" multiple
-          onChange={handleFiles} style={{ display: 'none' }}
-        />
-      </div>
-
-      {/* ── Geüploade bestanden ───────────────────────────────────────────── */}
-      {items.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {items.map((item) => (
-            <div
-              key={item.id}
-              style={{
-                background: 'var(--surface)', border: '1px solid var(--border)',
-                borderRadius: 'var(--r-xl)', padding: '14px 18px',
-                display: 'flex', alignItems: 'center', gap: 14,
-                boxShadow: 'var(--shadow-sm)',
-              }}
-            >
-              <div style={{
-                width: 52, height: 52, borderRadius: 'var(--r-md)',
-                background: 'var(--bg-2)', border: '1px solid var(--border)',
-                flexShrink: 0, overflow: 'hidden',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-              }}>
-                {item.previewUrl
-                  ? <img src={item.previewUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                  : <span style={{ fontSize: 22 }}>📄</span>}
-              </div>
-
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {manualItems.map((item) => (
+              <div
+                key={item.id}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10,
+                  background: 'var(--bg-2)', border: '1px solid var(--border)',
+                  borderRadius: 'var(--r-lg)', padding: '10px 14px',
+                }}
+              >
+                <span style={{ fontSize: 20, flexShrink: 0 }}>📄</span>
+                <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {item.name}
                 </div>
-                <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
-                  {item.type === 'pdf' ? `PDF · ${item.pageCount} pagina${item.pageCount !== 1 ? "'s" : ''}` : 'Afbeelding'}
-                </div>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => removeManualItem(item.id)}
+                  style={{ padding: '3px 8px', flexShrink: 0, fontSize: 14 }}
+                >×</button>
               </div>
-
-              <div style={{ flexShrink: 0, width: 150 }}>
-                <input
-                  value={item.sku}
-                  onChange={(e) => updateSku(item.id, e.target.value)}
-                  placeholder="SKU (optioneel)"
-                  style={{ fontSize: 12, padding: '6px 10px' }}
-                  onClick={(e) => e.stopPropagation()}
-                />
-              </div>
-
-              <button className="btn btn-ghost btn-sm" onClick={() => removeItem(item.id)} style={{ padding: '4px 10px' }}>
-                ×
-              </button>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       )}
 
-      {/* Lege staat (alles leeg) */}
-      {items.length === 0 && intercepted.length === 0 && !vintedCookie && (
-        <div className="glass-card" style={{ marginTop: 8 }}>
-          <div style={{ fontWeight: 600, color: 'var(--text-2)', marginBottom: 10 }}>Hoe werkt het?</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 13, color: 'var(--text-2)', lineHeight: 1.7 }}>
-            <div>1. Koppel je Vinted account in Instellingen → openstaande orders verschijnen automatisch</div>
-            <div>2. Of upload een verzendbewijs (PDF) of labelafbeelding (JPG/PNG) handmatig</div>
-            <div>3. Klik "⬇ Download 4×6 label" om een thermisch-printklaar PDF te downloaden</div>
-          </div>
-        </div>
+      {/* ── Print alle labels ──────────────────────────────────────────────── */}
+      {totalCount > 0 && (
+        <button
+          className="btn btn-primary"
+          onClick={printAll}
+          disabled={printing}
+          style={{ width: '100%' }}
+        >
+          {printing ? 'Bezig met printen…' : `🖨️ Print alle labels (${totalCount})`}
+        </button>
+      )}
+
+      {modalOpen && (
+        <ManualLabelModal onClose={() => setModalOpen(false)} onAdd={addManualItem} />
       )}
     </div>
   )
