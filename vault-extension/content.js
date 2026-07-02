@@ -230,8 +230,8 @@
     return items;
   }
 
-  async function getSold() {
-    const c = await cGet('v_sold_v2');
+  async function getSold(force = false) {
+    const c = force ? null : await cGet('v_sold_v2');
     if (c) { console.log('[Vault] getSold: cache —', c.length, 'orders'); return c; }
 
     console.log('[Vault] getSold: ophalen…');
@@ -505,28 +505,69 @@
     ]);
   }
 
-  async function autoSync(orders) {
+  // Een order is "afgerond" als de Vinted-statustekst dat aangeeft — alles
+  // daarbuiten (label klaar, verzonden, onderweg, …) komt in aanmerking voor
+  // een status-refresh, ook als hij al eerder gesynct is.
+  function isOrderCompleted(o) {
+    return /voltooid|afgerond|afgesloten/i.test(o.status || '');
+  }
+
+  // Synct nieuwe orders (zoals voorheen, via SYNC_ORDER — houdt ook de lokale
+  // syncedOrders-lijst + dailyStats bij) EN ververst orders die al eerder
+  // gesynct zijn maar nog niet afgerond (via SYNC_TO_SUPABASE — een directe
+  // upsert zonder de lokale-duplicaat-check van SYNC_ORDER, want die zou een
+  // refresh net overslaan). userId (optioneel) laat voortgang terugmelden aan
+  // de webapp via REPORT_SYNC_PROGRESS, voor de "Alles synchroniseren"-knop.
+  async function autoSync(orders, userId) {
     const { syncedOrders = [] } = await chrome.storage.local.get(['syncedOrders']);
     syncedIds = new Set(syncedOrders.map(o => o.transactionId).filter(Boolean));
 
-    const nieuw    = orders.filter(o => o.transactionId && !syncedIds.has(o.transactionId));
-    const overgeslagen = orders.length - nieuw.length;
-    console.log(`[Vault] autoSync: ${orders.length} orders — ${overgeslagen} al gesync, ${nieuw.length} nieuw`);
+    const nieuw        = orders.filter(o => o.transactionId && !syncedIds.has(o.transactionId));
+    const teVerversen  = orders.filter(o => o.transactionId && syncedIds.has(o.transactionId) && !isOrderCompleted(o));
+    const targets = [
+      ...nieuw.map(o => ({ order: o, kind: 'nieuw' })),
+      ...teVerversen.map(o => ({ order: o, kind: 'refresh' })),
+    ];
+    console.log(`[Vault] autoSync: ${orders.length} orders — ${nieuw.length} nieuw, ${teVerversen.length} te verversen, ${orders.length - targets.length} al afgerond/overgeslagen`);
 
-    let ok = 0, fail = 0;
-    for (const o of nieuw) {
-      const vId = await getVintedUserId();
-      const res = await sendMsg({ type: 'SYNC_ORDER', order: { ...o, labelUrl: labelUrl(o.transactionId), vintedUserId: vId } });
-      if (res?.success && !res.duplicate) {
-        syncedIds.add(o.transactionId);
-        ok++;
-        console.log(`[Vault] autoSync ✓ txn ${o.transactionId}`);
+    const reportProgress = async (progress) => {
+      if (!userId) return;
+      await sendMsg({ type: 'REPORT_SYNC_PROGRESS', userId, progress });
+    };
+
+    let newCount = 0, updatedCount = 0, fail = 0;
+    for (let i = 0; i < targets.length; i++) {
+      const { order: o, kind } = targets[i];
+      if (kind === 'nieuw') {
+        const vId = await getVintedUserId();
+        const res = await sendMsg({ type: 'SYNC_ORDER', order: { ...o, labelUrl: labelUrl(o.transactionId), vintedUserId: vId } });
+        if (res?.success && !res.duplicate) {
+          syncedIds.add(o.transactionId);
+          newCount++;
+          console.log(`[Vault] autoSync ✓ nieuw txn ${o.transactionId}`);
+        } else {
+          fail++;
+          console.warn(`[Vault] autoSync ✗ nieuw txn ${o.transactionId}`, res);
+        }
       } else {
-        fail++;
-        console.warn(`[Vault] autoSync ✗ txn ${o.transactionId}`, res);
+        const res = await sendMsg({ type: 'SYNC_TO_SUPABASE', order: o });
+        if (res?.success) {
+          updatedCount++;
+          console.log(`[Vault] autoSync ✓ status ververst txn ${o.transactionId} ("${o.status}")`);
+        } else {
+          fail++;
+          console.warn(`[Vault] autoSync ✗ refresh txn ${o.transactionId}`, res);
+        }
       }
+      await reportProgress({ status: 'running', done: i + 1, total: targets.length, newCount, updatedCount });
     }
-    console.log(`[Vault] autoSync klaar: ${ok} gesync, ${fail} mislukt`);
+
+    console.log(`[Vault] autoSync klaar: ${newCount} nieuw, ${updatedCount} bijgewerkt, ${fail} mislukt`);
+    await reportProgress({
+      status: 'done', done: targets.length, total: targets.length,
+      newCount, updatedCount, finishedAt: new Date().toISOString(),
+    });
+    return { newCount, updatedCount, fail };
   }
 
   async function loadDlIds() {
@@ -1401,11 +1442,14 @@
     if (msg.type !== 'FORCE_SYNC') return
     ;(async () => {
       try {
-        const orders = await getSold()
+        // force=true: negeer de sessiecache — dit is een expliciete "haal de
+        // huidige status opnieuw op"-aanvraag, een gecachte lijst zou precies
+        // het probleem in stand houden dat deze knop moet oplossen.
+        const orders = await getSold(true)
         const active = orders.filter(o => !isCancelled(o))
         await enrichOrders(active)
-        await autoSync(active)
-        sendResponse({ success: true, count: active.length })
+        const result = await autoSync(active, msg.userId)
+        sendResponse({ success: true, count: active.length, ...result })
       } catch (e) {
         console.warn('[Vault] FORCE_SYNC error:', e.message)
         sendResponse({ success: false, error: e.message })
@@ -1442,6 +1486,10 @@
     injectFab();
     console.log('[Vault] booted on', location.href);
     tryAutoLink();
+    // Als deze tab net geopend is voor een "Alles synchroniseren"-klik vanuit
+    // de webapp, hoeft niet gewacht te worden op de eerstvolgende 5s-poll in
+    // background.js — meteen checken of er een vlag klaarstaat.
+    sendMsg({ type: 'CHECK_SYNC_NOW' });
   }
 
   // SPA navigation watcher

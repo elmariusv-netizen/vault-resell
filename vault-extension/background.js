@@ -379,6 +379,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
     return true;
   }
+  // Content script vraagt om meteen (i.p.v. te wachten op de volgende 5s-poll)
+  // te checken of er een vault_sync_requested-vlag klaarstaat — gebruikt bij
+  // het laden van een verse tab (bv. net geopend vanuit de webapp's "Alles
+  // synchroniseren"-knop), zodat die niet op de eerstvolgende poll hoeft te
+  // wachten.
+  if (message.type === 'CHECK_SYNC_NOW') {
+    checkAndSync().then(() => sendResponse({ success: true }));
+    return true;
+  }
+  if (message.type === 'REPORT_SYNC_PROGRESS') {
+    reportSyncProgress(message.userId, message.progress).then(() => sendResponse({ success: true }));
+    return true;
+  }
 });
 
 // ── Order sync ────────────────────────────────────────────────────────────
@@ -406,10 +419,16 @@ async function syncOrder(order) {
 }
 
 // ── Auto-sync via vault-sync-requested flag in Supabase ───────────────────
+// Leest/schrijft via de user_sync_status VIEW, niet de user_settings-tabel
+// zelf: die heeft enkel een "authenticated" RLS-policy, en deze extensie
+// gebruikt de anon-key (geen auth-sessie) — rechtstreeks tegen de tabel
+// query'en gaf dus altijd 0 rijen terug, deze polling deed dus nooit iets.
+const SYNC_STATUS_URL = `${SUPABASE_URL}/rest/v1/user_sync_status`;
+
 async function checkAndSync() {
   try {
     const checkRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/user_settings?vault_sync_requested=eq.true&select=user_id&limit=1`,
+      `${SYNC_STATUS_URL}?vault_sync_requested=eq.true&select=user_id&limit=1`,
       { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
     )
     if (!checkRes.ok) return
@@ -427,19 +446,20 @@ async function checkAndSync() {
     if (tabs.length) {
       await Promise.all(tabs.map(tab =>
         new Promise(resolve =>
-          chrome.tabs.sendMessage(tab.id, { type: 'FORCE_SYNC' }, r => {
+          chrome.tabs.sendMessage(tab.id, { type: 'FORCE_SYNC', userId }, r => {
             if (chrome.runtime.lastError) resolve(null)
             else { console.log('[Vault] FORCE_SYNC result tab', tab.id, ':', r); resolve(r) }
           })
         )
       ))
     } else {
-      console.log('[Vault] Geen Vinted tab open — sync overgeslagen')
+      console.log('[Vault] Geen Vinted tab open — sync overgeslagen');
+      await reportSyncProgress(userId, { status: 'no_tab', finishedAt: new Date().toISOString() });
     }
 
     // Reset vlag
     await fetch(
-      `${SUPABASE_URL}/rest/v1/user_settings?user_id=eq.${encodeURIComponent(userId)}`,
+      `${SYNC_STATUS_URL}?user_id=eq.${encodeURIComponent(userId)}`,
       {
         method: 'PATCH',
         headers: {
@@ -456,7 +476,30 @@ async function checkAndSync() {
   }
 }
 
-setInterval(checkAndSync, 30000)
+// Schrijft voortgang terug (zelfde view als hierboven) zodat de webapp kan
+// pollen en "Orders bijwerken: X/Y…" kan tonen tijdens een lopende sync.
+async function reportSyncProgress(userId, progress) {
+  if (!userId) return;
+  try {
+    await fetch(`${SYNC_STATUS_URL}?user_id=eq.${encodeURIComponent(userId)}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+      },
+      body: JSON.stringify({ vault_sync_progress: progress }),
+    });
+  } catch (e) {
+    console.warn('[Vault] reportSyncProgress error:', e.message);
+  }
+}
+
+// Elke 5s i.p.v. 30s — een expliciete "Alles synchroniseren"-klik op de
+// webapp moet snel opgepikt worden door een Vinted-tab die al open staat
+// (een NIEUWE tab triggert bovendien meteen CHECK_SYNC_NOW bij het laden,
+// zie content.js boot()).
+setInterval(checkAndSync, 5000)
 
 async function updateDailyStats(order) {
   const today = new Date().toISOString().slice(0, 10);

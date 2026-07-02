@@ -50,6 +50,21 @@ CREATE POLICY IF NOT EXISTS "anon kan updaten"
 
 -- Auto-sync vlag (webapp → extensie)
 ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS vault_sync_requested BOOLEAN DEFAULT FALSE;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS vault_sync_progress JSONB;
+
+-- user_settings heeft (verderop in dit bestand) enkel een "authenticated"
+-- RLS-policy — de Chrome-extensie gebruikt de anon-key (geen auth-sessie) en
+-- kon dus vault_sync_requested/vault_sync_progress nooit lezen of resetten.
+-- Deze view legt UITSLUITEND de sync-gerelateerde kolommen bloot (niet
+-- vinted_cookie of andere gevoelige velden) zodat de extensie enkel deze
+-- vlag kan lezen/bijwerken, zonder de rest van user_settings voor anon
+-- open te zetten. Views draaien standaard met de rechten van de eigenaar
+-- (niet de aanroeper), dus dit omzeilt bewust de RLS van de onderliggende
+-- tabel — enkel voor deze 3 kolommen.
+CREATE OR REPLACE VIEW user_sync_status AS
+  SELECT user_id, vault_sync_requested, vault_sync_progress FROM user_settings;
+
+GRANT SELECT, UPDATE ON user_sync_status TO anon;
 
 -- Storage bucket voor handmatig geüploade foto's en video's
 INSERT INTO storage.buckets (id, name, public)

@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react'
+import { useMemo, useState, useEffect, useRef } from 'react'
 import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar,
   XAxis, YAxis, Tooltip, CartesianGrid, LineChart, Line,
@@ -9,6 +9,7 @@ import {
   formatCurrency, formatDate, formatSkuRange,
   getRemainingQty, calcSaleProfit, normalizePlatform,
 } from '../utils/skuUtils'
+import { supabase } from '../utils/supabase'
 
 // Always-dark palette for the dashboard
 const D = {
@@ -172,7 +173,7 @@ function HeatmapGrid({ sales }) {
 }
 
 // ── Main component ────────────────────────────
-export default function Home({ data, updateData, onNavigate, onDeleteSale }) {
+export default function Home({ data, updateData, onNavigate, onDeleteSale, activeUserId }) {
   const { batches, sales, suppliers } = data
 
   const [range, setRange] = useState('week')
@@ -180,6 +181,92 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale }) {
   const [customTo, setCustomTo] = useState('')
   const [showSale, setShowSale] = useState(false)
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
+  const [syncState, setSyncState] = useState(null) // null | { status, done, total, newCount, updatedCount }
+
+  // ── "Alles synchroniseren": zet de vault_sync_requested-vlag + opent/
+  // activeert een Vinted-tab (de extensie kan geen tabs opzoeken vanuit een
+  // gewone webpagina — dat vereist chrome.tabs, enkel de extensie zelf heeft
+  // dat), en pollt daarna user_settings.vault_sync_progress (bijgewerkt door
+  // de extensie tijdens het synchroniseren) voor live voortgang.
+  const syncPollRef = useRef({ interval: null, timeout: null })
+
+  useEffect(() => () => {
+    if (syncPollRef.current.interval) clearInterval(syncPollRef.current.interval)
+    if (syncPollRef.current.timeout) clearTimeout(syncPollRef.current.timeout)
+  }, [])
+
+  const stopSyncPolling = () => {
+    if (syncPollRef.current.interval) { clearInterval(syncPollRef.current.interval); syncPollRef.current.interval = null }
+    if (syncPollRef.current.timeout) { clearTimeout(syncPollRef.current.timeout); syncPollRef.current.timeout = null }
+  }
+
+  const handleSyncAll = async () => {
+    if (!activeUserId || syncState?.status === 'running') return
+
+    const initial = { status: 'running', done: 0, total: 0, newCount: 0, updatedCount: 0 }
+    setSyncState(initial)
+
+    try {
+      await supabase.from('user_settings').upsert(
+        { user_id: activeUserId, vault_sync_requested: true, vault_sync_progress: initial },
+        { onConflict: 'user_id' }
+      )
+    } catch (e) {
+      setSyncState({ status: 'error', error: e.message })
+      return
+    }
+
+    // Opent een Vinted-tab, of activeert 'm als deze knop hem al eerder zelf
+    // opende (zelfde named target) — een tab die de gebruiker zelf al open
+    // had staan wordt binnen 5s opgepikt door de achtergrond-poll in
+    // background.js, ook zonder dat hier een nieuwe tab bij komt.
+    window.open('https://www.vinted.be/', 'vault-sync-tab')
+
+    stopSyncPolling()
+    syncPollRef.current.interval = setInterval(async () => {
+      const { data: row, error } = await supabase
+        .from('user_settings')
+        .select('vault_sync_progress')
+        .eq('user_id', activeUserId)
+        .single()
+      if (error) return
+      const progress = row?.vault_sync_progress
+      if (!progress) return
+      setSyncState(progress)
+      if (progress.status === 'done' || progress.status === 'no_tab' || progress.status === 'error') {
+        stopSyncPolling()
+      }
+    }, 1500)
+
+    // Veiligheidsklep: als er na 2 minuten nog niets is teruggekomen, stop
+    // met pollen en toon een hint i.p.v. eindeloos te blijven draaien.
+    syncPollRef.current.timeout = setTimeout(() => {
+      setSyncState((prev) => (prev?.status === 'running' ? { ...prev, status: 'timeout' } : prev))
+      stopSyncPolling()
+    }, 120000)
+  }
+
+  const syncStatusText = useMemo(() => {
+    if (!syncState) return null
+    if (syncState.status === 'running') {
+      return syncState.total > 0
+        ? `Orders bijwerken: ${syncState.done}/${syncState.total}…`
+        : 'Vinted-tabblad zoeken en synchronisatie starten…'
+    }
+    if (syncState.status === 'done') {
+      return `✓ Klaar — ${syncState.updatedCount || 0} order${syncState.updatedCount === 1 ? '' : 's'} bijgewerkt, ${syncState.newCount || 0} nieuwe order${syncState.newCount === 1 ? '' : 's'} gevonden`
+    }
+    if (syncState.status === 'no_tab') {
+      return '⚠ Geen Vinted-tabblad gevonden — controleer of het net geopende tabblad is ingelogd en probeer opnieuw.'
+    }
+    if (syncState.status === 'timeout') {
+      return '⚠ Geen reactie van de extensie na 2 minuten — is de Vault-extensie actief op vinted.be?'
+    }
+    if (syncState.status === 'error') {
+      return `✗ Fout: ${syncState.error || 'onbekend'}`
+    }
+    return null
+  }, [syncState])
 
   useEffect(() => {
     const el = document.querySelector('.content-area')
@@ -262,6 +349,19 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale }) {
               dark
             />
             <button
+              onClick={handleSyncAll}
+              disabled={syncState?.status === 'running' || !activeUserId}
+              title={!activeUserId ? 'Nog aan het laden…' : 'Haalt nieuwe orders op en werkt de status van bestaande orders bij'}
+              style={{
+                background: syncState?.status === 'running' ? D.card2 : D.purple, color: '#fff', border: 'none', borderRadius: 8,
+                padding: '7px 14px', fontSize: 12, fontWeight: 700, fontFamily: 'inherit', flexShrink: 0,
+                cursor: syncState?.status === 'running' || !activeUserId ? 'default' : 'pointer',
+                opacity: syncState?.status === 'running' || !activeUserId ? 0.7 : 1,
+              }}
+            >
+              {syncState?.status === 'running' ? '⏳ Bezig…' : '🔄 Alles synchroniseren'}
+            </button>
+            <button
               onClick={() => setShowSale(true)}
               style={{ background: D.blue, color: '#fff', border: 'none', borderRadius: 8, padding: '7px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0 }}
             >
@@ -269,6 +369,22 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale }) {
             </button>
           </div>
         </div>
+
+        {syncStatusText && (
+          <div style={{
+            marginTop: -12, marginBottom: 24, padding: '9px 14px', borderRadius: 8,
+            background: D.card2, border: `1px solid ${D.border}`, fontSize: 12, color: D.text2,
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+          }}>
+            <span>{syncStatusText}</span>
+            {syncState?.status !== 'running' && (
+              <button
+                onClick={() => setSyncState(null)}
+                style={{ background: 'none', border: 'none', color: D.text3, cursor: 'pointer', fontSize: 14, lineHeight: 1, fontFamily: 'inherit' }}
+              >×</button>
+            )}
+          </div>
+        )}
 
         {/* Stat row 1 — 3 cards */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 12 }}>
@@ -478,6 +594,23 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale }) {
           <div style={{ fontSize: 12, color: D.text3, marginTop: 8 }}>
             {new Date().toLocaleDateString('nl-BE', { weekday: 'long', day: 'numeric', month: 'long' })}
           </div>
+          <button
+            onClick={handleSyncAll}
+            disabled={syncState?.status === 'running' || !activeUserId}
+            style={{
+              marginTop: 14, width: '100%', background: syncState?.status === 'running' ? D.card2 : D.purple, color: '#fff',
+              border: 'none', borderRadius: 10, padding: '10px 14px', fontSize: 13, fontWeight: 700, fontFamily: 'inherit',
+              cursor: syncState?.status === 'running' || !activeUserId ? 'default' : 'pointer',
+              opacity: syncState?.status === 'running' || !activeUserId ? 0.7 : 1,
+            }}
+          >
+            {syncState?.status === 'running' ? '⏳ Bezig…' : '🔄 Alles synchroniseren'}
+          </button>
+          {syncStatusText && (
+            <div style={{ marginTop: 8, fontSize: 11, color: D.text2, textAlign: 'center' }}>
+              {syncStatusText}
+            </div>
+          )}
         </div>
 
         {/* Stat pills */}

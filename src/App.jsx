@@ -263,7 +263,7 @@ export default function App() {
         )}
 
         <main className="main-content" key={page}>
-          {page === 'home'      && <Home {...props} theme={theme} />}
+          {page === 'home'      && <Home {...props} theme={theme} activeUserId={activeUserId} />}
           {page === 'inventory' && <Inventory {...props} />}
           {page === 'new'       && <NewSKU {...props} />}
           {page === 'verkopen'  && <Verkopen data={data} onDeleteSale={handleDeleteSale} onUpdateSale={handleUpdateSale} updateData={updateData} vintedCookie={vintedCookie} activeUserId={activeUserId} />}
