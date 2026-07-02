@@ -543,10 +543,12 @@
   }
 
   // Synct nieuwe orders (zoals voorheen, via SYNC_ORDER — houdt ook de lokale
-  // syncedOrders-lijst + dailyStats bij) EN ververst orders die al eerder
-  // gesynct zijn maar nog niet afgerond (via SYNC_TO_SUPABASE — een directe
-  // upsert zonder de lokale-duplicaat-check van SYNC_ORDER, want die zou een
-  // refresh net overslaan). userId (optioneel) laat voortgang terugmelden aan
+  // syncedOrders-lijst + dailyStats bij), ververst orders die al eerder
+  // gesynct zijn maar nog niet afgerond, EN controleert/corrigeert bij al
+  // VOLTOOIDE orders alsnog eenmalig order_direction (zie teCorrigeren
+  // hieronder) — allebei via SYNC_TO_SUPABASE, een directe upsert zonder de
+  // lokale-duplicaat-check van SYNC_ORDER, want die zou een refresh/correctie
+  // net overslaan. userId (optioneel) laat voortgang terugmelden aan
   // de webapp via REPORT_SYNC_PROGRESS, voor de "Alles synchroniseren"-knop.
   async function autoSync(orders, userId) {
     const { syncedOrders = [] } = await chrome.storage.local.get(['syncedOrders']);
@@ -564,11 +566,33 @@
       o.transactionId && !syncedIds.has(o.transactionId) && o.currentUserSide === 'buyer'
     );
     const teVerversen = orders.filter(o => o.transactionId && syncedIds.has(o.transactionId) && !isOrderCompleted(o));
+
+    // "Voltooid"-orders worden normaal NOOIT meer ververst (zie isOrderCompleted
+    // hierboven) — maar dat betekent ook dat een oude rij die ooit fout als
+    // order_direction='sale' is weggeschreven (terwijl currentUserSide eigenlijk
+    // 'buyer' is, bv. een lang geleden gekochte printer) NOOIT meer gecorrigeerd
+    // wordt, want hij komt in geen enkele bucket meer terecht zodra hij
+    // "voltooid" is. Dit is de eigenlijke root cause van het terugkerende
+    // aankoop-in-Verkopen-probleem: de vorige currentUserSide-fix (92d2c07)
+    // corrigeert order_direction wél al bij elke sync/refresh (zie orderDirection
+    // hieronder, altijd meegegeven aan SYNC_TO_SUPABASE), maar die route wordt
+    // voor voltooide orders gewoon nooit aangeroepen.
+    //
+    // We sturen ALLEEN een correctie als currentUserSide deze ronde
+    // daadwerkelijk bekend is (dus enrichOrders/fetchConvDetail is voor deze
+    // order gelukt) — bij onbekende/ontbrekende currentUserSide raken we
+    // order_direction niet aan, om een reeds correcte databasewaarde niet
+    // per ongeluk te overschrijven met de 'sale'-default.
+    const teCorrigeren = orders.filter(o =>
+      o.transactionId && syncedIds.has(o.transactionId) && isOrderCompleted(o) && !!o.currentUserSide
+    );
+
     const targets = [
       ...nieuw.map(o => ({ order: o, kind: 'nieuw' })),
       ...teVerversen.map(o => ({ order: o, kind: 'refresh' })),
+      ...teCorrigeren.map(o => ({ order: o, kind: 'direction-check' })),
     ];
-    console.log(`[Vault] autoSync: ${orders.length} orders — ${nieuw.length} nieuw (verkoop), ${nieuweAankopenOvergeslagen.length} nieuwe aankoop overgeslagen (enkel via Aankopen-tab), ${teVerversen.length} te verversen, ${orders.length - targets.length - nieuweAankopenOvergeslagen.length} al afgerond/overgeslagen`);
+    console.log(`[Vault] autoSync: ${orders.length} orders — ${nieuw.length} nieuw (verkoop), ${nieuweAankopenOvergeslagen.length} nieuwe aankoop overgeslagen (enkel via Aankopen-tab), ${teVerversen.length} te verversen, ${teCorrigeren.length} voltooid+richting-check, ${orders.length - targets.length - nieuweAankopenOvergeslagen.length} verder overgeslagen (voltooid, currentUserSide onbekend)`);
 
     const reportProgress = async (progress) => {
       if (!userId) return;
@@ -608,7 +632,11 @@
         const res = await sendMsg({ type: 'SYNC_TO_SUPABASE', order: { ...o, orderDirection, vintedUserId: vId } });
         if (res?.success) {
           updatedCount++;
-          console.log(`[Vault] autoSync ✓ status ververst txn ${o.transactionId} ("${o.status}", ${orderDirection})`);
+          if (kind === 'direction-check') {
+            console.log(`[Vault] autoSync ✓ richting gecontroleerd/gecorrigeerd txn ${o.transactionId} (voltooid, currentUserSide="${o.currentUserSide}" → ${orderDirection})`);
+          } else {
+            console.log(`[Vault] autoSync ✓ status ververst txn ${o.transactionId} ("${o.status}", ${orderDirection})`);
+          }
         } else {
           fail++;
           console.warn(`[Vault] autoSync ✗ refresh txn ${o.transactionId}`, res);
