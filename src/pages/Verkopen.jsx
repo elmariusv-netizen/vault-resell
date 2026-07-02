@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect } from 'react'
 import {
-  formatCurrency, formatDate, formatSkuRange, calcSaleProfit, normalizePlatform,
+  formatCurrency, formatDateLong, formatSkuRange, calcSaleProfit, normalizePlatform,
 } from '../utils/skuUtils'
 import SaleModal from '../components/SaleModal'
 import EditSaleModal from '../components/EditSaleModal'
@@ -49,9 +49,13 @@ async function fetchAllVintedOrders() {
   const { data, error } = await supabase
     .from('vinted_orders')
     .select('*')
-    .order('synced_at', { ascending: false })
   if (error) { console.warn('[Vault] Supabase fetch error:', error); return [] }
-  return data || []
+  // Sorteer op sale_date (val terug op synced_at als die ontbreekt), nieuwste eerst.
+  return (data || []).sort((a, b) => {
+    const da = a.sale_date || a.synced_at || ''
+    const db = b.sale_date || b.synced_at || ''
+    return db.localeCompare(da)
+  })
 }
 
 async function markRegisteredInSupabase(orderId) {
@@ -337,7 +341,7 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave }
           {/* Datum */}
           {date && (
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ color: 'var(--text-3)' }}>🗓</span> {date}
+              <span style={{ color: 'var(--text-3)' }}>🗓</span> {formatDateLong(date)}
             </div>
           )}
 
@@ -760,7 +764,7 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
               ) : null })()}
               {date && (
                 <span style={{ fontSize: 11, color: '#475569', display: 'flex', alignItems: 'center', gap: 3 }}>
-                  🗓 {date}
+                  🗓 {formatDateLong(date)}
                 </span>
               )}
               {miniBtn(
@@ -1382,7 +1386,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
                 {filtered.map((s) => (
                   <tr key={s.id} style={{ cursor: 'pointer' }} onClick={() => setEditSale(s)}>
                     <td style={{ whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>
-                      {formatDate(s.date)}
+                      {formatDateLong(s.date)}
                     </td>
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1433,7 +1437,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
                     </td>
                     <td>
                       {s.shipped
-                        ? <span style={{ fontSize: 11, color: 'var(--blue)', fontWeight: 600 }}>✓ {s.shippedDate ? formatDate(s.shippedDate) : 'ja'}</span>
+                        ? <span style={{ fontSize: 11, color: 'var(--blue)', fontWeight: 600 }}>✓ {s.shippedDate ? formatDateLong(s.shippedDate) : 'ja'}</span>
                         : <span style={{ fontSize: 11, color: 'var(--text-3)' }}>—</span>}
                     </td>
                     <td style={{ padding: '6px 10px' }} onClick={(e) => e.stopPropagation()}>
@@ -1486,7 +1490,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
                       {s.isFree && <span style={{ fontSize: 10, color: 'var(--green)', fontWeight: 700 }}>GRATIS</span>}
                     </div>
                     <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 3 }}>
-                      {formatDate(s.date)}
+                      {formatDateLong(s.date)}
                       {s.buyer && ` · ${s.buyer}`}
                       {s.shipped && <span style={{ color: 'var(--blue)', marginLeft: 6 }}>✓ verzonden</span>}
                     </div>

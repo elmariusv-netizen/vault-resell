@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../utils/supabase'
+import { formatDateLong } from '../utils/skuUtils'
 
 const BRANDS_MAP = [
   ['ralph lauren','RL'],['nike','NK'],['adidas','AD'],['zara','ZR'],['h&m','HM'],
@@ -22,9 +23,13 @@ async function fetchAllAankopen() {
     .from('vinted_orders')
     .select('*')
     .eq('order_direction', 'purchase')
-    .order('synced_at', { ascending: false })
   if (error) { console.warn('[Vault] Aankopen fetch error:', error); return [] }
-  return data || []
+  // Sorteer op sale_date (val terug op synced_at als die ontbreekt), nieuwste eerst.
+  return (data || []).sort((a, b) => {
+    const da = a.sale_date || a.synced_at || ''
+    const db = b.sale_date || b.synced_at || ''
+    return db.localeCompare(da)
+  })
 }
 
 function AankoopRow({ order, onToggleResale, onSaveSku }) {
@@ -70,7 +75,7 @@ function AankoopRow({ order, onToggleResale, onSaveSku }) {
             </span>
           )}
           {order.sale_date && (
-            <span style={{ fontSize: 11, color: 'var(--text-3)' }}>🗓 {order.sale_date}</span>
+            <span style={{ fontSize: 11, color: 'var(--text-3)' }}>🗓 {formatDateLong(order.sale_date)}</span>
           )}
           <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginLeft: 'auto' }}>
             €{parseFloat(order.price || 0).toFixed(2).replace('.', ',')}

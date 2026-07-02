@@ -67,6 +67,13 @@ export function formatDate(dateStr) {
   return d.toLocaleDateString('nl-BE', { day: '2-digit', month: '2-digit', year: 'numeric' })
 }
 
+export function formatDateLong(dateStr) {
+  if (!dateStr) return '—'
+  const d = new Date(dateStr)
+  if (isNaN(d)) return dateStr
+  return new Intl.DateTimeFormat('nl-BE', { day: 'numeric', month: 'long', year: 'numeric' }).format(d)
+}
+
 export function getSupplierColor(suppliers, prefix) {
   const s = suppliers.find((s) => s.prefix === prefix)
   return s?.color || '#666'
