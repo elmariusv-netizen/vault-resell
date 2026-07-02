@@ -660,7 +660,7 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
                     background: 'rgba(0,0,0,0.65)', color: '#fff', fontSize: 10, fontWeight: 700,
                     padding: '2px 6px', borderRadius: 20, pointerEvents: 'none',
                   }}>
-                    📷 {allPhotos.length}
+                    +{allPhotos.length - 1}
                   </span>
                 )}
               </>
