@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../utils/supabase'
 import { formatDateLong, COUNTRY_FLAGS, getStatusBadge } from '../utils/skuUtils'
 import AankoopSkuModal from '../components/AankoopSkuModal'
+import Checkbox from '../components/Checkbox'
 
 const BRANDS_MAP = [
   ['ralph lauren','RL'],['nike','NK'],['adidas','AD'],['zara','ZR'],['h&m','HM'],
@@ -38,7 +39,7 @@ async function fetchAllAankopen() {
   })
 }
 
-function AankoopRow({ order, onLinkSku, onDelete }) {
+function AankoopRow({ order, onLinkSku, onDelete, checked, onCheck }) {
   const suggested = !order.sku_ref ? suggestSku(order.title) : ''
   const photoUrls = (() => { try { return JSON.parse(order.photo_urls || '[]') } catch { return [] } })()
   const mainPhoto = photoUrls[0] || order.photo_url || null
@@ -51,7 +52,14 @@ function AankoopRow({ order, onLinkSku, onDelete }) {
       display: 'flex', gap: 12, padding: '14px 16px',
       borderBottom: '1px solid var(--border)', alignItems: 'flex-start',
       opacity: cancelled ? 0.6 : 1,
+      background: checked ? 'rgba(129,140,248,0.10)' : 'transparent',
+      transition: 'background 0.15s',
     }}>
+      {/* Checkbox */}
+      <div style={{ flexShrink: 0, paddingTop: 4 }}>
+        <Checkbox checked={checked} onChange={on => onCheck?.(on)} />
+      </div>
+
       {/* Foto */}
       <div style={{ flexShrink: 0 }}>
         {mainPhoto ? (
@@ -129,6 +137,7 @@ export default function Aankopen({ data, updateData }) {
   const [error, setError] = useState(null)
   const [showCancelled, setShowCancelled] = useState(false)
   const [linkingOrder, setLinkingOrder] = useState(null)
+  const [selectedIds, setSelectedIds] = useState(new Set())
 
   useEffect(() => {
     fetchAllAankopen()
@@ -154,6 +163,22 @@ export default function Aankopen({ data, updateData }) {
     if (!window.confirm(`"${order.title}" definitief verwijderen?`)) return
     await supabase.from('vinted_orders').delete().eq('id', order.id)
     setOrders(prev => prev.filter(o => o.id !== order.id))
+  }
+
+  const toggleId = (id, on) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      on ? next.add(id) : next.delete(id)
+      return next
+    })
+  }
+
+  const deleteSelected = async () => {
+    if (!window.confirm(`${selectedIds.size} order(s) definitief verwijderen?`)) return
+    const ids = [...selectedIds]
+    await supabase.from('vinted_orders').delete().in('id', ids)
+    setOrders(prev => prev.filter(o => !selectedIds.has(o.id)))
+    setSelectedIds(new Set())
   }
 
   return (
@@ -184,16 +209,38 @@ export default function Aankopen({ data, updateData }) {
           <p>Synchroniseer aankopen via de extensie onder het 🛍 Aankopen tabblad.</p>
         </div>
       ) : (
-        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-          {visibleOrders.map(order => (
-            <AankoopRow
-              key={order.id}
-              order={order}
-              onLinkSku={setLinkingOrder}
-              onDelete={handleDelete}
-            />
-          ))}
-        </div>
+        <>
+          {/* Bulk controls */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+            <button
+              onClick={() => setSelectedIds(new Set(visibleOrders.map(o => o.id)))}
+              style={{ fontSize: 11, padding: '2px 10px', borderRadius: 5, cursor: 'pointer', background: 'var(--bg-2)', border: '1px solid var(--border)', color: 'var(--text-2)', fontFamily: 'inherit' }}
+            >☑ Alles</button>
+            <button
+              onClick={() => setSelectedIds(new Set())}
+              style={{ fontSize: 11, padding: '2px 10px', borderRadius: 5, cursor: 'pointer', background: 'var(--bg-2)', border: '1px solid var(--border)', color: 'var(--text-2)', fontFamily: 'inherit' }}
+            >☐ Geen</button>
+            {selectedIds.size > 0 && (
+              <button
+                onClick={deleteSelected}
+                style={{ fontSize: 11, padding: '2px 10px', borderRadius: 5, cursor: 'pointer', background: 'rgba(248,113,113,0.12)', border: '1px solid rgba(248,113,113,0.3)', color: '#f87171', fontFamily: 'inherit', fontWeight: 600 }}
+              >🗑 Verwijder geselecteerde ({selectedIds.size})</button>
+            )}
+          </div>
+
+          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+            {visibleOrders.map(order => (
+              <AankoopRow
+                key={order.id}
+                order={order}
+                onLinkSku={setLinkingOrder}
+                onDelete={handleDelete}
+                checked={selectedIds.has(order.id)}
+                onCheck={on => toggleId(order.id, on)}
+              />
+            ))}
+          </div>
+        </>
       )}
 
       {linkingOrder && (

@@ -6,6 +6,7 @@ import {
 import SaleModal from '../components/SaleModal'
 import EditSaleModal from '../components/EditSaleModal'
 import SkuPickerModal from '../components/SkuPickerModal'
+import Checkbox from '../components/Checkbox'
 import { supabase } from '../utils/supabase'
 
 const SHORT = { 'Medeverkoper/Groothandel': 'B2B', 'Privé persoon': 'Privé' }
@@ -787,38 +788,6 @@ function BulkSkuModal({ suppliers, batches, allOrders, orders, onClose, onConfir
 // Native accent-color checkboxes renderen inconsistent (soms nauwelijks meer
 // dan een dun randje) — deze versie geeft een duidelijk gevuld vlak + wit
 // vinkje bij aangevinkt, en een subtiele lege outline bij niet-aangevinkt.
-function Checkbox({ checked, onChange, size = 20 }) {
-  return (
-    <label
-      style={{ position: 'relative', display: 'inline-flex', width: size, height: size, flexShrink: 0, cursor: 'pointer' }}
-      onClick={e => e.stopPropagation()}
-    >
-      <input
-        type="checkbox"
-        checked={!!checked}
-        onChange={e => onChange?.(e.target.checked)}
-        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', margin: 0, opacity: 0, cursor: 'pointer' }}
-      />
-      <span
-        style={{
-          width: size, height: size, borderRadius: 6, boxSizing: 'border-box',
-          border: checked ? '2px solid #818cf8' : '2px solid #64748b',
-          background: checked ? '#818cf8' : 'transparent',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          transition: 'background 0.15s, border-color 0.15s',
-          pointerEvents: 'none',
-        }}
-      >
-        {checked && (
-          <svg width={size * 0.6} height={size * 0.6} viewBox="0 0 16 16" fill="none">
-            <path d="M3 8.5L6.5 12L13 4.5" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        )}
-      </span>
-    </label>
-  )
-}
-
 // ── Order rij (Vinteer-stijl) ──────────────────────────────────────────────
 function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegister, onDetail, onUnlinkSku, batches, allOrders, checked, onCheck }) {
   const [skuPickerOpen,  setSkuPickerOpen]  = useState(false)
