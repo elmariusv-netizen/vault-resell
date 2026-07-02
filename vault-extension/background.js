@@ -425,7 +425,18 @@ async function syncOrder(order) {
 // query'en gaf dus altijd 0 rijen terug, deze polling deed dus nooit iets.
 const SYNC_STATUS_URL = `${SUPABASE_URL}/rest/v1/user_sync_status`;
 
+// Voorkomt overlappende rondes: de 5s-interval hieronder roept checkAndSync()
+// aan zonder te wachten tot een vorige ronde klaar is. Eén ronde kan (bij
+// bv. 78 orders) makkelijk langer dan 5s duren — zonder deze guard stuurt
+// elke volgende tick een NIEUWE FORCE_SYNC naar dezelfde tab terwijl de vlag
+// nog niet gereset is (die reset gebeurt pas ná de volledige roundtrip),
+// wat de content-script-kant liet lijken op een oneindige, steeds
+// herstartende sync (zie ook de syncInProgress-guard in content.js).
+let checkAndSyncRunning = false;
+
 async function checkAndSync() {
+  if (checkAndSyncRunning) return;
+  checkAndSyncRunning = true;
   try {
     const checkRes = await fetch(
       `${SYNC_STATUS_URL}?vault_sync_requested=eq.true&select=user_id&limit=1`,
@@ -473,6 +484,8 @@ async function checkAndSync() {
     console.log('[Vault] vault-sync-requested reset naar false')
   } catch (e) {
     console.warn('[Vault] checkAndSync error:', e.message)
+  } finally {
+    checkAndSyncRunning = false;
   }
 }
 

@@ -550,7 +550,12 @@
           console.warn(`[Vault] autoSync ✗ nieuw txn ${o.transactionId}`, res);
         }
       } else {
-        const res = await sendMsg({ type: 'SYNC_TO_SUPABASE', order: o });
+        // Zelfde owner_id-koppeling als het "nieuw"-pad hierboven — syncToSupabase()
+        // zoekt de owner_id op via order.vintedUserId (zie background.js
+        // lookupOwnerId()); zonder dit veld faalt de lookup altijd met "no_link",
+        // ook al bestaat de koppeling wel degelijk.
+        const vId = await getVintedUserId();
+        const res = await sendMsg({ type: 'SYNC_TO_SUPABASE', order: { ...o, vintedUserId: vId } });
         if (res?.success) {
           updatedCount++;
           console.log(`[Vault] autoSync ✓ status ververst txn ${o.transactionId} ("${o.status}")`);
@@ -1438,8 +1443,23 @@
   }
 
   // ── Remote sync trigger (vanuit background.js) ────────────────────────────
+  // Guard tegen overlappende rondes: background.js polt elke 5s of er een
+  // vault_sync_requested-vlag klaarstaat, en reset die pas NA een volledige
+  // FORCE_SYNC-roundtrip. Als 1 ronde (78 orders × conversation-detail calls)
+  // langer duurt dan 5s — vrijwel altijd het geval — komt er zonder deze
+  // guard een tweede (derde, vierde, …) overlappende FORCE_SYNC binnen
+  // voordat de vlag gereset is, en begint getSold()/autoSync() gewoon
+  // opnieuw vanaf 0 bovenop de al lopende ronde — de vlag wordt dan nooit
+  // meer teruggezet en de webapp-knop blijft eindeloos op "bezig" staan.
+  let syncInProgress = false
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.type !== 'FORCE_SYNC') return
+    if (syncInProgress) {
+      console.log('[Vault] FORCE_SYNC genegeerd — er loopt al een synchronisatie-ronde')
+      sendResponse({ success: false, error: 'already_running' })
+      return
+    }
+    syncInProgress = true
     ;(async () => {
       try {
         // force=true: negeer de sessiecache — dit is een expliciete "haal de
@@ -1453,6 +1473,8 @@
       } catch (e) {
         console.warn('[Vault] FORCE_SYNC error:', e.message)
         sendResponse({ success: false, error: e.message })
+      } finally {
+        syncInProgress = false
       }
     })()
     return true
