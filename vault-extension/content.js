@@ -538,13 +538,20 @@
     let newCount = 0, updatedCount = 0, fail = 0;
     for (let i = 0; i < targets.length; i++) {
       const { order: o, kind } = targets[i];
+      // Zelfde onderscheid als tabVerkopen/tabAankopen: currentUserSide === 'buyer'
+      // betekent dat DIT account de koper was in de transactie, dus een aankoop —
+      // die hoort met order_direction 'purchase' gesynct te worden, anders duikt
+      // hij als "verkoop" op in de Verkopen-lijst. autoSync() liet dit onderscheid
+      // eerder vallen (geen orderDirection meegegeven → altijd de 'sale'-default
+      // in background.js syncToSupabase/syncOrder).
+      const orderDirection = o.currentUserSide === 'buyer' ? 'purchase' : 'sale';
       if (kind === 'nieuw') {
         const vId = await getVintedUserId();
-        const res = await sendMsg({ type: 'SYNC_ORDER', order: { ...o, labelUrl: labelUrl(o.transactionId), vintedUserId: vId } });
+        const res = await sendMsg({ type: 'SYNC_ORDER', order: { ...o, orderDirection, labelUrl: labelUrl(o.transactionId), vintedUserId: vId } });
         if (res?.success && !res.duplicate) {
           syncedIds.add(o.transactionId);
           newCount++;
-          console.log(`[Vault] autoSync ✓ nieuw txn ${o.transactionId}`);
+          console.log(`[Vault] autoSync ✓ nieuw txn ${o.transactionId} (${orderDirection})`);
         } else {
           fail++;
           console.warn(`[Vault] autoSync ✗ nieuw txn ${o.transactionId}`, res);
@@ -555,10 +562,10 @@
         // lookupOwnerId()); zonder dit veld faalt de lookup altijd met "no_link",
         // ook al bestaat de koppeling wel degelijk.
         const vId = await getVintedUserId();
-        const res = await sendMsg({ type: 'SYNC_TO_SUPABASE', order: { ...o, vintedUserId: vId } });
+        const res = await sendMsg({ type: 'SYNC_TO_SUPABASE', order: { ...o, orderDirection, vintedUserId: vId } });
         if (res?.success) {
           updatedCount++;
-          console.log(`[Vault] autoSync ✓ status ververst txn ${o.transactionId} ("${o.status}")`);
+          console.log(`[Vault] autoSync ✓ status ververst txn ${o.transactionId} ("${o.status}", ${orderDirection})`);
         } else {
           fail++;
           console.warn(`[Vault] autoSync ✗ refresh txn ${o.transactionId}`, res);
