@@ -381,19 +381,11 @@ export async function detectLabelBounds(src, page) {
   // vlak tegen de labelrand (zie hierboven) zodat de kniplijnen/schaartjes
   // buiten beeld blijven, ook na rotatie.
   if (pageW > pageH) {
-    // +20pt marge aan elke kant zodat de kniplijntjes (schaarticoons +
-    // stippellijnen) mee in de crop komen i.p.v. er strak tegenaan te
-    // stoppen — expliciet gevraagd, in tegenstelling tot de eerdere
-    // strak-aansluitende crop die ze juist weerde.
-    const margin = 20;
-    const bounds = {
-      left:   Math.max(0, 0 - margin),
-      bottom: Math.max(0, pageH * 0.528 - margin),
-      right:  Math.min(pageW, pageW * 0.487 + margin),
-      top:    Math.min(pageH, pageH + margin),
-      rotate: 90,
-    };
-    console.log(`[label] heuristic Bpost (landscape ${Math.round(pageW)}x${Math.round(pageH)}, +20pt marge, roteer 90°): left=${bounds.left.toFixed(0)} bottom=${bounds.bottom.toFixed(0)} right=${bounds.right.toFixed(0)} top=${bounds.top.toFixed(0)}`);
+    // Strak tegen de labelrand, GEEN extra marge — een eerder toegevoegde
+    // +20pt marge nam de kniplijntjes (schaarticoons + stippellijnen) juist
+    // mee in de crop, wat ongewenst is. Terug naar de exacte labelgrens.
+    const bounds = { left: 0, bottom: pageH * 0.528, right: pageW * 0.487, top: pageH, rotate: 90 };
+    console.log(`[label] heuristic Bpost (landscape ${Math.round(pageW)}x${Math.round(pageH)}, strak tegen labelrand, roteer 90°): left=0 bottom=${bounds.bottom.toFixed(0)} right=${bounds.right.toFixed(0)} top=${bounds.top.toFixed(0)}`);
     return bounds;
   }
 
@@ -413,15 +405,9 @@ export async function detectLabelBounds(src, page) {
       innerBounds = innerRects[0];
       console.log(`[label] wrapper: content-rect binnenin gevonden (${(innerBounds.right - innerBounds.left).toFixed(0)}x${(innerBounds.top - innerBounds.bottom).toFixed(0)})`);
     } else if (wrapped.vw > wrapped.vh) {
-      const margin = 20;
-      innerBounds = {
-        left:   Math.max(0, 0 - margin),
-        bottom: Math.max(0, wrapped.vh * 0.45 - margin),
-        right:  Math.min(wrapped.vw, wrapped.vw * 0.55 + margin),
-        top:    Math.min(wrapped.vh, wrapped.vh + margin),
-      };
+      innerBounds = { left: 0, bottom: wrapped.vh * 0.45, right: wrapped.vw * 0.55, top: wrapped.vh };
       innerRotate = 90;
-      console.log('[label] wrapper: geen rect binnenin — landscape-heuristiek (Bpost-stijl) op virtuele pagina, +20pt marge, roteer 90°');
+      console.log('[label] wrapper: geen rect binnenin — landscape-heuristiek (Bpost-stijl) op virtuele pagina, strak tegen labelrand, roteer 90°');
     } else {
       // Vinted Go/DPD-achtige situatie: verfijn de breedte via lijn-tekeningen
       // als DPD's tabelraster gevonden wordt (zie de analoge stap voor de
