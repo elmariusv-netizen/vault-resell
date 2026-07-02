@@ -346,12 +346,16 @@ export async function detectLabelBounds(src, page) {
     if (!refined) {
       // Vinted Go: content-box (zwarte header + QR + trackingnummer),
       // geverifieerd via PyMuPDF get_drawings()/get_text() op een echt 595×842
-      // label — met wat extra marge t.o.v. de eerder strak-aansluitende box
-      // zodat het volledige zwarte kader ("Laat je code scannen...") zeker
-      // niet aan de randen wordt afgesneden. Voor de thermische printer wordt
+      // label, +15pt marge aan elke kant (t.o.v. de eerder strak-aansluitende
+      // box van left:14 bottom:530 right:581 top:828) zodat het volledige
+      // kader + randlijn zichtbaar blijft. Voor de thermische printer wordt
       // deze landscape-vormige box 90° gedraaid (zie cropToLabel).
-      left = 9; bottom = 525; right = 586; top = 833;
-      console.log(`[label] heuristic portrait A4 zonder rect (Vinted Go): content-box (extra marge) left=${left} bottom=${bottom} right=${right} top=${top}, roteer 90°`);
+      const margin = 15;
+      left   = Math.max(0, 14 - margin);
+      bottom = Math.max(0, 530 - margin);
+      right  = Math.min(pageW, 581 + margin);
+      top    = Math.min(pageH, 828 + margin);
+      console.log(`[label] heuristic portrait A4 zonder rect (Vinted Go): content-box +15pt marge → left=${left} bottom=${bottom} right=${right} top=${top}, roteer 90°`);
       return { left, bottom, right, top, rotate: 90 };
     }
     console.log(`[label] heuristic portrait A4 (DPD): bovenste 50%, left=${left.toFixed(0)} right=${right.toFixed(0)}, geen rotatie`);
@@ -377,8 +381,19 @@ export async function detectLabelBounds(src, page) {
   // vlak tegen de labelrand (zie hierboven) zodat de kniplijnen/schaartjes
   // buiten beeld blijven, ook na rotatie.
   if (pageW > pageH) {
-    const bounds = { left: 0, bottom: pageH * 0.528, right: pageW * 0.487, top: pageH, rotate: 90 };
-    console.log(`[label] heuristic Bpost (landscape ${Math.round(pageW)}x${Math.round(pageH)}, roteer 90°): left=0 bottom=${bounds.bottom.toFixed(0)} right=${bounds.right.toFixed(0)} top=${bounds.top.toFixed(0)}`);
+    // +20pt marge aan elke kant zodat de kniplijntjes (schaarticoons +
+    // stippellijnen) mee in de crop komen i.p.v. er strak tegenaan te
+    // stoppen — expliciet gevraagd, in tegenstelling tot de eerdere
+    // strak-aansluitende crop die ze juist weerde.
+    const margin = 20;
+    const bounds = {
+      left:   Math.max(0, 0 - margin),
+      bottom: Math.max(0, pageH * 0.528 - margin),
+      right:  Math.min(pageW, pageW * 0.487 + margin),
+      top:    Math.min(pageH, pageH + margin),
+      rotate: 90,
+    };
+    console.log(`[label] heuristic Bpost (landscape ${Math.round(pageW)}x${Math.round(pageH)}, +20pt marge, roteer 90°): left=${bounds.left.toFixed(0)} bottom=${bounds.bottom.toFixed(0)} right=${bounds.right.toFixed(0)} top=${bounds.top.toFixed(0)}`);
     return bounds;
   }
 
@@ -398,9 +413,15 @@ export async function detectLabelBounds(src, page) {
       innerBounds = innerRects[0];
       console.log(`[label] wrapper: content-rect binnenin gevonden (${(innerBounds.right - innerBounds.left).toFixed(0)}x${(innerBounds.top - innerBounds.bottom).toFixed(0)})`);
     } else if (wrapped.vw > wrapped.vh) {
-      innerBounds = { left: 0, bottom: wrapped.vh * 0.45, right: wrapped.vw * 0.55, top: wrapped.vh };
+      const margin = 20;
+      innerBounds = {
+        left:   Math.max(0, 0 - margin),
+        bottom: Math.max(0, wrapped.vh * 0.45 - margin),
+        right:  Math.min(wrapped.vw, wrapped.vw * 0.55 + margin),
+        top:    Math.min(wrapped.vh, wrapped.vh + margin),
+      };
       innerRotate = 90;
-      console.log('[label] wrapper: geen rect binnenin — landscape-heuristiek (Bpost-stijl) op virtuele pagina, roteer 90°');
+      console.log('[label] wrapper: geen rect binnenin — landscape-heuristiek (Bpost-stijl) op virtuele pagina, +20pt marge, roteer 90°');
     } else {
       // Vinted Go/DPD-achtige situatie: verfijn de breedte via lijn-tekeningen
       // als DPD's tabelraster gevonden wordt (zie de analoge stap voor de
@@ -420,9 +441,13 @@ export async function detectLabelBounds(src, page) {
         console.log(`[label] wrapper: breedte verfijnd via lijn-tekeningen (DPD) → left=${left.toFixed(0)} right=${right.toFixed(0)}`);
       } else {
         const scaleX = wrapped.vw / 595, scaleY = wrapped.vh / 842;
-        left = 9 * scaleX; right = 586 * scaleX; bottom = 525 * scaleY; top = 833 * scaleY;
+        const margin = 15;
+        left   = Math.max(0, 14 - margin) * scaleX;
+        right  = Math.min(595, 581 + margin) * scaleX;
+        bottom = Math.max(0, 530 - margin) * scaleY;
+        top    = Math.min(842, 828 + margin) * scaleY;
         innerRotate = 90;
-        console.log(`[label] wrapper: Vinted Go content-box (geschaald, extra marge) → left=${left.toFixed(0)} bottom=${bottom.toFixed(0)} right=${right.toFixed(0)} top=${top.toFixed(0)}, roteer 90°`);
+        console.log(`[label] wrapper: Vinted Go content-box (geschaald, +15pt marge) → left=${left.toFixed(0)} bottom=${bottom.toFixed(0)} right=${right.toFixed(0)} top=${top.toFixed(0)}, roteer 90°`);
       }
       innerBounds = { left, bottom, right, top };
     }
