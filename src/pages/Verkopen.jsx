@@ -699,6 +699,42 @@ function BulkSkuModal({ suppliers, batches, orders, onClose, onConfirm }) {
   )
 }
 
+// ── Custom checkbox ─────────────────────────────────────────────────────────
+// Native accent-color checkboxes renderen inconsistent (soms nauwelijks meer
+// dan een dun randje) — deze versie geeft een duidelijk gevuld vlak + wit
+// vinkje bij aangevinkt, en een subtiele lege outline bij niet-aangevinkt.
+function Checkbox({ checked, onChange, size = 20 }) {
+  return (
+    <label
+      style={{ position: 'relative', display: 'inline-flex', width: size, height: size, flexShrink: 0, cursor: 'pointer' }}
+      onClick={e => e.stopPropagation()}
+    >
+      <input
+        type="checkbox"
+        checked={!!checked}
+        onChange={e => onChange?.(e.target.checked)}
+        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', margin: 0, opacity: 0, cursor: 'pointer' }}
+      />
+      <span
+        style={{
+          width: size, height: size, borderRadius: 6, boxSizing: 'border-box',
+          border: checked ? '2px solid #818cf8' : '2px solid #64748b',
+          background: checked ? '#818cf8' : 'transparent',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          transition: 'background 0.15s, border-color 0.15s',
+          pointerEvents: 'none',
+        }}
+      >
+        {checked && (
+          <svg width={size * 0.6} height={size * 0.6} viewBox="0 0 16 16" fill="none">
+            <path d="M3 8.5L6.5 12L13 4.5" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
+      </span>
+    </label>
+  )
+}
+
 // ── Order rij (Vinteer-stijl) ──────────────────────────────────────────────
 function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegister, onDetail, batches, checked, onCheck }) {
   const [skuPickerOpen,  setSkuPickerOpen]  = useState(false)
@@ -759,20 +795,14 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
 
   return (
     <>
-      <div style={{ borderBottom: isLast ? 'none' : '1px solid rgba(255,255,255,0.06)', background: checked ? 'rgba(248,113,113,0.06)' : 'transparent', transition: 'background 0.15s' }}>
+      <div style={{ borderBottom: isLast ? 'none' : '1px solid rgba(255,255,255,0.06)', background: checked ? 'rgba(129,140,248,0.10)' : 'transparent', transition: 'background 0.15s' }}>
 
         {/* Hoofdinhoud: foto + info */}
         <div style={{ padding: '14px 16px 10px', display: 'flex', gap: 12, alignItems: 'flex-start' }}>
 
           {/* Checkbox */}
           <div style={{ flexShrink: 0, paddingTop: 4 }}>
-            <input
-              type="checkbox"
-              checked={!!checked}
-              onChange={e => onCheck?.(e.target.checked)}
-              onClick={e => e.stopPropagation()}
-              style={{ width: 18, height: 18, cursor: 'pointer', accentColor: '#f87171' }}
-            />
+            <Checkbox checked={checked} onChange={on => onCheck?.(on)} />
           </div>
 
           {/* Foto */}
