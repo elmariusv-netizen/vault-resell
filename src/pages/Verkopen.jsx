@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect } from 'react'
 import {
   formatCurrency, formatDateLong, formatSkuRange, calcSaleProfit, normalizePlatform,
-  genId, formatSku,
+  genId, formatSku, isLabelReady,
 } from '../utils/skuUtils'
 import SaleModal from '../components/SaleModal'
 import EditSaleModal from '../components/EditSaleModal'
@@ -108,9 +108,14 @@ function suggestSku(title, description) {
 }
 
 // ── Status badge ───────────────────────────────────────────────────────────
+// labelAvailable moet hier al de geverifieerde waarde zijn (isLabelReady(order)
+// vanuit skuUtils, niet enkel het ruwe order.label_available of een gok op
+// statustekst) — anders duiken orders zonder écht ophaalbaar label toch op
+// als "Label gereed", precies de bug die de Labels-pagina eerder al oploste
+// via de PDF-verificatie maar die hier los stond.
 function getStatusBadge(status, labelAvailable) {
   const s = (status || '').toLowerCase()
-  if (labelAvailable || s.includes('verzendlabel'))
+  if (labelAvailable)
     return { label: 'Label gereed', color: '#d97706', bg: 'rgba(245,158,11,0.12)' }
   if (s.includes('geleverd') || s.includes('delivered') || s.includes('ontvangen'))
     return { label: 'Geleverd', color: '#16a34a', bg: 'rgba(22,163,74,0.1)' }
@@ -335,7 +340,7 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave, 
           <div style={{ fontSize: 17, fontWeight: 700, lineHeight: 1.35, marginBottom: 8, color: 'var(--text)' }}>{order.title}</div>
 
           {/* Status badge */}
-          {(() => { const b = getStatusBadge(order.status, order.label_available); return b ? (
+          {(() => { const b = getStatusBadge(order.status, isLabelReady(order)); return b ? (
             <div style={{ marginBottom: 12 }}>
               <span style={{ fontSize: 11, color: b.color, background: b.bg, padding: '3px 10px', borderRadius: 6, fontWeight: 700, border: `1px solid ${b.color}30` }}>{b.label}</span>
             </div>
@@ -1118,7 +1123,7 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
 
             {/* Rij 4: datum + acties */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-              {(() => { const b = getStatusBadge(order.status, order.label_available); return b ? (
+              {(() => { const b = getStatusBadge(order.status, isLabelReady(order)); return b ? (
                 <span style={{ fontSize: 10, color: b.color, background: b.bg, padding: '2px 7px', borderRadius: 4, fontWeight: 700, border: `1px solid ${b.color}30` }}>{b.label}</span>
               ) : null })()}
               {date && (

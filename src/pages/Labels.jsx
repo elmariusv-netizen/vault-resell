@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { PDFDocument } from 'pdf-lib'
 import { supabase } from '../utils/supabase'
-import { genId } from '../utils/skuUtils'
+import { genId, isLabelReady } from '../utils/skuUtils'
 
 const OUT_W = 288
 const OUT_H = 432
@@ -325,6 +325,11 @@ export default function Labels({ vintedCookie }) {
   const [printing, setPrinting]       = useState(false)
 
   // ── Vinted orders met beschikbaar label ophalen ─────────────────────────
+  // label_pdf_url IS NOT NULL naast label_available=true: dezelfde
+  // isLabelReady()-definitie als Verkopen.jsx's kaart-badge (skuUtils),
+  // zodat beide pagina's nooit meer uit elkaar kunnen lopen. Enkel
+  // api/label-prefetch.js zet beide velden samen, na een geslaagde
+  // PDF-verificatie.
   const fetchOrders = useCallback(() => {
     setOrdersLoading(true)
     setOrdersError(null)
@@ -332,10 +337,11 @@ export default function Labels({ vintedCookie }) {
       .from('vinted_orders')
       .select('*')
       .eq('label_available', true)
+      .not('label_pdf_url', 'is', null)
       .order('synced_at', { ascending: false })
       .then(({ data, error }) => {
         if (error) { setOrdersError(error.message); setOrdersLoading(false); return }
-        setOrders(data || [])
+        setOrders((data || []).filter(isLabelReady))
         setOrdersLoading(false)
       })
   }, [])

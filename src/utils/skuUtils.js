@@ -84,3 +84,14 @@ export function normalizePlatform(p) {
   if (p === 'B2B') return 'Medeverkoper/Groothandel'
   return p || p
 }
+
+// Enige bron van waarheid voor "is er een écht geverifieerd label
+// beschikbaar" — gebruikt door zowel Verkopen.jsx (kaart-badge) als
+// Labels.jsx (lijst-query), zodat ze nooit meer uit elkaar kunnen lopen.
+// label_available wordt UITSLUITEND op true gezet door api/label-prefetch.js
+// nadat de PDF-magic-bytes-check geslaagd is (zie ook label_pdf_url, dat
+// tegelijk gezet wordt) — nooit op basis van Vinted's eigen statustekst
+// (transactionUserStatus/"verzendlabel"), want die bleek onbetrouwbaar.
+export function isLabelReady(order) {
+  return !!(order?.label_available && order?.label_pdf_url)
+}

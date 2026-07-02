@@ -152,7 +152,15 @@ async function syncToSupabase(order) {
     tracking_code:   order.tracking_code   || null,
     buyer_name:      order.buyerName || order.buyer_name || null,
     sale_date:       order.date || null,
-    label_available: !!(order.transactionUserStatus === 'needs_action' || /verzendlabel/i.test(order.status || '')),
+    // label_available wordt bewust NIET hier gezet — de oude
+    // transactionUserStatus==='needs_action'/"verzendlabel"-tekst-heuristiek
+    // bleek onbetrouwbaar (zie de PDF-verificatiefix op de Labels-pagina) en
+    // elke sync/refresh overschreef zo een correct geverifieerde status weer
+    // met een gok. api/label-prefetch.js is nu de ENIGE plek die
+    // label_available op true zet, en enkel na een geslaagde PDF-check. Door
+    // dit veld hier weg te laten, laat de upsert (Prefer:
+    // resolution=merge-duplicates) de bestaande waarde met rust bij een
+    // update — een nieuwe rij krijgt gewoon de kolom-default (false).
     conversation_id: order.conversationId  || null,
     order_direction: order.orderDirection  || 'sale',
     seller_name:     order.sellerName      || null,
