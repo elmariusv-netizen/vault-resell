@@ -266,6 +266,16 @@
       if (o === sold[0]) console.log(`[Vault] photo txn ${o.transaction_id || o.id}: resolved →`, photo || '(leeg)');
       const _title = o.item?.title || o.title || ''
       if (/short de bain/i.test(_title)) console.log('[Vault] DEBUG aankoop-check:', JSON.stringify(o));
+      // TIJDELIJK: volledige ruwe order-JSON loggen voor bundel-transacties, om te
+      // achterhalen of de Vinted-API meerdere items/foto's per bundel blootlegt
+      // (bv. onder o.items[]) — content.js pakt nu overal maar 1 foto (o.photos?.[0]),
+      // dus dit toont of er ELDERS in de payload meer foto's/items zitten die we
+      // momenteel negeren.
+      if (/bundel/i.test(_title)) {
+        console.log(`[Vault] DEBUG bundel-order txn ${o.transaction_id || o.id} — volledige raw JSON:`, JSON.stringify(o));
+        console.log(`[Vault] DEBUG bundel-order keys:`, Object.keys(o).join(', '));
+        console.log(`[Vault] DEBUG bundel-order o.item keys:`, o.item ? Object.keys(o.item).join(', ') : '(geen o.item)');
+      }
 
       const resolvedDate =
         o.created_at || o.updated_at || o.transaction?.created_at ||
