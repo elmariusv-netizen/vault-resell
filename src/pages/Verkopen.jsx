@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect } from 'react'
 import {
   formatCurrency, formatDateLong, formatSkuRange, calcSaleProfit, normalizePlatform,
-  genId, getNextSkuNum, formatSku,
+  genId, getNextSkuNum, formatSku, getRemainingQty,
 } from '../utils/skuUtils'
 import SaleModal from '../components/SaleModal'
 import EditSaleModal from '../components/EditSaleModal'
@@ -613,14 +613,31 @@ function getBundleItemCount(order) {
 // uit dezelfde leverancier-batch (bv. RIA047, RIA048, RIA049). Bundel-orders
 // (meerdere artikelen in 1 verkoop) krijgen per artikel een eigen SKU-veld
 // i.p.v. te worden behandeld als 1 los item met de volledige bundelprijs.
-function BulkSkuModal({ suppliers, batches, orders, onClose, onConfirm }) {
+function BulkSkuModal({ suppliers, batches, sales, orders, onClose, onConfirm }) {
   const [supplierId, setSupplierId] = useState(suppliers[0]?.id || '')
   const [overrides, setOverrides]   = useState({}) // slotKey -> handmatig ingetypte SKU
   const [manualCounts, setManualCounts] = useState({}) // orderId -> handmatig aantal artikelen (niet-bundle orders)
   const [saving, setSaving]         = useState(false)
 
   const supplier = suppliers.find(s => s.id === supplierId)
-  const startNum = supplier ? getNextSkuNum(batches, supplier.prefix) : 1
+
+  // De batch waar de suggesties vandaan komen: de OUDSTE batch van deze
+  // leverancier die nog vrije SKU's heeft (FIFO — eerst bestaande voorraad
+  // opgebruiken). SKU-suggesties beginnen dus bij het eerste ONGEBRUIKTE
+  // nummer in die batch (startNum + al-verkocht-aantal), niet zomaar bij
+  // "batch.endNum + 1" van de hele leverancier — dat zou voorbij het eind van
+  // een nog niet volledig gebruikte batch heen kunnen schieten.
+  const currentBatch = (() => {
+    if (!supplier) return null
+    const withStock = batches
+      .filter(b => b.supplierPrefix === supplier.prefix && getRemainingQty(b, sales) > 0)
+      .sort((a, b) => (a.startNum || 0) - (b.startNum || 0))
+    return withStock[0] || null
+  })()
+  const availableCount = currentBatch ? getRemainingQty(currentBatch, sales) : Infinity
+  const startNum = currentBatch
+    ? currentBatch.startNum + (currentBatch.quantity - getRemainingQty(currentBatch, sales))
+    : (supplier ? getNextSkuNum(batches, supplier.prefix) : 1)
 
   useEffect(() => { setOverrides({}) }, [supplierId])
 
@@ -636,8 +653,16 @@ function BulkSkuModal({ suppliers, batches, orders, onClose, onConfirm }) {
   // Aantal SKU-slots voor een order: bij een echte bundle altijd het
   // gedetecteerde aantal; anders het handmatig ingestelde aantal (via "Dit is
   // eigenlijk meerdere artikelen"), of 1 als daar niets voor ingesteld is.
-  const effectiveCount = (order) =>
-    isAutoBundle(order) ? getBundleItemCount(order) : (manualCounts[order.id] ?? 1)
+  // manualCounts[order.id] blijft tijdens het typen een RUWE string (zie het
+  // invoerveld verderop) zodat elke toets niet meteen wordt teruggeklemd —
+  // hier wordt hij enkel gelezen, niet gecorrigeerd.
+  const effectiveCount = (order) => {
+    if (isAutoBundle(order)) return getBundleItemCount(order)
+    const raw = manualCounts[order.id]
+    if (raw === undefined) return 1
+    const n = parseInt(raw, 10)
+    return Number.isFinite(n) && n >= 1 ? n : 1
+  }
 
   // Eén "slot" per SKU-invoerveld — normale orders krijgen 1 slot, bundel-
   // orders (echt of handmatig aangeduid) krijgen er N (1 per artikel). De
@@ -718,6 +743,18 @@ function BulkSkuModal({ suppliers, batches, orders, onClose, onConfirm }) {
             ) : (
               <div style={{ fontSize: 13, color: 'var(--text-3)', fontStyle: 'italic' }}>Geen leveranciers gevonden — maak er eerst een aan.</div>
             )}
+            {supplier && currentBatch && (
+              <div style={{ fontSize: 11, color: slots.length > availableCount ? '#f87171' : 'var(--text-3)', fontWeight: slots.length > availableCount ? 700 : 400, marginTop: 5 }}>
+                {slots.length > availableCount ? '⚠ ' : ''}
+                {availableCount} SKU{availableCount === 1 ? '' : "'s"} beschikbaar in {formatSkuRange(currentBatch.supplierPrefix, currentBatch.startNum, currentBatch.endNum)}
+                {slots.length > availableCount && ` — je vraagt er ${slots.length}, kies eventueel een andere leverancier voor de rest`}
+              </div>
+            )}
+            {supplier && !currentBatch && (
+              <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 5 }}>
+                Geen batch met resterende voorraad voor {supplier.prefix} — voorgestelde SKU's starten een nieuw bereik.
+              </div>
+            )}
           </div>
 
           <div style={{ maxHeight: 360, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8 }}>
@@ -771,19 +808,37 @@ function BulkSkuModal({ suppliers, batches, orders, onClose, onConfirm }) {
                           + Dit is eigenlijk meerdere artikelen
                         </span>
                       ) : (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <span style={{ fontSize: 11, color: 'var(--text-3)' }}>Aantal artikelen:</span>
-                          <input
-                            type="number"
-                            min={2}
-                            value={manualCounts[order.id]}
-                            onChange={e => setManualCounts(prev => ({ ...prev, [order.id]: Math.max(2, parseInt(e.target.value, 10) || 2) }))}
-                            style={{ width: 48, fontSize: 12, fontWeight: 700, padding: '3px 6px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', textAlign: 'center', outline: 'none' }}
-                          />
-                          <span
-                            onClick={() => setManualCounts(prev => { const next = { ...prev }; delete next[order.id]; return next })}
-                            style={{ fontSize: 11, color: '#f87171', cursor: 'pointer', userSelect: 'none' }}
-                          >✕ annuleer</span>
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ fontSize: 11, color: 'var(--text-3)' }}>Aantal artikelen:</span>
+                            <input
+                              type="number"
+                              min={2}
+                              max={availableCount === Infinity ? undefined : availableCount}
+                              value={manualCounts[order.id]}
+                              // Tijdens het typen NIET meteen terugklemmen naar het minimum/
+                              // maximum (dat maakte het veld eerder feitelijk onbewerkbaar,
+                              // want elke toets werd meteen overschreven) — enkel opslaan wat
+                              // getypt wordt, pas bij onBlur normaliseren.
+                              onChange={e => setManualCounts(prev => ({ ...prev, [order.id]: e.target.value }))}
+                              onBlur={() => setManualCounts(prev => {
+                                let n = parseInt(prev[order.id], 10)
+                                if (!Number.isFinite(n) || n < 2) n = 2
+                                if (availableCount !== Infinity && n > availableCount) n = availableCount
+                                return { ...prev, [order.id]: n }
+                              })}
+                              style={{ width: 48, fontSize: 12, fontWeight: 700, padding: '3px 6px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', textAlign: 'center', outline: 'none' }}
+                            />
+                            <span
+                              onClick={() => setManualCounts(prev => { const next = { ...prev }; delete next[order.id]; return next })}
+                              style={{ fontSize: 11, color: '#f87171', cursor: 'pointer', userSelect: 'none' }}
+                            >✕ annuleer</span>
+                          </div>
+                          {availableCount !== Infinity && effectiveCount(order) > availableCount && (
+                            <div style={{ fontSize: 10, color: '#f87171', fontWeight: 600, marginTop: 3 }}>
+                              ⚠ Nog maar {availableCount} SKU{availableCount === 1 ? '' : "'s"} beschikbaar in deze batch
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -1930,6 +1985,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
         <BulkSkuModal
           suppliers={suppliers}
           batches={batches}
+          sales={sales}
           orders={vtOrders.filter(o => selectedIds.has(o.id))}
           onClose={() => setBulkSkuOpen(false)}
           onConfirm={handleBulkSkuConfirm}
