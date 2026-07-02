@@ -521,8 +521,14 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave, 
 }
 
 // ── SKU koppel modal ───────────────────────────────────────────────────────
-function SkuPickerModal({ batches, onPick, onClose }) {
+function SkuPickerModal({ batches, allOrders, excludeOrderId, onPick, onClose }) {
   const [q, setQ] = useState('')
+
+  // Gedeelde logica met BulkSkuModal — "beschikbaar" is hier het aantal nog
+  // ongebruikte SKU's binnen de batch (batch-hoeveelheid minus reeds elders
+  // gekoppelde sku_ref-waarden), niet het statische b.liveCount/b.quantity
+  // dat nooit daalde wanneer een SKU via dit scherm gekoppeld werd.
+  const usedSkus = useMemo(() => getUsedSkus(allOrders, excludeOrderId ? [excludeOrderId] : []), [allOrders, excludeOrderId])
 
   const items = useMemo(() => {
     const lower = q.toLowerCase()
@@ -536,8 +542,9 @@ function SkuPickerModal({ batches, onPick, onClose }) {
           (b.brand || '').toLowerCase().includes(lower)
         )
       })
-      .sort((a, b) => (b.liveCount || 0) - (a.liveCount || 0))
-  }, [batches, q])
+      .map(b => ({ batch: b, available: getFreeSkusForBatch(b, usedSkus).length }))
+      .sort((a, b) => b.available - a.available)
+  }, [batches, q, usedSkus])
 
   useEffect(() => {
     const close = e => { if (e.key === 'Escape') onClose() }
@@ -564,9 +571,8 @@ function SkuPickerModal({ batches, onPick, onClose }) {
         <div style={{ maxHeight: 320, overflowY: 'auto' }}>
           {items.length === 0 ? (
             <div style={{ padding: 24, textAlign: 'center', color: '#64748b', fontSize: 13 }}>Geen batches gevonden</div>
-          ) : items.map(b => {
+          ) : items.map(({ batch: b, available }) => {
             const sku = formatSkuRange(b.supplierPrefix, b.startNum, b.endNum)
-            const available = b.liveCount ?? b.quantity ?? 0
             return (
               <div
                 key={b.id}
@@ -608,6 +614,32 @@ function getBundleItemCount(order) {
   return /bundel/i.test(order.title || '') ? 2 : 1
 }
 
+// ── Gedeelde "welke SKU's zijn al gebruikt"-logica ─────────────────────────
+// Enige bron van waarheid voor zowel SkuPickerModal (los, per order) als
+// BulkSkuModal (bulk) — beide moeten exact hetzelfde "beschikbaar"-getal
+// tonen voor dezelfde batch, anders lopen ze uiteen.
+//
+// Een SKU telt als "gebruikt" zodra hij voorkomt in het sku_ref-veld van een
+// ANDERE vinted_orders-rij (sku_ref kan een kommagescheiden lijst zijn bij
+// bundel-orders). Orders in excludeOrderIds (de order(s) die je nu net aan
+// het (her)koppelen bent) tellen niet mee — hun eigen bestaande koppeling mag
+// herzien worden zonder zichzelf te blokkeren.
+function getUsedSkus(allOrders, excludeOrderIds = []) {
+  const exclude = new Set(excludeOrderIds)
+  const used = new Set()
+  for (const o of allOrders || []) {
+    if (exclude.has(o.id) || !o.sku_ref) continue
+    o.sku_ref.split(',').forEach(s => { const t = s.trim().toUpperCase(); if (t) used.add(t) })
+  }
+  return used
+}
+
+function getFreeSkusForBatch(batch, usedSkus) {
+  const all = []
+  for (let n = batch.startNum; n <= batch.endNum; n++) all.push(formatSku(batch.supplierPrefix, n))
+  return all.filter(s => !usedSkus.has(s))
+}
+
 // ── Bulk SKU-koppel modal ───────────────────────────────────────────────────
 // Koppelt meerdere geselecteerde Vinted-orders in één keer aan oplopende SKU's
 // uit dezelfde leverancier-batch (bv. RIA047, RIA048, RIA049). Bundel-orders
@@ -621,25 +653,11 @@ function BulkSkuModal({ suppliers, batches, allOrders, orders, onClose, onConfir
 
   const supplier = suppliers.find(s => s.id === supplierId)
 
-  // Welke SKU's binnen deze leverancier zijn al gekoppeld aan een ANDERE
-  // order (niet de orders die nu in deze bulk-actie zitten — die mogen hun
-  // eigen, eventueel al bestaande koppeling gewoon herzien). sku_ref kan
-  // een kommagescheiden lijst zijn (bundel-orders), dus elk deel apart.
-  const usedSkus = (() => {
-    const excludeIds = new Set(orders.map(o => o.id))
-    const used = new Set()
-    for (const o of allOrders) {
-      if (excludeIds.has(o.id) || !o.sku_ref) continue
-      o.sku_ref.split(',').forEach(s => { const t = s.trim().toUpperCase(); if (t) used.add(t) })
-    }
-    return used
-  })()
-
-  const freeSkusForBatch = (batch) => {
-    const all = []
-    for (let n = batch.startNum; n <= batch.endNum; n++) all.push(formatSku(batch.supplierPrefix, n))
-    return all.filter(s => !usedSkus.has(s))
-  }
+  // Welke SKU's zijn al gekoppeld aan een ANDERE order (niet de orders die nu
+  // in deze bulk-actie zitten — die mogen hun eigen, eventueel al bestaande
+  // koppeling gewoon herzien). Gedeelde logica met SkuPickerModal.
+  const usedSkus = getUsedSkus(allOrders, orders.map(o => o.id))
+  const freeSkusForBatch = (batch) => getFreeSkusForBatch(batch, usedSkus)
 
   // De batch waar de dropdown-opties vandaan komen: de OUDSTE batch van deze
   // leverancier die nog minstens 1 vrije SKU heeft (FIFO — eerst bestaande
@@ -924,7 +942,7 @@ function Checkbox({ checked, onChange, size = 20 }) {
 }
 
 // ── Order rij (Vinteer-stijl) ──────────────────────────────────────────────
-function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegister, onDetail, onUnlinkSku, batches, checked, onCheck }) {
+function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegister, onDetail, onUnlinkSku, batches, allOrders, checked, onCheck }) {
   const [skuPickerOpen,  setSkuPickerOpen]  = useState(false)
   const [hoverPos,       setHoverPos]       = useState(null)
   const [cogsEditing,    setCogsEditing]    = useState(false)
@@ -1110,7 +1128,7 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
               )}
               {miniBtn(
                 () => setSkuPickerOpen(true),
-                order.sku_ref ? `🏷 ${order.sku_ref}` : 'Lier SKU',
+                order.sku_ref ? `🏷 ${order.sku_ref}` : 'SKU koppelen',
                 '#818cf8', 'rgba(129,140,248,0.08)', 'rgba(129,140,248,0.2)'
               )}
               {hasSkuLink && onUnlinkSku && (
@@ -1219,6 +1237,8 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
       {skuPickerOpen && (
         <SkuPickerModal
           batches={batches}
+          allOrders={allOrders}
+          excludeOrderId={order.id}
           onPick={sku => onSave(order.id, 'sku_ref', sku)}
           onClose={() => setSkuPickerOpen(false)}
         />
@@ -1527,8 +1547,8 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
   }
 
   // Ontkoppelt de SKU-koppeling van 1 of meer orders: wist sku_ref/cost_price/
-  // batch_id op het order-record (waardoor "Lier SKU" weer verschijnt i.p.v.
-  // de SKU-badge) en verwijdert de bijhorende sales-entries uit data.sales
+  // batch_id op het order-record (waardoor "SKU koppelen" weer verschijnt
+  // i.p.v. de SKU-badge) en verwijdert de bijhorende sales-entries uit data.sales
   // zodat Stats niet dubbel telt. Sales-entries aangemaakt via de bulk-modal
   // dragen een vintedOrderId; oudere entries (voor die koppeling bestond) zijn
   // enkel te herkennen via de "Vinted #<id>"-notitie — beide paden worden
@@ -1807,6 +1827,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
                     onRegister={() => openSaleModal(order)}
                     onUnlinkSku={unlinkSku}
                     batches={batches}
+                    allOrders={vtOrders}
                     checked={selectedIds.has(order.id)}
                     onCheck={on => toggleId(order.id, on)}
                   />
