@@ -458,7 +458,7 @@
   // `onProgress(done, total)` laat de aanroeper een voortgangsindicator tonen.
   // TIJDELIJK: gerichte debug voor 2 orders die na "Alles synchroniseren"
   // consequent als 'sale' i.p.v. 'purchase' blijven staan, ondanks de
-  // currentUserSide-fix in autoSync(). Wordt verwijderd zodra de root cause
+  // currentUserSide-fix in refreshKnownOrders(). Wordt verwijderd zodra de root cause
   // bevestigd is — niet nog een keer blind "fixen".
   const DEBUG_TXN_IDS = new Set(['20624965062', '20621465098']);
 
@@ -542,41 +542,44 @@
     return /voltooid|afgerond|afgesloten/i.test(o.status || '');
   }
 
-  // Synct nieuwe orders (zoals voorheen, via SYNC_ORDER — houdt ook de lokale
-  // syncedOrders-lijst + dailyStats bij), ververst orders die al eerder
-  // gesynct zijn maar nog niet afgerond, EN controleert/corrigeert bij al
-  // VOLTOOIDE orders alsnog eenmalig order_direction (zie teCorrigeren
-  // hieronder) — allebei via SYNC_TO_SUPABASE, een directe upsert zonder de
-  // lokale-duplicaat-check van SYNC_ORDER, want die zou een refresh/correctie
-  // net overslaan. userId (optioneel) laat voortgang terugmelden aan
-  // de webapp via REPORT_SYNC_PROGRESS, voor de "Alles synchroniseren"-knop.
-  async function autoSync(orders, userId) {
+  // ── Achtergrond status-refresh — UITSLUITEND voor de Home "🔄
+  // Synchroniseren"-knop (via FORCE_SYNC hieronder) ──────────────────────────
+  // Deze functie synct NOOIT nieuwe orders (nog geen rij in vinted_orders),
+  // voor geen enkele richting (verkoop of aankoop) — de gebruiker kiest zelf,
+  // per order, welke nieuwe orders binnenkomen via de handmatige paneel-flow
+  // (checkboxes + "Sync geselecteerde" in drawVerkopenFooter/drawAankopenFooter
+  // hieronder, die rechtstreeks SYNC_TO_SUPABASE/SYNC_ORDER aanroepen en NOOIT
+  // via deze functie lopen). Bewust een eigen, expliciet benoemde functie in
+  // plaats van een gedeelde "bucket"-helper met een kind-parameter — zodat een
+  // toekomstige wijziging hier nooit per ongeluk ook nieuwe orders kan laten
+  // meesyncen.
+  //
+  // Wat deze functie WEL doet, voor orders die de gebruiker al eerder zelf
+  // handmatig gesynct heeft:
+  //  - status verversen zolang de order nog niet "voltooid" is;
+  //  - bij al VOLTOOIDE orders, order_direction alsnog corrigeren zodra
+  //    currentUserSide deze ronde bekend is (zie teCorrigeren) — dit is de
+  //    fix voor oude, ooit fout als 'sale' weggeschreven aankopen (bv. een
+  //    lang geleden gekochte printer) die anders nooit meer aangeraakt worden.
+  //
+  // userId (optioneel) laat voortgang terugmelden aan de webapp via
+  // REPORT_SYNC_PROGRESS.
+  async function refreshKnownOrders(orders, userId) {
     const { syncedOrders = [] } = await chrome.storage.local.get(['syncedOrders']);
     syncedIds = new Set(syncedOrders.map(o => o.transactionId).filter(Boolean));
 
-    // Nieuwe aankopen (currentUserSide === 'buyer') horen NIET via deze knop
-    // binnen te komen — dat blijft exclusief de handmatige Aankopen-tab in het
-    // extensiepaneel. Status-updates van AL bekende orders (nieuw of aankoop
-    // maakt niet uit) horen wél altijd automatisch te verversen, dus die
-    // uitzondering geldt alleen voor "nieuw", niet voor "refresh".
-    const nieuw = orders.filter(o =>
-      o.transactionId && !syncedIds.has(o.transactionId) && o.currentUserSide !== 'buyer'
-    );
-    const nieuweAankopenOvergeslagen = orders.filter(o =>
-      o.transactionId && !syncedIds.has(o.transactionId) && o.currentUserSide === 'buyer'
-    );
+    // Enkel geteld voor gebruikersfeedback ("N nieuwe orders wachten") — deze
+    // orders worden hier NOOIT gesynct, ongeacht currentUserSide (verkoop of
+    // aankoop maakt niet uit).
+    const nieuwGevonden = orders.filter(o => o.transactionId && !syncedIds.has(o.transactionId));
+
     const teVerversen = orders.filter(o => o.transactionId && syncedIds.has(o.transactionId) && !isOrderCompleted(o));
 
     // "Voltooid"-orders worden normaal NOOIT meer ververst (zie isOrderCompleted
     // hierboven) — maar dat betekent ook dat een oude rij die ooit fout als
     // order_direction='sale' is weggeschreven (terwijl currentUserSide eigenlijk
-    // 'buyer' is, bv. een lang geleden gekochte printer) NOOIT meer gecorrigeerd
-    // wordt, want hij komt in geen enkele bucket meer terecht zodra hij
-    // "voltooid" is. Dit is de eigenlijke root cause van het terugkerende
-    // aankoop-in-Verkopen-probleem: de vorige currentUserSide-fix (92d2c07)
-    // corrigeert order_direction wél al bij elke sync/refresh (zie orderDirection
-    // hieronder, altijd meegegeven aan SYNC_TO_SUPABASE), maar die route wordt
-    // voor voltooide orders gewoon nooit aangeroepen.
+    // 'buyer' is) NOOIT meer gecorrigeerd wordt, want hij komt in geen enkele
+    // bucket meer terecht zodra hij "voltooid" is.
     //
     // We sturen ALLEEN een correctie als currentUserSide deze ronde
     // daadwerkelijk bekend is (dus enrichOrders/fetchConvDetail is voor deze
@@ -588,69 +591,52 @@
     );
 
     const targets = [
-      ...nieuw.map(o => ({ order: o, kind: 'nieuw' })),
       ...teVerversen.map(o => ({ order: o, kind: 'refresh' })),
       ...teCorrigeren.map(o => ({ order: o, kind: 'direction-check' })),
     ];
-    console.log(`[Vault] autoSync: ${orders.length} orders — ${nieuw.length} nieuw (verkoop), ${nieuweAankopenOvergeslagen.length} nieuwe aankoop overgeslagen (enkel via Aankopen-tab), ${teVerversen.length} te verversen, ${teCorrigeren.length} voltooid+richting-check, ${orders.length - targets.length - nieuweAankopenOvergeslagen.length} verder overgeslagen (voltooid, currentUserSide onbekend)`);
+    console.log(`[Vault] refreshKnownOrders: ${orders.length} orders — ${nieuwGevonden.length} nieuw (NIET gesynct — enkel handmatig via het extensiepaneel), ${teVerversen.length} te verversen, ${teCorrigeren.length} voltooid+richting-check`);
 
     const reportProgress = async (progress) => {
       if (!userId) return;
       await sendMsg({ type: 'REPORT_SYNC_PROGRESS', userId, progress });
     };
 
-    let newCount = 0, updatedCount = 0, fail = 0;
+    let updatedCount = 0, fail = 0;
     for (let i = 0; i < targets.length; i++) {
       const { order: o, kind } = targets[i];
       // Zelfde onderscheid als tabVerkopen/tabAankopen: currentUserSide === 'buyer'
       // betekent dat DIT account de koper was in de transactie, dus een aankoop —
       // die hoort met order_direction 'purchase' gesynct te worden, anders duikt
-      // hij als "verkoop" op in de Verkopen-lijst. autoSync() liet dit onderscheid
-      // eerder vallen (geen orderDirection meegegeven → altijd de 'sale'-default
-      // in background.js syncToSupabase/syncOrder).
+      // hij als "verkoop" op in de Verkopen-lijst.
       const orderDirection = o.currentUserSide === 'buyer' ? 'purchase' : 'sale';
       if (DEBUG_TXN_IDS.has(o.transactionId)) {
-        console.log(`[Vault] DEBUG txn ${o.transactionId} in autoSync (kind=${kind}): currentUserSide="${o.currentUserSide}" (type=${typeof o.currentUserSide}) → orderDirection="${orderDirection}"`);
+        console.log(`[Vault] DEBUG txn ${o.transactionId} in refreshKnownOrders (kind=${kind}): currentUserSide="${o.currentUserSide}" (type=${typeof o.currentUserSide}) → orderDirection="${orderDirection}"`);
       }
-      if (kind === 'nieuw') {
-        const vId = await getVintedUserId();
-        const res = await sendMsg({ type: 'SYNC_ORDER', order: { ...o, orderDirection, labelUrl: labelUrl(o.transactionId), vintedUserId: vId } });
-        if (res?.success && !res.duplicate) {
-          syncedIds.add(o.transactionId);
-          newCount++;
-          console.log(`[Vault] autoSync ✓ nieuw txn ${o.transactionId} (${orderDirection})`);
+      // syncToSupabase() zoekt de owner_id op via order.vintedUserId (zie
+      // background.js lookupOwnerId()); zonder dit veld faalt de lookup altijd
+      // met "no_link", ook al bestaat de koppeling wel degelijk.
+      const vId = await getVintedUserId();
+      const res = await sendMsg({ type: 'SYNC_TO_SUPABASE', order: { ...o, orderDirection, vintedUserId: vId } });
+      if (res?.success) {
+        updatedCount++;
+        if (kind === 'direction-check') {
+          console.log(`[Vault] refreshKnownOrders ✓ richting gecontroleerd/gecorrigeerd txn ${o.transactionId} (voltooid, currentUserSide="${o.currentUserSide}" → ${orderDirection})`);
         } else {
-          fail++;
-          console.warn(`[Vault] autoSync ✗ nieuw txn ${o.transactionId}`, res);
+          console.log(`[Vault] refreshKnownOrders ✓ status ververst txn ${o.transactionId} ("${o.status}", ${orderDirection})`);
         }
       } else {
-        // Zelfde owner_id-koppeling als het "nieuw"-pad hierboven — syncToSupabase()
-        // zoekt de owner_id op via order.vintedUserId (zie background.js
-        // lookupOwnerId()); zonder dit veld faalt de lookup altijd met "no_link",
-        // ook al bestaat de koppeling wel degelijk.
-        const vId = await getVintedUserId();
-        const res = await sendMsg({ type: 'SYNC_TO_SUPABASE', order: { ...o, orderDirection, vintedUserId: vId } });
-        if (res?.success) {
-          updatedCount++;
-          if (kind === 'direction-check') {
-            console.log(`[Vault] autoSync ✓ richting gecontroleerd/gecorrigeerd txn ${o.transactionId} (voltooid, currentUserSide="${o.currentUserSide}" → ${orderDirection})`);
-          } else {
-            console.log(`[Vault] autoSync ✓ status ververst txn ${o.transactionId} ("${o.status}", ${orderDirection})`);
-          }
-        } else {
-          fail++;
-          console.warn(`[Vault] autoSync ✗ refresh txn ${o.transactionId}`, res);
-        }
+        fail++;
+        console.warn(`[Vault] refreshKnownOrders ✗ txn ${o.transactionId}`, res);
       }
-      await reportProgress({ status: 'running', done: i + 1, total: targets.length, newCount, updatedCount });
+      await reportProgress({ status: 'running', done: i + 1, total: targets.length, updatedCount, newFoundCount: nieuwGevonden.length });
     }
 
-    console.log(`[Vault] autoSync klaar: ${newCount} nieuw, ${updatedCount} bijgewerkt, ${fail} mislukt`);
+    console.log(`[Vault] refreshKnownOrders klaar: ${updatedCount} bijgewerkt, ${fail} mislukt, ${nieuwGevonden.length} nieuw overgeslagen (niet gesynct)`);
     await reportProgress({
       status: 'done', done: targets.length, total: targets.length,
-      newCount, updatedCount, finishedAt: new Date().toISOString(),
+      updatedCount, newFoundCount: nieuwGevonden.length, finishedAt: new Date().toISOString(),
     });
-    return { newCount, updatedCount, fail };
+    return { updatedCount, newFoundCount: nieuwGevonden.length, fail };
   }
 
   async function loadDlIds() {
@@ -1526,7 +1512,7 @@
   // FORCE_SYNC-roundtrip. Als 1 ronde (78 orders × conversation-detail calls)
   // langer duurt dan 5s — vrijwel altijd het geval — komt er zonder deze
   // guard een tweede (derde, vierde, …) overlappende FORCE_SYNC binnen
-  // voordat de vlag gereset is, en begint getSold()/autoSync() gewoon
+  // voordat de vlag gereset is, en begint getSold()/refreshKnownOrders() gewoon
   // opnieuw vanaf 0 bovenop de al lopende ronde — de vlag wordt dan nooit
   // meer teruggezet en de webapp-knop blijft eindeloos op "bezig" staan.
   let syncInProgress = false
@@ -1551,7 +1537,7 @@
           }
         }
         await enrichOrders(active)
-        const result = await autoSync(active, msg.userId)
+        const result = await refreshKnownOrders(active, msg.userId)
         sendResponse({ success: true, count: active.length, ...result })
       } catch (e) {
         console.warn('[Vault] FORCE_SYNC error:', e.message)
