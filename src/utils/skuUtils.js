@@ -95,3 +95,53 @@ export function normalizePlatform(p) {
 export function isLabelReady(order) {
   return !!(order?.label_available && order?.label_pdf_url)
 }
+
+export const COUNTRY_FLAGS = { BE:'🇧🇪',NL:'🇳🇱',FR:'🇫🇷',DE:'🇩🇪',ES:'🇪🇸',IT:'🇮🇹',PL:'🇵🇱',CZ:'🇨🇿',PT:'🇵🇹',SE:'🇸🇪',FI:'🇫🇮',LT:'🇱🇹',LV:'🇱🇻',EE:'🇪🇪' }
+
+// ── Status badge — gedeeld tussen Verkopen.jsx en Aankopen.jsx ─────────────
+// labelAvailable moet hier al de geverifieerde waarde zijn (isLabelReady(order)
+// hierboven, niet enkel het ruwe order.label_available of een gok op
+// statustekst) — anders duiken orders zonder écht ophaalbaar label toch op
+// als "Label gereed", precies de bug die de Labels-pagina eerder al oploste
+// via de PDF-verificatie maar die elders los stond.
+export function getStatusBadge(status, labelAvailable) {
+  const s = (status || '').toLowerCase()
+  if (labelAvailable)
+    return { label: 'Label gereed', color: '#d97706', bg: 'rgba(245,158,11,0.12)' }
+  if (s.includes('geleverd') || s.includes('delivered') || s.includes('ontvangen'))
+    return { label: 'Geleverd', color: '#16a34a', bg: 'rgba(22,163,74,0.1)' }
+  if (s.includes('verzond') || s.includes('shipped') || s.includes('transit') || s.includes('onderweg'))
+    return { label: 'Onderweg', color: '#2563eb', bg: 'rgba(37,99,235,0.1)' }
+  if (s.includes('complet') || s.includes('voltooid') || s.includes('closed') || s.includes('afgerond'))
+    return { label: 'Voltooid', color: '#16a34a', bg: 'rgba(22,163,74,0.1)' }
+  if (s.includes('cancel') || s.includes('geannul'))
+    return { label: 'Geannuleerd', color: '#dc2626', bg: 'rgba(220,38,38,0.1)' }
+  if (status) return { label: status.length > 36 ? status.slice(0, 36) + '…' : status, color: '#6b7280', bg: 'rgba(107,114,128,0.08)' }
+  return null
+}
+
+// ── Gedeelde "welke SKU's zijn al gebruikt"-logica ─────────────────────────
+// Enige bron van waarheid voor zowel SkuPickerModal (los, per order) als
+// BulkSkuModal (bulk) — beide moeten exact hetzelfde "beschikbaar"-getal
+// tonen voor dezelfde batch, anders lopen ze uiteen.
+//
+// Een SKU telt als "gebruikt" zodra hij voorkomt in het sku_ref-veld van een
+// ANDERE vinted_orders-rij (sku_ref kan een kommagescheiden lijst zijn bij
+// bundel-orders). Orders in excludeOrderIds (de order(s) die je nu net aan
+// het (her)koppelen bent) tellen niet mee — hun eigen bestaande koppeling mag
+// herzien worden zonder zichzelf te blokkeren.
+export function getUsedSkus(allOrders, excludeOrderIds = []) {
+  const exclude = new Set(excludeOrderIds)
+  const used = new Set()
+  for (const o of allOrders || []) {
+    if (exclude.has(o.id) || !o.sku_ref) continue
+    o.sku_ref.split(',').forEach(s => { const t = s.trim().toUpperCase(); if (t) used.add(t) })
+  }
+  return used
+}
+
+export function getFreeSkusForBatch(batch, usedSkus) {
+  const all = []
+  for (let n = batch.startNum; n <= batch.endNum; n++) all.push(formatSku(batch.supplierPrefix, n))
+  return all.filter(s => !usedSkus.has(s))
+}

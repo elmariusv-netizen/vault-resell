@@ -1,10 +1,11 @@
 import { useMemo, useState, useEffect } from 'react'
 import {
   formatCurrency, formatDateLong, formatSkuRange, calcSaleProfit, normalizePlatform,
-  genId, formatSku, isLabelReady,
+  genId, formatSku, isLabelReady, COUNTRY_FLAGS, getStatusBadge, getUsedSkus, getFreeSkusForBatch,
 } from '../utils/skuUtils'
 import SaleModal from '../components/SaleModal'
 import EditSaleModal from '../components/EditSaleModal'
+import SkuPickerModal from '../components/SkuPickerModal'
 import { supabase } from '../utils/supabase'
 
 const SHORT = { 'Medeverkoper/Groothandel': 'B2B', 'Privé persoon': 'Privé' }
@@ -66,8 +67,6 @@ async function markRegisteredInSupabase(orderId) {
     .eq('id', orderId)
 }
 
-const COUNTRY_FLAGS = { BE:'🇧🇪',NL:'🇳🇱',FR:'🇫🇷',DE:'🇩🇪',ES:'🇪🇸',IT:'🇮🇹',PL:'🇵🇱',CZ:'🇨🇿',PT:'🇵🇹',SE:'🇸🇪',FI:'🇫🇮',LT:'🇱🇹',LV:'🇱🇻',EE:'🇪🇪' }
-
 // ── SKU auto-detectie ──────────────────────────────────────────────────────
 const BRANDS_MAP = [
   ['ralph lauren','RL'],['nike','NK'],['adidas','AD'],['zara','ZR'],['h&m','HM'],
@@ -107,27 +106,6 @@ function suggestSku(title, description) {
   return ''
 }
 
-// ── Status badge ───────────────────────────────────────────────────────────
-// labelAvailable moet hier al de geverifieerde waarde zijn (isLabelReady(order)
-// vanuit skuUtils, niet enkel het ruwe order.label_available of een gok op
-// statustekst) — anders duiken orders zonder écht ophaalbaar label toch op
-// als "Label gereed", precies de bug die de Labels-pagina eerder al oploste
-// via de PDF-verificatie maar die hier los stond.
-function getStatusBadge(status, labelAvailable) {
-  const s = (status || '').toLowerCase()
-  if (labelAvailable)
-    return { label: 'Label gereed', color: '#d97706', bg: 'rgba(245,158,11,0.12)' }
-  if (s.includes('geleverd') || s.includes('delivered') || s.includes('ontvangen'))
-    return { label: 'Geleverd', color: '#16a34a', bg: 'rgba(22,163,74,0.1)' }
-  if (s.includes('verzond') || s.includes('shipped') || s.includes('transit') || s.includes('onderweg'))
-    return { label: 'Onderweg', color: '#2563eb', bg: 'rgba(37,99,235,0.1)' }
-  if (s.includes('complet') || s.includes('voltooid') || s.includes('closed') || s.includes('afgerond'))
-    return { label: 'Voltooid', color: '#16a34a', bg: 'rgba(22,163,74,0.1)' }
-  if (s.includes('cancel') || s.includes('geannul'))
-    return { label: 'Geannuleerd', color: '#dc2626', bg: 'rgba(220,38,38,0.1)' }
-  if (status) return { label: status.length > 36 ? status.slice(0, 36) + '…' : status, color: '#6b7280', bg: 'rgba(107,114,128,0.08)' }
-  return null
-}
 
 // ── Inline bewerkbaar veld ─────────────────────────────────────────────────
 function InlineInput({ value, onSave, placeholder, prefix = '', width = 90, type = 'text' }) {
@@ -525,85 +503,6 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave, 
   )
 }
 
-// ── SKU koppel modal ───────────────────────────────────────────────────────
-function SkuPickerModal({ batches, allOrders, excludeOrderId, onPick, onClose }) {
-  const [q, setQ] = useState('')
-
-  // Gedeelde logica met BulkSkuModal — "beschikbaar" is hier het aantal nog
-  // ongebruikte SKU's binnen de batch (batch-hoeveelheid minus reeds elders
-  // gekoppelde sku_ref-waarden), niet het statische b.liveCount/b.quantity
-  // dat nooit daalde wanneer een SKU via dit scherm gekoppeld werd.
-  const usedSkus = useMemo(() => getUsedSkus(allOrders, excludeOrderId ? [excludeOrderId] : []), [allOrders, excludeOrderId])
-
-  const items = useMemo(() => {
-    const lower = q.toLowerCase()
-    return batches
-      .filter(b => {
-        if (!lower) return true
-        const sku = formatSkuRange(b.supplierPrefix, b.startNum, b.endNum)
-        return (
-          sku.toLowerCase().includes(lower) ||
-          (b.name || '').toLowerCase().includes(lower) ||
-          (b.brand || '').toLowerCase().includes(lower)
-        )
-      })
-      .map(b => ({ batch: b, available: getFreeSkusForBatch(b, usedSkus).length }))
-      .sort((a, b) => b.available - a.available)
-  }, [batches, q, usedSkus])
-
-  useEffect(() => {
-    const close = e => { if (e.key === 'Escape') onClose() }
-    window.addEventListener('keydown', close)
-    return () => window.removeEventListener('keydown', close)
-  }, [onClose])
-
-  return (
-    <div className="modal-overlay" onMouseDown={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal" style={{ maxWidth: 420, padding: 0, overflow: 'hidden', background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)' }}>
-        <div style={{ padding: '16px 20px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-            <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: '#f1f5f9' }}>Koppel SKU</h2>
-            <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: 22, cursor: 'pointer', lineHeight: 1 }}>×</button>
-          </div>
-          <input
-            autoFocus
-            value={q}
-            onChange={e => setQ(e.target.value)}
-            placeholder="Zoek SKU, naam, merk…"
-            style={{ width: '100%', padding: '8px 12px', background: '#1e293b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, color: '#f1f5f9', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
-          />
-        </div>
-        <div style={{ maxHeight: 320, overflowY: 'auto' }}>
-          {items.length === 0 ? (
-            <div style={{ padding: 24, textAlign: 'center', color: '#64748b', fontSize: 13 }}>Geen batches gevonden</div>
-          ) : items.map(({ batch: b, available }) => {
-            const sku = formatSkuRange(b.supplierPrefix, b.startNum, b.endNum)
-            return (
-              <div
-                key={b.id}
-                onClick={() => { onPick(sku); onClose() }}
-                style={{ padding: '10px 20px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.04)' }}
-                onMouseEnter={e => e.currentTarget.style.background = '#1e293b'}
-                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-              >
-                <div>
-                  <span style={{ fontWeight: 700, fontSize: 13, color: '#818cf8', fontFamily: 'monospace' }}>{sku}</span>
-                  {(b.name || b.brand) && (
-                    <span style={{ fontSize: 12, color: '#94a3b8', marginLeft: 10 }}>{b.brand || b.name}</span>
-                  )}
-                </div>
-                <span style={{ fontSize: 11, color: available > 0 ? '#4ade80' : '#64748b', fontWeight: 600 }}>
-                  {available > 0 ? `${available} beschikbaar` : 'uitverkocht'}
-                </span>
-              </div>
-            )
-          })}
-        </div>
-      </div>
-    </div>
-  )
-}
-
 // Aantal items in een bundel-order: gebaseerd op item_titles (meest accuraat,
 // afkomstig van een geslaagde per-item foto/titel-ophaling), anders het aantal
 // foto's in photo_urls, anders het aantal uit de titel zelf ("Bundel: 2
@@ -617,32 +516,6 @@ function getBundleItemCount(order) {
   const m = /bundel[:\s]*?(\d+)/i.exec(order.title || '')
   if (m) return parseInt(m[1], 10)
   return /bundel/i.test(order.title || '') ? 2 : 1
-}
-
-// ── Gedeelde "welke SKU's zijn al gebruikt"-logica ─────────────────────────
-// Enige bron van waarheid voor zowel SkuPickerModal (los, per order) als
-// BulkSkuModal (bulk) — beide moeten exact hetzelfde "beschikbaar"-getal
-// tonen voor dezelfde batch, anders lopen ze uiteen.
-//
-// Een SKU telt als "gebruikt" zodra hij voorkomt in het sku_ref-veld van een
-// ANDERE vinted_orders-rij (sku_ref kan een kommagescheiden lijst zijn bij
-// bundel-orders). Orders in excludeOrderIds (de order(s) die je nu net aan
-// het (her)koppelen bent) tellen niet mee — hun eigen bestaande koppeling mag
-// herzien worden zonder zichzelf te blokkeren.
-function getUsedSkus(allOrders, excludeOrderIds = []) {
-  const exclude = new Set(excludeOrderIds)
-  const used = new Set()
-  for (const o of allOrders || []) {
-    if (exclude.has(o.id) || !o.sku_ref) continue
-    o.sku_ref.split(',').forEach(s => { const t = s.trim().toUpperCase(); if (t) used.add(t) })
-  }
-  return used
-}
-
-function getFreeSkusForBatch(batch, usedSkus) {
-  const all = []
-  for (let n = batch.startNum; n <= batch.endNum; n++) all.push(formatSku(batch.supplierPrefix, n))
-  return all.filter(s => !usedSkus.has(s))
 }
 
 // ── Bulk SKU-koppel modal ───────────────────────────────────────────────────

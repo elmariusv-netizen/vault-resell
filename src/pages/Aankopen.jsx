@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../utils/supabase'
-import { formatDateLong } from '../utils/skuUtils'
+import { formatDateLong, COUNTRY_FLAGS, getStatusBadge } from '../utils/skuUtils'
+import AankoopSkuModal from '../components/AankoopSkuModal'
 
 const BRANDS_MAP = [
   ['ralph lauren','RL'],['nike','NK'],['adidas','AD'],['zara','ZR'],['h&m','HM'],
@@ -18,6 +19,11 @@ function suggestSku(title) {
   return ''
 }
 
+// Zelfde criterium als Verkopen.jsx gebruikt voor zijn Vinted-orders-lijst.
+function isCancelled(order) {
+  return /geannuleerd|cancel/i.test(order.status || '')
+}
+
 async function fetchAllAankopen() {
   const { data, error } = await supabase
     .from('vinted_orders')
@@ -32,25 +38,19 @@ async function fetchAllAankopen() {
   })
 }
 
-function AankoopRow({ order, onToggleResale, onSaveSku }) {
-  const [skuVal, setSkuVal] = useState(order.sku_ref || '')
-  const [skuEditing, setSkuEditing] = useState(false)
-
-  useEffect(() => setSkuVal(order.sku_ref || ''), [order.sku_ref])
-
+function AankoopRow({ order, onLinkSku }) {
   const suggested = !order.sku_ref ? suggestSku(order.title) : ''
   const photoUrls = (() => { try { return JSON.parse(order.photo_urls || '[]') } catch { return [] } })()
   const mainPhoto = photoUrls[0] || order.photo_url || null
-
-  const saveSku = () => {
-    onSaveSku(order.id, skuVal.trim().toUpperCase() || null)
-    setSkuEditing(false)
-  }
+  const flag = COUNTRY_FLAGS[order.country] || ''
+  const badge = getStatusBadge(order.status, false)
+  const cancelled = isCancelled(order)
 
   return (
     <div style={{
       display: 'flex', gap: 12, padding: '14px 16px',
       borderBottom: '1px solid var(--border)', alignItems: 'flex-start',
+      opacity: cancelled ? 0.6 : 1,
     }}>
       {/* Foto */}
       <div style={{ flexShrink: 0 }}>
@@ -67,11 +67,16 @@ function AankoopRow({ order, onToggleResale, onSaveSku }) {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
           {order.seller_name && (
-            <span style={{ fontSize: 12, color: 'var(--text-3)' }}>👤 {order.seller_name}</span>
+            <span style={{ fontSize: 12, color: 'var(--text-3)' }}>👤 @{order.seller_name}</span>
           )}
           {order.country && (
             <span style={{ fontSize: 11, background: 'var(--bg-2)', border: '1px solid var(--border)', color: 'var(--text-2)', padding: '1px 7px', borderRadius: 4, fontWeight: 600 }}>
-              {order.country}
+              {flag} {order.country}
+            </span>
+          )}
+          {badge && (
+            <span style={{ fontSize: 10, color: badge.color, background: badge.bg, padding: '2px 7px', borderRadius: 4, fontWeight: 700, border: `1px solid ${badge.color}30` }}>
+              {badge.label}
             </span>
           )}
           {order.sale_date && (
@@ -82,61 +87,25 @@ function AankoopRow({ order, onToggleResale, onSaveSku }) {
           </span>
         </div>
 
-        {/* Toggle: Voor mezelf / Voor de handel */}
+        {/* SKU koppelen — vervangt de vorige "Voor mezelf"/"Voor de handel"-toggle.
+            Geen koppeling nodig? Dan blijft het gewoon een persoonlijke aankoop,
+            geen verdere actie vereist. */}
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
           <button
-            onClick={() => onToggleResale(order.id, false)}
+            onClick={() => onLinkSku(order)}
             style={{
               fontSize: 11, padding: '3px 10px', borderRadius: 5, cursor: 'pointer', fontWeight: 600, fontFamily: 'inherit',
-              background: order.for_resale === false ? 'var(--blue)' : 'var(--bg-2)',
-              color: order.for_resale === false ? '#fff' : 'var(--text-2)',
-              border: order.for_resale === false ? '1px solid var(--blue)' : '1px solid var(--border)',
+              background: order.sku_ref ? 'rgba(129,140,248,0.12)' : 'var(--bg-2)',
+              color: order.sku_ref ? '#818cf8' : 'var(--text-2)',
+              border: order.sku_ref ? '1px solid rgba(129,140,248,0.3)' : '1px solid var(--border)',
             }}
-          >Voor mezelf</button>
-          <button
-            onClick={() => onToggleResale(order.id, true)}
-            style={{
-              fontSize: 11, padding: '3px 10px', borderRadius: 5, cursor: 'pointer', fontWeight: 600, fontFamily: 'inherit',
-              background: order.for_resale === true ? 'var(--green)' : 'var(--bg-2)',
-              color: order.for_resale === true ? '#000' : 'var(--text-2)',
-              border: order.for_resale === true ? '1px solid var(--green)' : '1px solid var(--border)',
-            }}
-          >Voor de handel</button>
-
-          {/* SKU veld — toon alleen als for_resale = true */}
-          {order.for_resale === true && (
-            skuEditing ? (
-              <div style={{ display: 'flex', gap: 4 }}>
-                <input
-                  autoFocus
-                  value={skuVal}
-                  onChange={e => setSkuVal(e.target.value.toUpperCase())}
-                  onBlur={saveSku}
-                  onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); if (e.key === 'Escape') { setSkuEditing(false); setSkuVal(order.sku_ref || '') } }}
-                  placeholder="bv. NK042"
-                  style={{ width: 80, fontFamily: 'monospace', fontSize: 12, padding: '3px 7px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', outline: 'none' }}
-                />
-                <button onMouseDown={e => { e.preventDefault(); saveSku() }} style={{ padding: '3px 8px', borderRadius: 5, background: 'var(--green)', color: '#000', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: 12 }}>✓</button>
-              </div>
-            ) : (
-              <div
-                onClick={() => setSkuEditing(true)}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer', padding: '3px 8px', borderRadius: 5, background: 'var(--bg-2)', border: '1px solid var(--border)' }}
-                title="Klik om SKU te koppelen"
-              >
-                <span style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 700, color: skuVal ? 'var(--text)' : 'var(--text-3)' }}>
-                  {skuVal || 'Koppel SKU'}
-                </span>
-                <span style={{ fontSize: 10, color: 'var(--text-3)' }}>✏️</span>
-              </div>
-            )
-          )}
-          {order.for_resale === true && suggested && !order.sku_ref && (
-            <span
-              onClick={() => onSaveSku(order.id, suggested)}
-              style={{ fontSize: 10, color: 'var(--blue)', cursor: 'pointer', userSelect: 'none' }}
-              title={`Auto: ${suggested}`}
-            >✦ {suggested}</span>
+          >
+            {order.sku_ref ? `🏷 ${order.sku_ref}` : '🏷 SKU koppelen'}
+          </button>
+          {suggested && !order.sku_ref && (
+            <span style={{ fontSize: 10, color: 'var(--text-3)' }} title="Merk gedetecteerd in titel">
+              suggestie: {suggested}
+            </span>
           )}
         </div>
       </div>
@@ -144,10 +113,13 @@ function AankoopRow({ order, onToggleResale, onSaveSku }) {
   )
 }
 
-export default function Aankopen() {
+export default function Aankopen({ data, updateData }) {
+  const { batches = [], suppliers = [] } = data || {}
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [showCancelled, setShowCancelled] = useState(false)
+  const [linkingOrder, setLinkingOrder] = useState(null)
 
   useEffect(() => {
     fetchAllAankopen()
@@ -155,14 +127,15 @@ export default function Aankopen() {
       .catch(e => { setError(e.message); setLoading(false) })
   }, [])
 
-  const toggleResale = async (id, value) => {
-    await supabase.from('vinted_orders').update({ for_resale: value }).eq('id', id)
-    setOrders(prev => prev.map(o => o.id === id ? { ...o, for_resale: value } : o))
-  }
+  const visibleOrders = orders.filter(o => showCancelled || !isCancelled(o))
+  const cancelledCount = orders.filter(isCancelled).length
 
-  const saveSku = async (id, sku) => {
-    await supabase.from('vinted_orders').update({ sku_ref: sku || null }).eq('id', id)
-    setOrders(prev => prev.map(o => o.id === id ? { ...o, sku_ref: sku || null } : o))
+  // { sku, batchId, costPrice, newBatch? } — zie AankoopSkuModal.
+  const handleSkuConfirm = async ({ sku, batchId, costPrice, newBatch }) => {
+    if (newBatch) updateData({ batches: [...batches, newBatch] })
+    const patch = { sku_ref: sku, batch_id: batchId, cost_price: costPrice }
+    await supabase.from('vinted_orders').update(patch).eq('id', linkingOrder.id)
+    setOrders(prev => prev.map(o => o.id === linkingOrder.id ? { ...o, ...patch } : o))
   }
 
   return (
@@ -170,15 +143,23 @@ export default function Aankopen() {
       <div className="page-header">
         <div>
           <h1>Aankopen</h1>
-          <div className="page-subtitle">{loading ? '…' : `${orders.length} aankopen gesynchroniseerd`}</div>
+          <div className="page-subtitle">{loading ? '…' : `${visibleOrders.length} aankopen gesynchroniseerd`}</div>
         </div>
+        {!loading && cancelledCount > 0 && (
+          <button
+            onClick={() => setShowCancelled(v => !v)}
+            className="btn btn-secondary btn-sm"
+          >
+            {showCancelled ? '👁 Verberg geannuleerde' : `👁 Toon geannuleerde (${cancelledCount})`}
+          </button>
+        )}
       </div>
 
       {loading ? (
         <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>Laden…</div>
       ) : error ? (
         <div style={{ padding: 16, color: 'var(--red)', fontSize: 13 }}>Fout: {error}</div>
-      ) : orders.length === 0 ? (
+      ) : visibleOrders.length === 0 ? (
         <div className="empty-state">
           <div className="empty-icon">🛍</div>
           <h3>Geen aankopen gevonden</h3>
@@ -186,15 +167,25 @@ export default function Aankopen() {
         </div>
       ) : (
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-          {orders.map(order => (
+          {visibleOrders.map(order => (
             <AankoopRow
               key={order.id}
               order={order}
-              onToggleResale={toggleResale}
-              onSaveSku={saveSku}
+              onLinkSku={setLinkingOrder}
             />
           ))}
         </div>
+      )}
+
+      {linkingOrder && (
+        <AankoopSkuModal
+          order={linkingOrder}
+          suppliers={suppliers}
+          batches={batches}
+          allOrders={orders}
+          onClose={() => setLinkingOrder(null)}
+          onConfirm={handleSkuConfirm}
+        />
       )}
     </div>
   )

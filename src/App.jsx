@@ -267,7 +267,7 @@ export default function App() {
           {page === 'inventory' && <Inventory {...props} />}
           {page === 'new'       && <NewSKU {...props} />}
           {page === 'verkopen'  && <Verkopen data={data} onDeleteSale={handleDeleteSale} onUpdateSale={handleUpdateSale} updateData={updateData} vintedCookie={vintedCookie} activeUserId={activeUserId} />}
-          {page === 'aankopen'  && <Aankopen />}
+          {page === 'aankopen'  && <Aankopen data={data} updateData={updateData} />}
           {page === 'stats'     && <Stats data={data} theme={theme} />}
           {page === 'settings'  && <Settings {...props} onExport={handleExport} onClearData={handleClearData} activeUserId={activeUserId} vintedCookie={vintedCookie} onVintedCookieChange={setVintedCookie} supabaseUser={supabaseUser} onSignOut={() => supabase.auth.signOut()} />}
           {page === 'labels'    && <Labels data={data} vintedCookie={vintedCookie} />}
