@@ -616,6 +616,7 @@ function getBundleItemCount(order) {
 function BulkSkuModal({ suppliers, batches, orders, onClose, onConfirm }) {
   const [supplierId, setSupplierId] = useState(suppliers[0]?.id || '')
   const [overrides, setOverrides]   = useState({}) // slotKey -> handmatig ingetypte SKU
+  const [manualCounts, setManualCounts] = useState({}) // orderId -> handmatig aantal artikelen (niet-bundle orders)
   const [saving, setSaving]         = useState(false)
 
   const supplier = suppliers.find(s => s.id === supplierId)
@@ -629,15 +630,25 @@ function BulkSkuModal({ suppliers, batches, orders, onClose, onConfirm }) {
     return () => window.removeEventListener('keydown', close)
   }, [onClose])
 
+  // Officieel Vinted-bundle (title/item_titles/photo_urls-detectie).
+  const isAutoBundle = (order) => getBundleItemCount(order) > 1
+
+  // Aantal SKU-slots voor een order: bij een echte bundle altijd het
+  // gedetecteerde aantal; anders het handmatig ingestelde aantal (via "Dit is
+  // eigenlijk meerdere artikelen"), of 1 als daar niets voor ingesteld is.
+  const effectiveCount = (order) =>
+    isAutoBundle(order) ? getBundleItemCount(order) : (manualCounts[order.id] ?? 1)
+
   // Eén "slot" per SKU-invoerveld — normale orders krijgen 1 slot, bundel-
-  // orders krijgen er N (1 per artikel). De SKU-reeks loopt oplopend door
-  // over ALLE slots heen, ongeacht order-grenzen.
+  // orders (echt of handmatig aangeduid) krijgen er N (1 per artikel). De
+  // SKU-reeks loopt oplopend door over ALLE slots heen, ongeacht order-
+  // grenzen.
   const slots = []
   {
     let seq = 0
     for (const order of orders) {
       const itemTitles = (() => { try { return JSON.parse(order.item_titles || '[]') } catch { return [] } })()
-      const count = getBundleItemCount(order)
+      const count = effectiveCount(order)
       for (let i = 0; i < count; i++) {
         slots.push({
           slotKey: `${order.id}:${i}`,
@@ -747,6 +758,36 @@ function BulkSkuModal({ suppliers, batches, orders, onClose, onConfirm }) {
                       />
                     </div>
                   ))}
+                  {/* Handmatige "meerdere artikelen"-optie — enkel voor orders die geen
+                      officiële Vinted-bundle zijn (bv. losse verkoop van meerdere
+                      stuks aan één koper, buiten het bundle-systeem om). */}
+                  {!isAutoBundle(order) && (
+                    <div style={{ padding: '4px 10px 8px 10px' }}>
+                      {manualCounts[order.id] === undefined ? (
+                        <span
+                          onClick={() => setManualCounts(prev => ({ ...prev, [order.id]: 2 }))}
+                          style={{ fontSize: 11, color: 'var(--text-3)', cursor: 'pointer', userSelect: 'none' }}
+                        >
+                          + Dit is eigenlijk meerdere artikelen
+                        </span>
+                      ) : (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ fontSize: 11, color: 'var(--text-3)' }}>Aantal artikelen:</span>
+                          <input
+                            type="number"
+                            min={2}
+                            value={manualCounts[order.id]}
+                            onChange={e => setManualCounts(prev => ({ ...prev, [order.id]: Math.max(2, parseInt(e.target.value, 10) || 2) }))}
+                            style={{ width: 48, fontSize: 12, fontWeight: 700, padding: '3px 6px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', textAlign: 'center', outline: 'none' }}
+                          />
+                          <span
+                            onClick={() => setManualCounts(prev => { const next = { ...prev }; delete next[order.id]; return next })}
+                            style={{ fontSize: 11, color: '#f87171', cursor: 'pointer', userSelect: 'none' }}
+                          >✕ annuleer</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )
             })}
