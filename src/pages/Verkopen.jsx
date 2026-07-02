@@ -1,6 +1,7 @@
 import { useMemo, useState, useEffect } from 'react'
 import {
   formatCurrency, formatDateLong, formatSkuRange, calcSaleProfit, normalizePlatform,
+  genId, getNextSkuNum, formatSku,
 } from '../utils/skuUtils'
 import SaleModal from '../components/SaleModal'
 import EditSaleModal from '../components/EditSaleModal'
@@ -225,6 +226,7 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave }
   const price   = Number(order.price || 0)
   const cogs    = Number(order.cost_price || 0)
   const profit  = order.cost_price != null ? price - cogs : null
+  const roi     = (profit != null && cogs > 0) ? (profit / cogs) * 100 : null
   const fmtE    = v => `€${Number(v).toFixed(2).replace('.', ',')}`
 
   const photoUrls = (() => { try { return JSON.parse(order.photo_urls || '[]') } catch { return [] } })()
@@ -403,6 +405,12 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave }
                   ? <span style={{ fontSize: 15, fontWeight: 700, color: profit >= 0 ? 'var(--green)' : 'var(--red)' }}>{profit >= 0 ? '+' : '-'}{fmtE(Math.abs(profit))}</span>
                   : <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-3)' }}>—</span>,
               },
+              {
+                label: 'ROI',
+                node: roi != null
+                  ? <span style={{ fontSize: 15, fontWeight: 700, color: roi >= 0 ? 'var(--green)' : 'var(--red)' }}>{roi >= 0 ? '+' : ''}{roi.toFixed(0)}%</span>
+                  : <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-3)' }}>—</span>,
+              },
             ].map((col, i, arr) => (
               <div
                 key={col.label}
@@ -578,6 +586,119 @@ function SkuPickerModal({ batches, onPick, onClose }) {
   )
 }
 
+// ── Bulk SKU-koppel modal ───────────────────────────────────────────────────
+// Koppelt meerdere geselecteerde Vinted-orders in één keer aan oplopende SKU's
+// uit dezelfde leverancier-batch (bv. RIA047, RIA048, RIA049), met per order
+// een handmatig overschrijfbaar SKU-veld.
+function BulkSkuModal({ suppliers, batches, orders, onClose, onConfirm }) {
+  const [supplierId, setSupplierId] = useState(suppliers[0]?.id || '')
+  const [overrides, setOverrides]   = useState({}) // orderId -> handmatig ingetypte SKU
+  const [saving, setSaving]         = useState(false)
+
+  const supplier = suppliers.find(s => s.id === supplierId)
+  const startNum = supplier ? getNextSkuNum(batches, supplier.prefix) : 1
+
+  useEffect(() => { setOverrides({}) }, [supplierId])
+
+  useEffect(() => {
+    const close = e => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', close)
+    return () => window.removeEventListener('keydown', close)
+  }, [onClose])
+
+  const rows = orders.map((order, i) => {
+    const suggested = supplier ? formatSku(supplier.prefix, startNum + i) : ''
+    const sku = overrides[order.id] ?? suggested
+    return { order, sku }
+  })
+
+  // Zoek de batch die bij een getypte SKU hoort (prefix + nummer binnen het
+  // start/eind-bereik). Valt terug op de meest recente batch van diezelfde
+  // leverancier als het nummer buiten elk bestaand bereik valt (bv. een
+  // volledig nieuwe SKU) — zodat COGS toch een redelijke waarde krijgt i.p.v.
+  // helemaal niets.
+  const resolveBatch = (sku) => {
+    const m = /^([A-Za-z]+)(\d+)$/.exec(sku.trim())
+    if (!m) return null
+    const prefix = m[1].toUpperCase()
+    const num = parseInt(m[2], 10)
+    const supBatches = batches.filter(b => b.supplierPrefix === prefix)
+    if (!supBatches.length) return null
+    return supBatches.find(b => num >= b.startNum && num <= b.endNum)
+      || [...supBatches].sort((a, b) => (b.endNum || 0) - (a.endNum || 0))[0]
+  }
+
+  const handleConfirm = async () => {
+    if (!supplier || saving) return
+    setSaving(true)
+    const assignments = rows.map(({ order, sku }) => ({
+      orderId: order.id,
+      sku: sku.trim().toUpperCase(),
+      batch: resolveBatch(sku),
+    }))
+    await onConfirm(assignments)
+    setSaving(false)
+    onClose()
+  }
+
+  return (
+    <div className="modal-overlay" onMouseDown={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal" style={{ maxWidth: 480, padding: 0, overflow: 'hidden' }}>
+        <div className="modal-header" style={{ padding: '16px 20px 0' }}>
+          <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>SKU koppelen ({orders.length} geselecteerd)</h2>
+          <button className="modal-close" onClick={onClose}>×</button>
+        </div>
+        <div style={{ padding: '16px 20px 20px' }}>
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', letterSpacing: '0.6px', textTransform: 'uppercase', marginBottom: 5 }}>Leverancier</div>
+            {suppliers.length ? (
+              <select
+                value={supplierId}
+                onChange={e => setSupplierId(e.target.value)}
+                style={{ width: '100%', padding: '9px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-2)', color: 'var(--text)', fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box' }}
+              >
+                {suppliers.map(s => <option key={s.id} value={s.id}>{s.prefix} — {s.name}</option>)}
+              </select>
+            ) : (
+              <div style={{ fontSize: 13, color: 'var(--text-3)', fontStyle: 'italic' }}>Geen leveranciers gevonden — maak er eerst een aan.</div>
+            )}
+          </div>
+
+          <div style={{ maxHeight: 320, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8 }}>
+            {rows.map(({ order, sku }, i) => (
+              <div
+                key={order.id}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderBottom: i < rows.length - 1 ? '1px solid var(--border)' : 'none' }}
+              >
+                <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text)' }} title={order.title}>
+                  {order.title}
+                </div>
+                <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-2)', flexShrink: 0 }}>
+                  €{parseFloat(order.price || 0).toFixed(2).replace('.', ',')}
+                </span>
+                <input
+                  value={sku}
+                  onChange={e => setOverrides(prev => ({ ...prev, [order.id]: e.target.value.toUpperCase() }))}
+                  style={{ width: 92, flexShrink: 0, fontFamily: 'monospace', fontSize: 12, fontWeight: 700, padding: '5px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', textAlign: 'center', textTransform: 'uppercase', outline: 'none' }}
+                />
+              </div>
+            ))}
+          </div>
+
+          <button
+            className="btn btn-primary"
+            disabled={!supplier || saving}
+            onClick={handleConfirm}
+            style={{ width: '100%', marginTop: 16 }}
+          >
+            {saving ? 'Bezig…' : `Bevestig koppeling (${orders.length})`}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Order rij (Vinteer-stijl) ──────────────────────────────────────────────
 function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegister, onDetail, batches, checked, onCheck }) {
   const [skuPickerOpen,  setSkuPickerOpen]  = useState(false)
@@ -593,6 +714,7 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
   const price    = parseFloat(order.price || 0)
   const cogs     = parseFloat(order.cost_price || 0)
   const profit   = order.cost_price != null ? price - cogs : null
+  const roi      = (profit != null && cogs > 0) ? (profit / cogs) * 100 : null
   const buyer    = order.buyer_name || order.buyer || ''
   const itemUrl  = order.conversation_id
     ? `https://www.vinted.be/inbox/${order.conversation_id}`
@@ -823,6 +945,12 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
                 ? <span style={{ fontSize: 14, fontWeight: 700, color: profit >= 0 ? '#4ade80' : '#f87171' }}>{profit >= 0 ? '+' : '-'}€{Math.abs(profit).toFixed(2).replace('.', ',')}</span>
                 : <span style={{ fontSize: 14, fontWeight: 700, color: '#334155' }}>—</span>,
             },
+            {
+              label: 'ROI',
+              node: roi != null
+                ? <span style={{ fontSize: 14, fontWeight: 700, color: roi >= 0 ? '#4ade80' : '#f87171' }}>{roi >= 0 ? '+' : ''}{roi.toFixed(0)}%</span>
+                : <span style={{ fontSize: 14, fontWeight: 700, color: '#334155' }}>—</span>,
+            },
           ].map((col, i, arr) => (
             <div
               key={col.label}
@@ -1032,6 +1160,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
   const [syncing,   setSyncing]   = useState(false)
   const [syncToast, setSyncToast] = useState(null)  // null | string
   const [selectedIds, setSelectedIds] = useState(new Set())
+  const [bulkSkuOpen, setBulkSkuOpen] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -1095,6 +1224,57 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
     const ids = [...selectedIds]
     await supabase.from('vinted_orders').delete().in('id', ids)
     setVtOrders(prev => prev.filter(o => !selectedIds.has(o.id)))
+    setSelectedIds(new Set())
+  }
+
+  // Slaat de bulk-SKU-koppeling op: sku_ref/cost_price/batch_id op het
+  // vinted_orders-record zelf (voor directe COGS/winst/ROI-weergave), én een
+  // bijhorende sales-entry (dezelfde vorm als SaleModal produceert) zodat de
+  // koppeling ook meetelt in de Stats-pagina — die leest uitsluitend
+  // data.sales, niet vinted_orders.
+  const handleBulkSkuConfirm = async (assignments) => {
+    const newSales = []
+    const patches = {}
+    for (const { orderId, sku, batch } of assignments) {
+      if (!sku) continue
+      const order = vtOrders.find(o => o.id === orderId)
+      const cogs  = batch ? (batch.costPrice || 0) + (batch.importTax || 0) : null
+      const patch = {
+        sku_ref: sku,
+        cost_price: cogs,
+        batch_id: batch?.id || null,
+        registered_in_vault: !!batch,
+      }
+      patches[orderId] = patch
+      await supabase.from('vinted_orders').update(patch).eq('id', orderId)
+
+      if (batch && order) {
+        let photo = order.photo_url || null
+        try { photo = JSON.parse(order.photo_urls || '[]')[0] || photo } catch {}
+        newSales.push({
+          id: genId(),
+          batchId: batch.id,
+          type: 'individual',
+          quantity: 1,
+          salePrice: parseFloat(order.price || 0),
+          platform: 'Vinted',
+          buyer: order.buyer_name || order.buyer || '',
+          fees: 0,
+          shippingCost: 0,
+          notes: order.transaction_id ? `Vinted #${order.transaction_id}` : '',
+          date: order.sale_date || order.synced_at?.split('T')[0] || new Date().toISOString().split('T')[0],
+          fromLive: false,
+          photo,
+          links: [],
+          shipped: false,
+          shippedDate: null,
+          isFree: false,
+          saleTime: null,
+        })
+      }
+    }
+    if (newSales.length) updateData({ sales: [...sales, ...newSales] })
+    setVtOrders(prev => prev.map(o => patches[o.id] ? { ...o, ...patches[o.id] } : o))
     setSelectedIds(new Set())
   }
 
@@ -1289,6 +1469,12 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
                   onClick={() => setSelectedIds(new Set())}
                   style={{ fontSize: 11, padding: '2px 10px', borderRadius: 5, cursor: 'pointer', background: 'var(--bg-2)', border: '1px solid var(--border)', color: 'var(--text-2)', fontFamily: 'inherit' }}
                 >☐ Geen</button>
+                {selectedIds.size > 0 && (
+                  <button
+                    onClick={() => setBulkSkuOpen(true)}
+                    style={{ fontSize: 11, padding: '2px 10px', borderRadius: 5, cursor: 'pointer', background: 'rgba(129,140,248,0.12)', border: '1px solid rgba(129,140,248,0.3)', color: '#818cf8', fontFamily: 'inherit', fontWeight: 600 }}
+                  >🏷 SKU koppelen ({selectedIds.size})</button>
+                )}
                 {selectedIds.size > 0 && (
                   <button
                     onClick={deleteSelected}
@@ -1532,6 +1718,16 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
 
       {addOrderOpen && (
         <AddOrderModal onClose={() => setAddOrderOpen(false)} onSave={addVintedOrder} />
+      )}
+
+      {bulkSkuOpen && (
+        <BulkSkuModal
+          suppliers={suppliers}
+          batches={batches}
+          orders={vtOrders.filter(o => selectedIds.has(o.id))}
+          onClose={() => setBulkSkuOpen(false)}
+          onConfirm={handleBulkSkuConfirm}
+        />
       )}
 
       {syncToast && (

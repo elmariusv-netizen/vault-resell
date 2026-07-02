@@ -26,6 +26,7 @@ ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS shipping_method TEXT;
 ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS tracking_code TEXT;
 ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS buyer_name TEXT;
 ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS item_titles TEXT;
+ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS batch_id TEXT;
 
 -- RLS policies — vereist zodat de Chrome extensie kan schrijven
 -- Voer dit uit als de tabel leeg blijft na sync:
