@@ -1116,6 +1116,15 @@
   }
 
   // ── Tab: Labels ────────────────────────────────────────────────────────────
+  // Bepaalt of een order "needs_action" is — "Verzendlabel is naar de
+  // verkoper gestuurd." → needs_action. Als transactionUserStatus leeg is
+  // (Vinted geeft het veld niet altijd terug), val terug op de status-tekst.
+  function orderNeedsLabelAction(o) {
+    const hasTxStatus = !!(o.transactionUserStatus || '').trim();
+    return o.transactionUserStatus === 'needs_action'
+      || (!hasTxStatus && /verzendlabel/i.test(o.status || ''));
+  }
+
   async function tabLabels(content, footer) {
     await loadDlIds();
     const orders = await getSold();
@@ -1147,7 +1156,10 @@
       console.log(`[Vault] label order txn ${o.transactionId}: status="${o.status}" transactionUserStatus="${o.transactionUserStatus}"`);
     });
 
-    const dlBtns = new Map();
+    const alreadySent = await getAutoSentSet();
+
+    const dlBtns   = new Map();
+    const sendBtns = new Map();
     const rows = labelOrders.map((o, i) => {
       const printed = dlIds.has(o.transactionId);
       const dlBtn = btn(
@@ -1162,16 +1174,21 @@
       const actions = el('div', 'display:flex;gap:6px;flex-shrink:0');
       actions.appendChild(dlBtn);
 
-      // "Verzendlabel is naar de verkoper gestuurd." → needs_action.
-      // Als transactionUserStatus leeg is (Vinted geeft het veld niet altijd terug),
-      // val terug op de status-tekst.
-      const hasTxStatus = !!(o.transactionUserStatus || '').trim();
-      const needsAction = o.transactionUserStatus === 'needs_action'
-        || (!hasTxStatus && /verzendlabel/i.test(o.status || ''));
-      if (needsAction) {
-        const sendBtn = btn('📤 Stuur naar app', `background:${D.badge};color:#374151;flex-shrink:0`);
+      // De "📤 Stuur naar app"-knop blijft bestaan als handmatige fallback
+      // (voor het geval de automatische scan hieronder iets mist), maar toont
+      // meteen de "verstuurd"-staat als dit label al eerder automatisch
+      // verwerkt is.
+      if (orderNeedsLabelAction(o)) {
+        const sent = alreadySent.has(o.transactionId);
+        const sendBtn = btn(
+          sent ? '✓ Verstuurd' : '📤 Stuur naar app',
+          sent
+            ? `background:#dcfce7;color:#15803d;flex-shrink:0`
+            : `background:${D.badge};color:#374151;flex-shrink:0`,
+        );
         sendBtn.addEventListener('click', () => sendLabelAvailable(o.transactionId, sendBtn));
         actions.appendChild(sendBtn);
+        sendBtns.set(o.transactionId, sendBtn);
       }
 
       const sub = [o.buyer ? `@${o.buyer}` : '', fmtD(o.date)].filter(Boolean).join(' · ');
@@ -1185,24 +1202,89 @@
     const printAll = btn(`🖨 Print alle ${labelOrders.length} labels`, `background:${D.accent};color:#fff;flex:1`);
     printAll.addEventListener('click', () => batchPrint(labelOrders, printAll, dlBtns));
     footer.appendChild(printAll);
+
+    // ── Automatische scan: labels die nog nooit automatisch verstuurd zijn ──
+    // Draait op de achtergrond bij elke keer dat dit tabblad geopend wordt,
+    // zodat de gebruiker nooit handmatig per order op "Stuur naar app" moet
+    // klikken. Elk label wordt meteen gefetcht + gecropt + opgeslagen (zie
+    // prefetchLabel), niet enkel gemarkeerd als beschikbaar.
+    autoSendAvailableLabels(labelOrders, alreadySent, sendBtns);
   }
 
-  const PROXY_URL      = 'https://vault-resell.vercel.app/api/label';
-  const SYNC_PROXY_URL = 'https://vault-resell.vercel.app/api/sync-order';
+  async function autoSendAvailableLabels(labelOrders, alreadySent, sendBtns) {
+    const targets = labelOrders.filter(o => orderNeedsLabelAction(o) && !alreadySent.has(o.transactionId));
+    if (!targets.length) return;
 
-  // Meld bij de app dat er een verzendlabel klaarstaat voor deze transactie
+    console.log(`[Vault] auto-send: ${targets.length} nieuwe labels te verwerken`);
+    let sent = 0;
+    for (const o of targets) {
+      const sendBtn = sendBtns.get(o.transactionId);
+      if (sendBtn) { sendBtn.textContent = '⏳ Automatisch…'; sendBtn.disabled = true; }
+      try {
+        await prefetchLabel(o.transactionId);
+        await addAutoSent(o.transactionId);
+        sent++;
+        if (sendBtn) {
+          sendBtn.textContent = '✓ Verstuurd';
+          sendBtn.style.background = '#dcfce7'; sendBtn.style.color = '#15803d';
+        }
+      } catch (e) {
+        console.warn('[Vault] auto-send label mislukt txn', o.transactionId, ':', e.message);
+        if (sendBtn) {
+          sendBtn.textContent = '📤 Stuur naar app'; sendBtn.disabled = false;
+        }
+      }
+    }
+    if (sent > 0) {
+      toast(`✓ ${sent} nieuwe label${sent === 1 ? '' : 's'} automatisch verstuurd`);
+    }
+    console.log(`[Vault] auto-send klaar: ${sent}/${targets.length} gelukt`);
+  }
+
+  const PROXY_URL          = 'https://vault-resell.vercel.app/api/label';
+  const PREFETCH_PROXY_URL = 'https://vault-resell.vercel.app/api/label-prefetch';
+
+  // ── Bijhouden welke labels al automatisch verwerkt zijn (chrome.storage.local
+  // i.p.v. .session, want dit moet blijven bestaan tussen browsersessies —
+  // anders zou elke herstart de hele lijst opnieuw versturen).
+  const AUTO_SENT_KEY = 'vlt_auto_sent_labels';
+  async function getAutoSentSet() {
+    const { [AUTO_SENT_KEY]: ids = [] } = await chrome.storage.local.get([AUTO_SENT_KEY]);
+    return new Set(ids);
+  }
+  async function addAutoSent(txId) {
+    const set = await getAutoSentSet();
+    set.add(txId);
+    await chrome.storage.local.set({ [AUTO_SENT_KEY]: [...set] });
+  }
+
+  // Haalt het label op via de presigned shipment-URL en stuurt die naar
+  // api/label-prefetch, dat het meteen cropt naar 4×6 en opslaat — zowel de
+  // automatische scan als de handmatige "Stuur naar app"-knop gebruiken
+  // dezelfde pipeline, zodat er nooit een label "beschikbaar" staat zonder
+  // dat de gecropte versie al klaarstaat.
+  async function prefetchLabel(txId) {
+    const presignedUrl = await fetchLabelViaShipment(txId);
+    const resp = await fetch(PREFETCH_PROXY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transaction_id: txId, label_url: presignedUrl }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${resp.status}`);
+    }
+    return resp.json();
+  }
+
+  // Meld bij de app dat er een verzendlabel klaarstaat voor deze transactie —
+  // handmatige fallback-knop, gebruikt dezelfde prefetchLabel-pipeline als de
+  // automatische scan (fetch + crop + opslaan, niet enkel een vlag zetten).
   async function sendLabelAvailable(txId, sendBtn) {
     sendBtn.textContent = '⏳ Versturen…'; sendBtn.disabled = true;
     try {
-      const resp = await fetch(SYNC_PROXY_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: txId, transaction_id: txId, label_available: true }),
-      });
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({}));
-        throw new Error(err.error || `HTTP ${resp.status}`);
-      }
+      await prefetchLabel(txId);
+      await addAutoSent(txId);
       sendBtn.textContent = '✓ Verstuurd';
       sendBtn.style.background = '#dcfce7'; sendBtn.style.color = '#15803d';
     } catch (e) {

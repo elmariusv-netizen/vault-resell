@@ -350,16 +350,31 @@ export default function Labels({ vintedCookie }) {
 
   const labelHeaders = () => (vintedCookie ? { 'x-vinted-cookie': vintedCookie } : {})
 
+  // Haalt het label op als blob — geeft voorrang aan het al vooraf gecropte
+  // exemplaar in Supabase Storage (label_pdf_url, gezet door de extensie's
+  // automatische scan via api/label-prefetch) zodat er meestal geen
+  // fetch+crop meer nodig is op het moment van downloaden/printen. Valt
+  // terug op de oude on-demand /api/label-flow als dat er nog niet is (bv.
+  // labels die al beschikbaar waren vóór deze functionaliteit).
+  const fetchOrderLabelBlob = async (order) => {
+    if (order.label_pdf_url) {
+      const res = await fetch(order.label_pdf_url)
+      if (res.ok) return res.blob()
+      console.warn('[Vault] label_pdf_url ophalen mislukt, val terug op /api/label:', res.status)
+    }
+    const res = await fetch(`/api/label?${labelParams(order)}`, { headers: labelHeaders() })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.error || `HTTP ${res.status}`)
+    }
+    return res.blob()
+  }
+
   // ── Label downloaden ───────────────────────────────────────────────────────
   const downloadLabel = useCallback(async (order) => {
     setDownloading((prev) => new Set([...prev, order.id]))
     try {
-      const res = await fetch(`/api/label?${labelParams(order)}`, { headers: labelHeaders() })
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}))
-        throw new Error(err.error || `HTTP ${res.status}`)
-      }
-      const blob = await res.blob()
+      const blob = await fetchOrderLabelBlob(order)
       const url  = URL.createObjectURL(blob)
       const a    = document.createElement('a')
       a.href     = url
@@ -395,9 +410,8 @@ export default function Labels({ vintedCookie }) {
 
       for (const order of orders) {
         try {
-          const res = await fetch(`/api/label?${labelParams(order)}`, { headers: labelHeaders() })
-          if (!res.ok) continue
-          const bytes   = new Uint8Array(await res.arrayBuffer())
+          const blob    = await fetchOrderLabelBlob(order)
+          const bytes   = new Uint8Array(await blob.arrayBuffer())
           const srcPdf  = await PDFDocument.load(bytes, { ignoreEncryption: true })
           const [embedded] = await outPdf.embedPdf(srcPdf, [0])
           const page = outPdf.addPage([OUT_W, OUT_H])

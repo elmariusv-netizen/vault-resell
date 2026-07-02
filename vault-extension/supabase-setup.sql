@@ -27,6 +27,13 @@ ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS tracking_code TEXT;
 ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS buyer_name TEXT;
 ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS item_titles TEXT;
 ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS batch_id TEXT;
+ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS label_pdf_url TEXT;
+
+-- Storage bucket voor vooraf gecropte 4x6-labels (automatisch gevuld door
+-- api/label-prefetch.js zodra een label beschikbaar komt)
+INSERT INTO storage.buckets (id, name, public)
+  VALUES ('labels', 'labels', true)
+  ON CONFLICT DO NOTHING;
 
 -- RLS policies — vereist zodat de Chrome extensie kan schrijven
 -- Voer dit uit als de tabel leeg blijft na sync:
