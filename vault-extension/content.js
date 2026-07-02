@@ -438,42 +438,58 @@
     }
   }
 
-  // Enrich orders: foto + tegenpartij info ophalen via conversationId (max 20)
-  async function enrichOrders(orders) {
+  // Enrich orders: foto + tegenpartij info + currentUserSide ophalen via
+  // conversationId, voor ALLE orders die dit nog missen — in opeenvolgende
+  // batches van 20 (niet enkel de eerste 20, en dan stoppen). currentUserSide
+  // hoort expliciet bij de "mist nog info"-check: een order kan al een foto/
+  // buyer hebben (bv. uit een eerdere gedeeltelijke sync) maar toch nog geen
+  // currentUserSide — zonder die check zou zo'n order nooit meer verrijkt
+  // worden en permanent als "onbekend" (== als verkoop getoond) blijven staan.
+  // `onProgress(done, total)` laat de aanroeper een voortgangsindicator tonen.
+  async function enrichOrders(orders, onProgress) {
     const needsDetail = orders.filter(o =>
-      (!o.photo || !o.buyer) && (o.conversationId || o.convId)
-    ).slice(0, 20);
+      (!o.photo || !o.buyer || !o.currentUserSide) && (o.conversationId || o.convId)
+    );
     if (!needsDetail.length) return;
 
-    console.log(`[Vault] enrichOrders: detail ophalen voor ${needsDetail.length} orders`);
+    const BATCH_SIZE = 20;
+    console.log(`[Vault] enrichOrders: detail ophalen voor ${needsDetail.length} orders (batches van ${BATCH_SIZE})`);
     let changed = false;
-    await Promise.all(needsDetail.map(async o => {
-      const id = o.conversationId || o.convId;
-      const { photo, buyer, buyerName, country, currentUserSide, itemIds } = await fetchConvDetail(id);
-      console.log(`[Vault] conv detail txn ${o.transactionId}: opp="${buyer}" country="${country}" side="${currentUserSide}"`);
-      if (photo)           { o.photo           = photo;           changed = true; }
-      if (country)         { o.country         = country;         changed = true; }
-      if (currentUserSide) { o.currentUserSide = currentUserSide; changed = true; }
-      if (buyer)           { o.buyer           = buyer;           changed = true; }
-      if (buyerName)       { o.buyerName       = buyerName;       changed = true; }
+    let done = 0;
 
-      // Bundle-order (meerdere item_ids): probeer alle foto's/titels te
-      // verzamelen. Lukt dat niet (items al verwijderd na verkoop), val terug
-      // op de ene bestaande foto — de UI toont dan een "Bundel van N
-      // artikelen"-label op basis van de titel i.p.v. losse thumbnails.
-      if (itemIds.length > 1) {
-        const { photos, titles } = await fetchOrderItemPhotos(o.orderId);
-        if (photos.length > 1) {
-          o.photo_urls  = JSON.stringify(photos);
-          o.item_titles = titles.length ? JSON.stringify(titles) : null;
-          changed = true;
-          console.log(`[Vault] bundle txn ${o.transactionId}: ${photos.length} foto's verzameld`);
-        } else {
-          console.log(`[Vault] bundle txn ${o.transactionId}: geen losse foto's beschikbaar — fallback op 1 foto (${itemIds.length} items)`);
+    for (let start = 0; start < needsDetail.length; start += BATCH_SIZE) {
+      const batch = needsDetail.slice(start, start + BATCH_SIZE);
+      await Promise.all(batch.map(async o => {
+        const id = o.conversationId || o.convId;
+        const { photo, buyer, buyerName, country, currentUserSide, itemIds } = await fetchConvDetail(id);
+        console.log(`[Vault] conv detail txn ${o.transactionId}: opp="${buyer}" country="${country}" side="${currentUserSide}"`);
+        if (photo)           { o.photo           = photo;           changed = true; }
+        if (country)         { o.country         = country;         changed = true; }
+        if (currentUserSide) { o.currentUserSide = currentUserSide; changed = true; }
+        if (buyer)           { o.buyer           = buyer;           changed = true; }
+        if (buyerName)       { o.buyerName       = buyerName;       changed = true; }
+
+        // Bundle-order (meerdere item_ids): probeer alle foto's/titels te
+        // verzamelen. Lukt dat niet (items al verwijderd na verkoop), val terug
+        // op de ene bestaande foto — de UI toont dan een "Bundel van N
+        // artikelen"-label op basis van de titel i.p.v. losse thumbnails.
+        if (itemIds.length > 1) {
+          const { photos, titles } = await fetchOrderItemPhotos(o.orderId);
+          if (photos.length > 1) {
+            o.photo_urls  = JSON.stringify(photos);
+            o.item_titles = titles.length ? JSON.stringify(titles) : null;
+            changed = true;
+            console.log(`[Vault] bundle txn ${o.transactionId}: ${photos.length} foto's verzameld`);
+          } else {
+            console.log(`[Vault] bundle txn ${o.transactionId}: geen losse foto's beschikbaar — fallback op 1 foto (${itemIds.length} items)`);
+          }
         }
-      }
-    }));
-    if (changed) await cSet('v_sold_v2', orders);
+      }));
+      done += batch.length;
+      console.log(`[Vault] enrichOrders: batch klaar — ${done}/${needsDetail.length}`);
+      onProgress?.(done, needsDetail.length);
+      if (changed) await cSet('v_sold_v2', orders);
+    }
   }
 
   // ── Supabase sync ──────────────────────────────────────────────────────────
@@ -817,7 +833,10 @@
     drawVerkopen(content, orders);
     drawVerkopenFooter(footer, orders);
 
-    enrichOrders(orders).then(() => {
+    enrichOrders(orders, (done, total) => {
+      if (activeTab !== 'verkopen') return;
+      toast(`Details ophalen: ${done}/${total}…`);
+    }).then(() => {
       if (activeTab !== 'verkopen') return;
       const visibleOrders = orders.filter(o => {
         if (o.currentUserSide === 'buyer') {
