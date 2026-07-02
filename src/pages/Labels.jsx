@@ -266,7 +266,7 @@ function ManualLabelModal({ onClose, onAdd }) {
           <div style={{ marginTop: 16, padding: '40px 0', textAlign: 'center' }}>
             <div style={{ fontSize: 32, marginBottom: 10 }}>⏳</div>
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)' }}>
-              {batchProgress.done}/{batchProgress.total} verwerkt…
+              Bezig met verwerken: {batchProgress.done}/{batchProgress.total} labels…
             </div>
           </div>
         )}
