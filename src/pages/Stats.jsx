@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis,
   Tooltip, CartesianGrid, Cell,
@@ -7,6 +7,7 @@ import DateRangeFilter, { getDateBounds, filterByRange } from '../components/Dat
 import {
   formatCurrency, formatSkuRange, calcSaleProfit,
   getRemainingQty, getSupplierColor, normalizePlatform,
+  fetchBusinessCosts, sumCosts,
 } from '../utils/skuUtils'
 
 const ChartTooltip = ({ active, payload, label }) => {
@@ -34,25 +35,36 @@ export default function Stats({ data, theme }) {
   const [customFrom, setCustomFrom] = useState('')
   const [customTo, setCustomTo] = useState('')
   const [tab, setTab] = useState('overview')
+  const [businessCosts, setBusinessCosts] = useState([])
+
+  useEffect(() => { fetchBusinessCosts().then(setBusinessCosts) }, [])
 
   const bounds = useMemo(() => getDateBounds(range, customFrom, customTo), [range, customFrom, customTo])
   const filteredSales = useMemo(() => filterByRange(sales, range, bounds), [sales, range, bounds])
+  // business_costs gebruikt cost_date i.p.v. sales' date — filterByRange
+  // verwacht een .date-veld, dus even mappen vóór het filteren.
+  const filteredCosts = useMemo(
+    () => filterByRange(businessCosts.map((c) => ({ ...c, date: c.cost_date })), range, bounds),
+    [businessCosts, range, bounds]
+  )
 
   const overview = useMemo(() => {
     const paid = filteredSales.filter((s) => !s.isFree)
     const totalRevenue = paid.reduce((s, x) => s + (x.salePrice || 0) * (x.quantity || 1), 0)
     const totalSold = filteredSales.reduce((s, x) => s + (x.quantity || 1), 0)
-    const totalProfit = filteredSales.reduce((s, sale) => {
+    const salesProfit = filteredSales.reduce((s, sale) => {
       const b = batches.find((x) => x.id === sale.batchId)
       return b ? s + calcSaleProfit(sale, b).profit : s
     }, 0)
+    const totalCosts = sumCosts(filteredCosts)
+    const totalProfit = salesProfit - totalCosts
     const totalInvested = batches.reduce((s, b) => s + ((b.costPrice || 0) + (b.importTax || 0)) * b.quantity, 0)
     const totalStock = batches.reduce((s, b) => s + getRemainingQty(b, sales), 0)
     const margin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0
     const avgProfit = totalSold > 0 ? totalProfit / totalSold : 0
     const avgSale = paid.length > 0 ? totalRevenue / paid.length : 0
-    return { totalRevenue, totalSold, totalProfit, totalInvested, totalStock, margin, avgProfit, avgSale, orders: paid.length }
-  }, [filteredSales, batches, sales])
+    return { totalRevenue, totalSold, totalProfit, totalCosts, totalInvested, totalStock, margin, avgProfit, avgSale, orders: paid.length }
+  }, [filteredSales, filteredCosts, batches, sales])
 
   const perSupplier = useMemo(() => {
     return suppliers
@@ -136,7 +148,7 @@ export default function Stats({ data, theme }) {
       <div className="stats-grid" style={{ marginBottom: 20 }}>
         {[
           { label: 'Totale omzet', value: formatCurrency(overview.totalRevenue), sub: `${overview.orders} bestellingen`, accent: '#ffd60a' },
-          { label: 'Netto winst', value: formatCurrency(overview.totalProfit), sub: `Marge ${overview.margin.toFixed(1)}%`, accent: '#22c55e', green: overview.totalProfit >= 0 },
+          { label: 'Netto winst', value: formatCurrency(overview.totalProfit), sub: overview.totalCosts > 0 ? `Marge ${overview.margin.toFixed(1)}% · -${formatCurrency(overview.totalCosts)} kosten` : `Marge ${overview.margin.toFixed(1)}%`, accent: '#22c55e', green: overview.totalProfit >= 0 },
           { label: 'Geïnvesteerd', value: formatCurrency(overview.totalInvested), sub: `${overview.totalStock} in voorraad`, accent: '#888' },
           { label: 'Gem. winst/stuk', value: formatCurrency(overview.avgProfit), sub: `${overview.totalSold} stuks verkocht`, accent: '#3ecfff', green: overview.avgProfit >= 0 },
         ].map((c) => (

@@ -1,3 +1,5 @@
+import { supabase } from './supabase'
+
 export const genId = () =>
   `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
 
@@ -144,4 +146,22 @@ export function getFreeSkusForBatch(batch, usedSkus) {
   const all = []
   for (let n = batch.startNum; n <= batch.endNum; n++) all.push(formatSku(batch.supplierPrefix, n))
   return all.filter(s => !usedSkus.has(s))
+}
+
+// ── Bedrijfskosten — gedeeld tussen Kosten.jsx (totaal bovenaan) en
+// Stats.jsx (aftrek van de netto winst), zodat ze nooit uit elkaar kunnen
+// lopen. business_costs is een losse, RLS-beveiligde tabel (owner_id =
+// auth.uid()), dus dit gaat via een directe Supabase-query, niet via de
+// user_data/payload-blob die batches/sales/suppliers bevat.
+export async function fetchBusinessCosts() {
+  const { data, error } = await supabase
+    .from('business_costs')
+    .select('*')
+    .order('cost_date', { ascending: false })
+  if (error) { console.warn('[Vault] business_costs fetch error:', error); return [] }
+  return data || []
+}
+
+export function sumCosts(costs) {
+  return (costs || []).reduce((s, c) => s + (parseFloat(c.amount) || 0), 0)
 }

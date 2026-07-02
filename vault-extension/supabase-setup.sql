@@ -177,3 +177,33 @@ CREATE POLICY "anon kan updaten voor koppeling"
 
 CREATE POLICY "anon kan lezen voor koppeling"
   ON pending_links FOR SELECT TO anon USING (true);
+
+-- ══════════════════════════════════════════════════════════════════
+-- BEDRIJFSKOSTEN + FACTUREN-ARCHIEF (Kosten.jsx)
+-- ══════════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS business_costs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  description TEXT NOT NULL,
+  amount NUMERIC NOT NULL,
+  category TEXT,
+  cost_date DATE NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE business_costs ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "user beheert eigen kosten" ON business_costs FOR ALL TO authenticated
+  USING (auth.uid() = owner_id) WITH CHECK (auth.uid() = owner_id);
+
+-- Optionele koppeling met een geüploade factuur (storage-pad in de
+-- 'invoices'-bucket hieronder) — laat 1 kost verwijzen naar 1 factuurbestand.
+ALTER TABLE business_costs ADD COLUMN IF NOT EXISTS invoice_path TEXT;
+
+-- Storage bucket voor geüploade facturen/bonnen (PDF/afbeeldingen),
+-- zelfde opzet als de bestaande 'labels'/'order-photos'-buckets (public,
+-- geen aparte object-RLS — het pad zelf is al niet te raden).
+INSERT INTO storage.buckets (id, name, public)
+  VALUES ('invoices', 'invoices', true)
+  ON CONFLICT DO NOTHING;

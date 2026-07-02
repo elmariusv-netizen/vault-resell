@@ -38,7 +38,7 @@ async function fetchAllAankopen() {
   })
 }
 
-function AankoopRow({ order, onLinkSku }) {
+function AankoopRow({ order, onLinkSku, onDelete }) {
   const suggested = !order.sku_ref ? suggestSku(order.title) : ''
   const photoUrls = (() => { try { return JSON.parse(order.photo_urls || '[]') } catch { return [] } })()
   const mainPhoto = photoUrls[0] || order.photo_url || null
@@ -63,7 +63,16 @@ function AankoopRow({ order, onLinkSku }) {
 
       {/* Info */}
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{order.title}</div>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
+          <span style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>{order.title}</span>
+          <button
+            onClick={() => onDelete(order)}
+            title="Verwijder"
+            style={{ flexShrink: 0, fontSize: 17, lineHeight: 1, background: 'none', border: 'none', color: 'var(--text-3)', cursor: 'pointer', padding: '0 2px', fontWeight: 700, fontFamily: 'inherit' }}
+            onMouseEnter={e => e.currentTarget.style.color = 'var(--red)'}
+            onMouseLeave={e => e.currentTarget.style.color = 'var(--text-3)'}
+          >×</button>
+        </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
           {order.seller_name && (
@@ -138,6 +147,15 @@ export default function Aankopen({ data, updateData }) {
     setOrders(prev => prev.map(o => o.id === linkingOrder.id ? { ...o, ...patch } : o))
   }
 
+  // Definitieve verwijdering uit vinted_orders — zelfde directe delete als
+  // Verkopen.jsx's bulk "🗑 Verwijder geselecteerde" (niet de losse ✕ daar,
+  // die enkel registered_in_vault zet en de order lokaal verbergt).
+  const handleDelete = async (order) => {
+    if (!window.confirm(`"${order.title}" definitief verwijderen?`)) return
+    await supabase.from('vinted_orders').delete().eq('id', order.id)
+    setOrders(prev => prev.filter(o => o.id !== order.id))
+  }
+
   return (
     <div className="page">
       <div className="page-header">
@@ -172,6 +190,7 @@ export default function Aankopen({ data, updateData }) {
               key={order.id}
               order={order}
               onLinkSku={setLinkingOrder}
+              onDelete={handleDelete}
             />
           ))}
         </div>
