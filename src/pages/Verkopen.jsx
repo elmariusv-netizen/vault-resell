@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect } from 'react'
 import {
   formatCurrency, formatDateLong, formatSkuRange, calcSaleProfit, normalizePlatform,
-  genId, getNextSkuNum, formatSku, getRemainingQty,
+  genId, formatSku,
 } from '../utils/skuUtils'
 import SaleModal from '../components/SaleModal'
 import EditSaleModal from '../components/EditSaleModal'
@@ -613,31 +613,45 @@ function getBundleItemCount(order) {
 // uit dezelfde leverancier-batch (bv. RIA047, RIA048, RIA049). Bundel-orders
 // (meerdere artikelen in 1 verkoop) krijgen per artikel een eigen SKU-veld
 // i.p.v. te worden behandeld als 1 los item met de volledige bundelprijs.
-function BulkSkuModal({ suppliers, batches, sales, orders, onClose, onConfirm }) {
+function BulkSkuModal({ suppliers, batches, allOrders, orders, onClose, onConfirm }) {
   const [supplierId, setSupplierId] = useState(suppliers[0]?.id || '')
-  const [overrides, setOverrides]   = useState({}) // slotKey -> handmatig ingetypte SKU
+  const [overrides, setOverrides]   = useState({}) // slotKey -> handmatig gekozen SKU (uit de dropdown)
   const [manualCounts, setManualCounts] = useState({}) // orderId -> handmatig aantal artikelen (niet-bundle orders)
   const [saving, setSaving]         = useState(false)
 
   const supplier = suppliers.find(s => s.id === supplierId)
 
-  // De batch waar de suggesties vandaan komen: de OUDSTE batch van deze
-  // leverancier die nog vrije SKU's heeft (FIFO — eerst bestaande voorraad
-  // opgebruiken). SKU-suggesties beginnen dus bij het eerste ONGEBRUIKTE
-  // nummer in die batch (startNum + al-verkocht-aantal), niet zomaar bij
-  // "batch.endNum + 1" van de hele leverancier — dat zou voorbij het eind van
-  // een nog niet volledig gebruikte batch heen kunnen schieten.
+  // Welke SKU's binnen deze leverancier zijn al gekoppeld aan een ANDERE
+  // order (niet de orders die nu in deze bulk-actie zitten — die mogen hun
+  // eigen, eventueel al bestaande koppeling gewoon herzien). sku_ref kan
+  // een kommagescheiden lijst zijn (bundel-orders), dus elk deel apart.
+  const usedSkus = (() => {
+    const excludeIds = new Set(orders.map(o => o.id))
+    const used = new Set()
+    for (const o of allOrders) {
+      if (excludeIds.has(o.id) || !o.sku_ref) continue
+      o.sku_ref.split(',').forEach(s => { const t = s.trim().toUpperCase(); if (t) used.add(t) })
+    }
+    return used
+  })()
+
+  const freeSkusForBatch = (batch) => {
+    const all = []
+    for (let n = batch.startNum; n <= batch.endNum; n++) all.push(formatSku(batch.supplierPrefix, n))
+    return all.filter(s => !usedSkus.has(s))
+  }
+
+  // De batch waar de dropdown-opties vandaan komen: de OUDSTE batch van deze
+  // leverancier die nog minstens 1 vrije SKU heeft (FIFO — eerst bestaande
+  // voorraad opgebruiken).
   const currentBatch = (() => {
     if (!supplier) return null
-    const withStock = batches
-      .filter(b => b.supplierPrefix === supplier.prefix && getRemainingQty(b, sales) > 0)
+    const supBatches = batches
+      .filter(b => b.supplierPrefix === supplier.prefix)
       .sort((a, b) => (a.startNum || 0) - (b.startNum || 0))
-    return withStock[0] || null
+    return supBatches.find(b => freeSkusForBatch(b).length > 0) || null
   })()
-  const availableCount = currentBatch ? getRemainingQty(currentBatch, sales) : Infinity
-  const startNum = currentBatch
-    ? currentBatch.startNum + (currentBatch.quantity - getRemainingQty(currentBatch, sales))
-    : (supplier ? getNextSkuNum(batches, supplier.prefix) : 1)
+  const freeSkus = currentBatch ? freeSkusForBatch(currentBatch) : []
 
   useEffect(() => { setOverrides({}) }, [supplierId])
 
@@ -664,10 +678,8 @@ function BulkSkuModal({ suppliers, batches, sales, orders, onClose, onConfirm })
     return Number.isFinite(n) && n >= 1 ? n : 1
   }
 
-  // Eén "slot" per SKU-invoerveld — normale orders krijgen 1 slot, bundel-
-  // orders (echt of handmatig aangeduid) krijgen er N (1 per artikel). De
-  // SKU-reeks loopt oplopend door over ALLE slots heen, ongeacht order-
-  // grenzen.
+  // Eén "slot" per SKU-veld — normale orders krijgen 1 slot, bundel-orders
+  // (echt of handmatig aangeduid) krijgen er N (1 per artikel).
   const slots = []
   {
     let seq = 0
@@ -687,23 +699,32 @@ function BulkSkuModal({ suppliers, batches, sales, orders, onClose, onConfirm })
     }
   }
 
-  const suggestedFor = (slot) => supplier ? formatSku(supplier.prefix, startNum + slot.seq) : ''
-  const skuFor = (slot) => overrides[slot.slotKey] ?? suggestedFor(slot)
+  // Elk slot krijgt een concrete SKU toegewezen uit freeSkus: de handmatige
+  // keuze (overrides) als die zelf nog vrij is en niet al door een EERDER
+  // slot geclaimd werd binnen deze zelfde koppel-actie, anders de eerste nog
+  // niet-geclaimde vrije SKU (= huidig standaardgedrag). Dit voorkomt dat
+  // dezelfde SKU tweemaal in deze actie terechtkomt.
+  const slotSkus = {}
+  {
+    const claimed = new Set()
+    for (const slot of slots) {
+      let sku = overrides[slot.slotKey]
+      if (!sku || !freeSkus.includes(sku) || claimed.has(sku)) {
+        sku = freeSkus.find(s => !claimed.has(s)) || ''
+      }
+      slotSkus[slot.slotKey] = sku
+      if (sku) claimed.add(sku)
+    }
+  }
 
-  // Zoek de batch die bij een getypte SKU hoort (prefix + nummer binnen het
-  // start/eind-bereik). Valt terug op de meest recente batch van diezelfde
-  // leverancier als het nummer buiten elk bestaand bereik valt (bv. een
-  // volledig nieuwe SKU) — zodat COGS toch een redelijke waarde krijgt i.p.v.
-  // helemaal niets.
-  const resolveBatch = (sku) => {
-    const m = /^([A-Za-z]+)(\d+)$/.exec(sku.trim())
-    if (!m) return null
-    const prefix = m[1].toUpperCase()
-    const num = parseInt(m[2], 10)
-    const supBatches = batches.filter(b => b.supplierPrefix === prefix)
-    if (!supBatches.length) return null
-    return supBatches.find(b => num >= b.startNum && num <= b.endNum)
-      || [...supBatches].sort((a, b) => (b.endNum || 0) - (a.endNum || 0))[0]
+  // Dropdown-opties voor een slot: alle vrije SKU's, min de SKU's die door
+  // ANDERE slots in deze actie al gekozen zijn (de eigen huidige keuze blijft
+  // wel altijd zichtbaar in zijn eigen dropdown).
+  const optionsFor = (slot) => {
+    const claimedByOthers = new Set(
+      Object.entries(slotSkus).filter(([k]) => k !== slot.slotKey).map(([, v]) => v)
+    )
+    return freeSkus.filter(s => s === slotSkus[slot.slotKey] || !claimedByOthers.has(s))
   }
 
   const handleConfirm = async () => {
@@ -712,8 +733,8 @@ function BulkSkuModal({ suppliers, batches, sales, orders, onClose, onConfirm })
     const assignments = orders.map(order => {
       const orderSlots = slots.filter(s => s.order.id === order.id)
       const items = orderSlots.map(slot => {
-        const sku = skuFor(slot).trim().toUpperCase()
-        return { sku, batch: sku ? resolveBatch(sku) : null }
+        const sku = slotSkus[slot.slotKey]
+        return { sku, batch: sku ? currentBatch : null }
       })
       return { orderId: order.id, items }
     })
@@ -721,6 +742,20 @@ function BulkSkuModal({ suppliers, batches, sales, orders, onClose, onConfirm })
     setSaving(false)
     onClose()
   }
+
+  const selectStyle = { width: 96, flexShrink: 0, fontFamily: 'monospace', fontSize: 12, fontWeight: 700, padding: '5px 4px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', textAlign: 'center', outline: 'none' }
+
+  const skuSelect = (slot) => (
+    <select
+      value={slotSkus[slot.slotKey] || ''}
+      onChange={e => setOverrides(prev => ({ ...prev, [slot.slotKey]: e.target.value }))}
+      disabled={!freeSkus.length}
+      style={selectStyle}
+    >
+      {!slotSkus[slot.slotKey] && <option value="">Geen vrije SKU</option>}
+      {optionsFor(slot).map(sku => <option key={sku} value={sku}>{sku}</option>)}
+    </select>
+  )
 
   return (
     <div className="modal-overlay" onMouseDown={e => e.target === e.currentTarget && onClose()}>
@@ -744,15 +779,15 @@ function BulkSkuModal({ suppliers, batches, sales, orders, onClose, onConfirm })
               <div style={{ fontSize: 13, color: 'var(--text-3)', fontStyle: 'italic' }}>Geen leveranciers gevonden — maak er eerst een aan.</div>
             )}
             {supplier && currentBatch && (
-              <div style={{ fontSize: 11, color: slots.length > availableCount ? '#f87171' : 'var(--text-3)', fontWeight: slots.length > availableCount ? 700 : 400, marginTop: 5 }}>
-                {slots.length > availableCount ? '⚠ ' : ''}
-                {availableCount} SKU{availableCount === 1 ? '' : "'s"} beschikbaar in {formatSkuRange(currentBatch.supplierPrefix, currentBatch.startNum, currentBatch.endNum)}
-                {slots.length > availableCount && ` — je vraagt er ${slots.length}, kies eventueel een andere leverancier voor de rest`}
+              <div style={{ fontSize: 11, color: slots.length > freeSkus.length ? '#f87171' : 'var(--text-3)', fontWeight: slots.length > freeSkus.length ? 700 : 400, marginTop: 5 }}>
+                {slots.length > freeSkus.length ? '⚠ ' : ''}
+                {freeSkus.length} vrije SKU{freeSkus.length === 1 ? '' : "'s"} in {formatSkuRange(currentBatch.supplierPrefix, currentBatch.startNum, currentBatch.endNum)}
+                {slots.length > freeSkus.length && ` — je vraagt er ${slots.length}, kies eventueel een andere leverancier voor de rest`}
               </div>
             )}
             {supplier && !currentBatch && (
-              <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 5 }}>
-                Geen batch met resterende voorraad voor {supplier.prefix} — voorgestelde SKU's starten een nieuw bereik.
+              <div style={{ fontSize: 11, color: '#f87171', marginTop: 5 }}>
+                Geen vrije SKU's meer bij {supplier.prefix} — voeg eerst een nieuwe batch toe.
               </div>
             )}
           </div>
@@ -772,13 +807,7 @@ function BulkSkuModal({ suppliers, batches, sales, orders, onClose, onConfirm })
                       €{parseFloat(order.price || 0).toFixed(2).replace('.', ',')}
                       {isBundle && <span style={{ fontWeight: 400, color: 'var(--text-3)' }}> ({orderSlots.length}×)</span>}
                     </span>
-                    {!isBundle && (
-                      <input
-                        value={skuFor(orderSlots[0])}
-                        onChange={e => setOverrides(prev => ({ ...prev, [orderSlots[0].slotKey]: e.target.value.toUpperCase() }))}
-                        style={{ width: 92, flexShrink: 0, fontFamily: 'monospace', fontSize: 12, fontWeight: 700, padding: '5px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', textAlign: 'center', textTransform: 'uppercase', outline: 'none' }}
-                      />
-                    )}
+                    {!isBundle && skuSelect(orderSlots[0])}
                   </div>
                   {isBundle && orderSlots.map(slot => (
                     <div key={slot.slotKey} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px 6px 26px' }}>
@@ -788,11 +817,7 @@ function BulkSkuModal({ suppliers, batches, sales, orders, onClose, onConfirm })
                       <span style={{ fontSize: 11, color: 'var(--text-3)', flexShrink: 0 }}>
                         €{perItemPrice.toFixed(2).replace('.', ',')}
                       </span>
-                      <input
-                        value={skuFor(slot)}
-                        onChange={e => setOverrides(prev => ({ ...prev, [slot.slotKey]: e.target.value.toUpperCase() }))}
-                        style={{ width: 92, flexShrink: 0, fontFamily: 'monospace', fontSize: 12, fontWeight: 700, padding: '5px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', textAlign: 'center', textTransform: 'uppercase', outline: 'none' }}
-                      />
+                      {skuSelect(slot)}
                     </div>
                   ))}
                   {/* Handmatige "meerdere artikelen"-optie — enkel voor orders die geen
@@ -814,7 +839,7 @@ function BulkSkuModal({ suppliers, batches, sales, orders, onClose, onConfirm })
                             <input
                               type="number"
                               min={2}
-                              max={availableCount === Infinity ? undefined : availableCount}
+                              max={freeSkus.length || undefined}
                               value={manualCounts[order.id]}
                               // Tijdens het typen NIET meteen terugklemmen naar het minimum/
                               // maximum (dat maakte het veld eerder feitelijk onbewerkbaar,
@@ -824,7 +849,7 @@ function BulkSkuModal({ suppliers, batches, sales, orders, onClose, onConfirm })
                               onBlur={() => setManualCounts(prev => {
                                 let n = parseInt(prev[order.id], 10)
                                 if (!Number.isFinite(n) || n < 2) n = 2
-                                if (availableCount !== Infinity && n > availableCount) n = availableCount
+                                if (freeSkus.length && n > freeSkus.length) n = freeSkus.length
                                 return { ...prev, [order.id]: n }
                               })}
                               style={{ width: 48, fontSize: 12, fontWeight: 700, padding: '3px 6px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', textAlign: 'center', outline: 'none' }}
@@ -834,9 +859,9 @@ function BulkSkuModal({ suppliers, batches, sales, orders, onClose, onConfirm })
                               style={{ fontSize: 11, color: '#f87171', cursor: 'pointer', userSelect: 'none' }}
                             >✕ annuleer</span>
                           </div>
-                          {availableCount !== Infinity && effectiveCount(order) > availableCount && (
+                          {freeSkus.length > 0 && effectiveCount(order) > freeSkus.length && (
                             <div style={{ fontSize: 10, color: '#f87171', fontWeight: 600, marginTop: 3 }}>
-                              ⚠ Nog maar {availableCount} SKU{availableCount === 1 ? '' : "'s"} beschikbaar in deze batch
+                              ⚠ Nog maar {freeSkus.length} SKU{freeSkus.length === 1 ? '' : "'s"} beschikbaar in deze batch
                             </div>
                           )}
                         </div>
@@ -850,7 +875,7 @@ function BulkSkuModal({ suppliers, batches, sales, orders, onClose, onConfirm })
 
           <button
             className="btn btn-primary"
-            disabled={!supplier || saving}
+            disabled={!supplier || !currentBatch || saving}
             onClick={handleConfirm}
             style={{ width: '100%', marginTop: 16 }}
           >
@@ -1985,7 +2010,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
         <BulkSkuModal
           suppliers={suppliers}
           batches={batches}
-          sales={sales}
+          allOrders={vtOrders}
           orders={vtOrders.filter(o => selectedIds.has(o.id))}
           onClose={() => setBulkSkuOpen(false)}
           onConfirm={handleBulkSkuConfirm}
