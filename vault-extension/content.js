@@ -1129,37 +1129,72 @@
     await loadDlIds();
     const orders = await getSold();
 
-    // needs_action = API signal (Vintedge approach), verzendlabel = Dutch status string fallback
-    const labelOrders = orders.filter(o =>
-      o.transactionId && (
-        o.transactionUserStatus === 'needs_action' ||
-        /verzendlabel/i.test(o.status || '')
-      )
-    );
-    console.log('[Vault] label orders:', labelOrders.length, 'of', orders.length,
+    // needs_action = API signal (Vintedge approach), verzendlabel = Dutch status
+    // string fallback. Dit is enkel een KANDIDATENLIJST — transactionUserStatus
+    // bleek onbetrouwbaar (valse positieven: orders zonder écht ophaalbaar
+    // label kregen dit status toch). Elke kandidaat moet daarom eerst een
+    // geslaagde test-fetch van het echte label doorstaan vóór hij in de lijst
+    // verschijnt of als "beschikbaar" gemarkeerd wordt.
+    const candidateOrders = orders.filter(o => o.transactionId && orderNeedsLabelAction(o));
+    console.log('[Vault] label kandidaten:', candidateOrders.length, 'of', orders.length,
       '— statussen:', [...new Set(orders.map(o => `${o.status}|${o.transactionUserStatus}`))].join(' · '));
 
     content.innerHTML = '';
     footer.innerHTML  = '';
 
-    if (!labelOrders.length) {
+    if (!candidateOrders.length) {
       content.appendChild(emptyState('📭', 'Geen labels beschikbaar',
         'Geen orders met "Verzendlabel is naar de verkoper gestuurd." gevonden.'));
       return;
     }
 
-    content.appendChild(sectionHead('Labels', `${labelOrders.length} beschikbaar`));
-
-    // Debug: log het transactionUserStatus-veld per order zodat we kunnen zien
-    // of Vinted dat veld daadwerkelijk teruggeeft voor deze orders
-    labelOrders.forEach(o => {
-      console.log(`[Vault] label order txn ${o.transactionId}: status="${o.status}" transactionUserStatus="${o.transactionUserStatus}"`);
-    });
+    content.appendChild(emptyState('⏳', 'Labels verifiëren…',
+      'Even geduld — we controleren welke labels écht ophaalbaar zijn.'));
 
     const alreadySent = await getAutoSentSet();
+    // Kandidaten die al eerder succesvol geverifieerd + verstuurd zijn hoeven
+    // niet opnieuw getest te worden (het label bestaat dan al aantoonbaar en
+    // staat al gecropt klaar) — enkel de rest moet de test-fetch doorstaan.
+    const known      = candidateOrders.filter(o => alreadySent.has(o.transactionId));
+    const unverified = candidateOrders.filter(o => !alreadySent.has(o.transactionId));
 
-    const dlBtns   = new Map();
-    const sendBtns = new Map();
+    const verified = [...known];
+    let skipped = 0;
+    for (const o of unverified) {
+      try {
+        // prefetchLabel() ÍS de test-fetch: haalt het echte label op (via de
+        // presigned shipment-URL), de server controleert status + content-type
+        // en cropt/slaat pas op als het daadwerkelijk een PDF is. Slaagt dit,
+        // dan is het label bewezen beschikbaar; anders bestaat het simpelweg
+        // (nog) niet, ondanks transactionUserStatus === 'needs_action'.
+        await prefetchLabel(o.transactionId);
+        await addAutoSent(o.transactionId);
+        verified.push(o);
+        console.log(`[Vault] label geverifieerd + verstuurd — txn ${o.transactionId} "${o.title}"`);
+      } catch (e) {
+        skipped++;
+        console.log(`[Vault] label NIET beschikbaar (overgeslagen) — txn ${o.transactionId} "${o.title}": ${e.message}`);
+      }
+    }
+
+    renderLabelsList(content, footer, verified, skipped);
+  }
+
+  function renderLabelsList(content, footer, labelOrders, skippedCount) {
+    content.innerHTML = '';
+    footer.innerHTML  = '';
+
+    if (!labelOrders.length) {
+      content.appendChild(emptyState('📭', 'Geen labels beschikbaar',
+        skippedCount > 0
+          ? `${skippedCount} order(s) leken een label te hebben, maar bleken bij verificatie niet ophaalbaar.`
+          : 'Geen orders met "Verzendlabel is naar de verkoper gestuurd." gevonden.'));
+      return;
+    }
+
+    content.appendChild(sectionHead('Labels', `${labelOrders.length} beschikbaar`));
+
+    const dlBtns = new Map();
     const rows = labelOrders.map((o, i) => {
       const printed = dlIds.has(o.transactionId);
       const dlBtn = btn(
@@ -1174,22 +1209,12 @@
       const actions = el('div', 'display:flex;gap:6px;flex-shrink:0');
       actions.appendChild(dlBtn);
 
-      // De "📤 Stuur naar app"-knop blijft bestaan als handmatige fallback
-      // (voor het geval de automatische scan hieronder iets mist), maar toont
-      // meteen de "verstuurd"-staat als dit label al eerder automatisch
-      // verwerkt is.
-      if (orderNeedsLabelAction(o)) {
-        const sent = alreadySent.has(o.transactionId);
-        const sendBtn = btn(
-          sent ? '✓ Verstuurd' : '📤 Stuur naar app',
-          sent
-            ? `background:#dcfce7;color:#15803d;flex-shrink:0`
-            : `background:${D.badge};color:#374151;flex-shrink:0`,
-        );
-        sendBtn.addEventListener('click', () => sendLabelAvailable(o.transactionId, sendBtn));
-        actions.appendChild(sendBtn);
-        sendBtns.set(o.transactionId, sendBtn);
-      }
+      // Elke order die hier terechtkomt is al geverifieerd (zie tabLabels) —
+      // de "📤 Stuur naar app"-knop is dus enkel nog een handmatige manier om
+      // een label opnieuw te (her)versturen, bv. na een tijdelijke netwerkfout.
+      const sendBtn = btn('✓ Verstuurd', `background:#dcfce7;color:#15803d;flex-shrink:0`);
+      sendBtn.addEventListener('click', () => sendLabelAvailable(o.transactionId, sendBtn));
+      actions.appendChild(sendBtn);
 
       const sub = [o.buyer ? `@${o.buyer}` : '', fmtD(o.date)].filter(Boolean).join(' · ');
       return rowDiv(
@@ -1202,43 +1227,6 @@
     const printAll = btn(`🖨 Print alle ${labelOrders.length} labels`, `background:${D.accent};color:#fff;flex:1`);
     printAll.addEventListener('click', () => batchPrint(labelOrders, printAll, dlBtns));
     footer.appendChild(printAll);
-
-    // ── Automatische scan: labels die nog nooit automatisch verstuurd zijn ──
-    // Draait op de achtergrond bij elke keer dat dit tabblad geopend wordt,
-    // zodat de gebruiker nooit handmatig per order op "Stuur naar app" moet
-    // klikken. Elk label wordt meteen gefetcht + gecropt + opgeslagen (zie
-    // prefetchLabel), niet enkel gemarkeerd als beschikbaar.
-    autoSendAvailableLabels(labelOrders, alreadySent, sendBtns);
-  }
-
-  async function autoSendAvailableLabels(labelOrders, alreadySent, sendBtns) {
-    const targets = labelOrders.filter(o => orderNeedsLabelAction(o) && !alreadySent.has(o.transactionId));
-    if (!targets.length) return;
-
-    console.log(`[Vault] auto-send: ${targets.length} nieuwe labels te verwerken`);
-    let sent = 0;
-    for (const o of targets) {
-      const sendBtn = sendBtns.get(o.transactionId);
-      if (sendBtn) { sendBtn.textContent = '⏳ Automatisch…'; sendBtn.disabled = true; }
-      try {
-        await prefetchLabel(o.transactionId);
-        await addAutoSent(o.transactionId);
-        sent++;
-        if (sendBtn) {
-          sendBtn.textContent = '✓ Verstuurd';
-          sendBtn.style.background = '#dcfce7'; sendBtn.style.color = '#15803d';
-        }
-      } catch (e) {
-        console.warn('[Vault] auto-send label mislukt txn', o.transactionId, ':', e.message);
-        if (sendBtn) {
-          sendBtn.textContent = '📤 Stuur naar app'; sendBtn.disabled = false;
-        }
-      }
-    }
-    if (sent > 0) {
-      toast(`✓ ${sent} nieuwe label${sent === 1 ? '' : 's'} automatisch verstuurd`);
-    }
-    console.log(`[Vault] auto-send klaar: ${sent}/${targets.length} gelukt`);
   }
 
   const PROXY_URL          = 'https://vault-resell.vercel.app/api/label';

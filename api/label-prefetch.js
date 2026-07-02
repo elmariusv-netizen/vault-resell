@@ -28,7 +28,20 @@ export default async function handler(req, res) {
       return res.status(labelResp.status).json({ error: `Label fetch mislukt: ${labelResp.status}` });
     }
     const rawBytes = Buffer.from(await labelResp.arrayBuffer());
-    const cropped  = await cropToLabel(rawBytes);
+
+    // Content-type-header alleen is niet betrouwbaar genoeg — sommige
+    // presigned URLs geven bv. gewoon application/octet-stream terug, ook
+    // voor een geldige PDF. Controleer daarom ook de magic bytes: dit vangt
+    // zowel foute content-types als een 200-OK met een HTML-foutpagina i.p.v.
+    // een echt label (bv. een niet-bestaand/nog-niet-klaar label).
+    const contentType = labelResp.headers.get('content-type') || '';
+    const looksLikePdf = rawBytes.slice(0, 5).toString('latin1') === '%PDF-';
+    if (!looksLikePdf) {
+      console.warn(`[label-prefetch] geen geldige PDF voor txn ${transaction_id} — content-type: "${contentType}", eerste bytes: ${rawBytes.slice(0, 20).toString('latin1')}`);
+      return res.status(422).json({ error: `Response is geen geldige PDF (content-type: ${contentType || 'onbekend'})` });
+    }
+
+    const cropped = await cropToLabel(rawBytes);
 
     const path = `${transaction_id}-4x6.pdf`;
     const uploadRes = await fetch(`${SUPABASE_URL}/storage/v1/object/labels/${path}`, {
