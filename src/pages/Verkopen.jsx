@@ -598,6 +598,15 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
   const photoUrls = (() => { try { return JSON.parse(order.photo_urls || '[]') } catch { return [] } })()
   const allPhotos = photoUrls.length ? photoUrls : (order.photo_url ? [order.photo_url] : [])
 
+  // Bundel-fallback: als losse item-foto's niet opgehaald konden worden (item al
+  // verwijderd na verkoop), is er maar 1 foto — toon dan een tekst-label zodat
+  // duidelijk blijft dat het om een bundel gaat. Zodra photo_urls wél meerdere
+  // URLs bevat, is de "+N"-badge op de foto zelf al voldoende (geen dubbel label).
+  const itemTitles  = (() => { try { return JSON.parse(order.item_titles || '[]') } catch { return [] } })()
+  const bundleMatch = /bundel[:\s]*?(\d+)/i.exec(order.title || '')
+  const bundleCount = itemTitles.length || (bundleMatch ? parseInt(bundleMatch[1], 10) : 0)
+  const isBundleFallback = allPhotos.length <= 1 && (itemTitles.length > 0 || /bundel/i.test(order.title || ''))
+
   const meta = (() => {
     const t = (order.title || '').toLowerCase()
     let brand = '', color = '', size = ''
@@ -716,6 +725,15 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
                 onMouseLeave={e => e.currentTarget.style.color = '#334155'}
               >×</button>
             </div>
+
+            {/* Bundel-fallback label — enkel als losse foto's niet beschikbaar zijn */}
+            {isBundleFallback && (
+              <div style={{ marginBottom: 5 }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: '#c084fc', background: 'rgba(192,132,252,0.12)', border: '1px solid rgba(192,132,252,0.25)', padding: '2px 8px', borderRadius: 20 }}>
+                  📦 Bundel van {bundleCount || '2+'} artikelen
+                </span>
+              </div>
+            )}
 
             {/* Rij 2: Merk · Maat · Kleur */}
             {meta && (

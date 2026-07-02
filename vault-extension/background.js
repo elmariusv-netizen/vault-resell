@@ -146,6 +146,7 @@ async function syncToSupabase(order) {
     label_url:       order.labelUrl || '',
     photo_url:       order.photo || order.photo_url || order.photo_uri || null,
     photo_urls:      order.photo_urls || (order.photo ? JSON.stringify([order.photo]) : (order.photo_url ? JSON.stringify([order.photo_url]) : null)),
+    item_titles:     order.item_titles || null,
     description:     order.description  || null,
     shipping_method: order.shipping_method || null,
     tracking_code:   order.tracking_code   || null,

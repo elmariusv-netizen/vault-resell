@@ -266,16 +266,6 @@
       if (o === sold[0]) console.log(`[Vault] photo txn ${o.transaction_id || o.id}: resolved →`, photo || '(leeg)');
       const _title = o.item?.title || o.title || ''
       if (/short de bain/i.test(_title)) console.log('[Vault] DEBUG aankoop-check:', JSON.stringify(o));
-      // TIJDELIJK: volledige ruwe order-JSON loggen voor bundel-transacties, om te
-      // achterhalen of de Vinted-API meerdere items/foto's per bundel blootlegt
-      // (bv. onder o.items[]) — content.js pakt nu overal maar 1 foto (o.photos?.[0]),
-      // dus dit toont of er ELDERS in de payload meer foto's/items zitten die we
-      // momenteel negeren.
-      if (/bundel/i.test(_title)) {
-        console.log(`[Vault] DEBUG bundel-order txn ${o.transaction_id || o.id} — volledige raw JSON:`, JSON.stringify(o));
-        console.log(`[Vault] DEBUG bundel-order keys:`, Object.keys(o).join(', '));
-        console.log(`[Vault] DEBUG bundel-order o.item keys:`, o.item ? Object.keys(o.item).join(', ') : '(geen o.item)');
-      }
 
       const resolvedDate =
         o.created_at || o.updated_at || o.transaction?.created_at ||
@@ -293,6 +283,7 @@
 
       return {
         transactionId:         String(o.transaction_id || o.id || ''),
+        orderId:               String(o.id || ''),
         itemId:                String(o.item?.id || ''),
         title:                 o.item?.title || o.title || '?',
         photo,
@@ -392,6 +383,37 @@
     return found;
   }
 
+  // Bundle-orders: probeer alle items + foto's van een bundel-verkoop op te halen
+  // via /api/v2/orders/{orderId}. Het per-item endpoint (/api/v2/items/{id})
+  // bestaat niet meer zodra een item verkocht/verwijderd is (bevestigd: geeft een
+  // HTML "niet gevonden"-pagina terug i.p.v. JSON), dus dat pad werkt niet meer
+  // na verkoop. De structuur van deze response is niet 100% bevestigd — meerdere
+  // waarschijnlijke veldnamen worden geprobeerd; als geen enkele matcht komt er
+  // gewoon een lege array terug en valt de aanroeper terug op de bestaande
+  // single-photo flow (geen crash, geen foutieve data).
+  async function fetchOrderItemPhotos(orderId) {
+    if (!orderId) return { photos: [], titles: [] };
+    try {
+      const r = await vGet(`/api/v2/orders/${orderId}`);
+      const ord = r.order || r;
+      const rawItems = ord.items || ord.line_items || ord.order_items || ord.contents || [];
+      const photos = [];
+      const titles = [];
+      for (const it of rawItems) {
+        const p = it.photos?.[0]?.url || it.photo?.url || it.item_photo?.url ||
+          it.item?.photos?.[0]?.url || it.item?.photo?.url || null;
+        const t = it.title || it.item?.title || null;
+        if (p) photos.push(p);
+        if (t) titles.push(t);
+      }
+      console.log(`[Vault] fetchOrderItemPhotos ${orderId}: ${photos.length} foto's / ${titles.length} titels (${rawItems.length} items in response)`);
+      return { photos, titles };
+    } catch (e) {
+      console.warn(`[Vault] fetchOrderItemPhotos ${orderId} mislukt:`, e.message);
+      return { photos: [], titles: [] };
+    }
+  }
+
   // Haal foto + buyer info op via conversation detail
   async function fetchConvDetail(convId) {
     try {
@@ -400,16 +422,19 @@
       const opp  = conv.opposite_user || {};
       const t    = conv.transaction || {};
       const photoUrl = t.item_photo?.full_size_url || t.item_photo?.url || null;
+      const itemIds  = t.item_ids || [];
+
       return {
         photo:           photoUrl,
         buyer:           opp.login || '',
         buyerName:       opp.login || '',
         country:         opp.country_code || '',
         currentUserSide: t.current_user_side || '',
+        itemIds,
       };
     } catch (e) {
       console.warn(`[Vault] conv detail mislukt ${convId}:`, e.message);
-      return { photo: null, buyer: '', buyerName: '', country: '', currentUserSide: '' };
+      return { photo: null, buyer: '', buyerName: '', country: '', currentUserSide: '', itemIds: [] };
     }
   }
 
@@ -424,13 +449,29 @@
     let changed = false;
     await Promise.all(needsDetail.map(async o => {
       const id = o.conversationId || o.convId;
-      const { photo, buyer, buyerName, country, currentUserSide } = await fetchConvDetail(id);
+      const { photo, buyer, buyerName, country, currentUserSide, itemIds } = await fetchConvDetail(id);
       console.log(`[Vault] conv detail txn ${o.transactionId}: opp="${buyer}" country="${country}" side="${currentUserSide}"`);
       if (photo)           { o.photo           = photo;           changed = true; }
       if (country)         { o.country         = country;         changed = true; }
       if (currentUserSide) { o.currentUserSide = currentUserSide; changed = true; }
       if (buyer)           { o.buyer           = buyer;           changed = true; }
       if (buyerName)       { o.buyerName       = buyerName;       changed = true; }
+
+      // Bundle-order (meerdere item_ids): probeer alle foto's/titels te
+      // verzamelen. Lukt dat niet (items al verwijderd na verkoop), val terug
+      // op de ene bestaande foto — de UI toont dan een "Bundel van N
+      // artikelen"-label op basis van de titel i.p.v. losse thumbnails.
+      if (itemIds.length > 1) {
+        const { photos, titles } = await fetchOrderItemPhotos(o.orderId);
+        if (photos.length > 1) {
+          o.photo_urls  = JSON.stringify(photos);
+          o.item_titles = titles.length ? JSON.stringify(titles) : null;
+          changed = true;
+          console.log(`[Vault] bundle txn ${o.transactionId}: ${photos.length} foto's verzameld`);
+        } else {
+          console.log(`[Vault] bundle txn ${o.transactionId}: geen losse foto's beschikbaar — fallback op 1 foto (${itemIds.length} items)`);
+        }
+      }
     }));
     if (changed) await cSet('v_sold_v2', orders);
   }
