@@ -586,13 +586,29 @@ function SkuPickerModal({ batches, onPick, onClose }) {
   )
 }
 
+// Aantal items in een bundel-order: gebaseerd op item_titles (meest accuraat,
+// afkomstig van een geslaagde per-item foto/titel-ophaling), anders het aantal
+// foto's in photo_urls, anders het aantal uit de titel zelf ("Bundel: 2
+// artikelen"), anders een generieke 2 als de titel wél "bundel" bevat maar er
+// geen enkel aantal af te leiden valt (bv. items al verwijderd na verkoop).
+function getBundleItemCount(order) {
+  const itemTitles = (() => { try { return JSON.parse(order.item_titles || '[]') } catch { return [] } })()
+  if (itemTitles.length > 1) return itemTitles.length
+  const photoUrls = (() => { try { return JSON.parse(order.photo_urls || '[]') } catch { return [] } })()
+  if (photoUrls.length > 1) return photoUrls.length
+  const m = /bundel[:\s]*?(\d+)/i.exec(order.title || '')
+  if (m) return parseInt(m[1], 10)
+  return /bundel/i.test(order.title || '') ? 2 : 1
+}
+
 // ── Bulk SKU-koppel modal ───────────────────────────────────────────────────
 // Koppelt meerdere geselecteerde Vinted-orders in één keer aan oplopende SKU's
-// uit dezelfde leverancier-batch (bv. RIA047, RIA048, RIA049), met per order
-// een handmatig overschrijfbaar SKU-veld.
+// uit dezelfde leverancier-batch (bv. RIA047, RIA048, RIA049). Bundel-orders
+// (meerdere artikelen in 1 verkoop) krijgen per artikel een eigen SKU-veld
+// i.p.v. te worden behandeld als 1 los item met de volledige bundelprijs.
 function BulkSkuModal({ suppliers, batches, orders, onClose, onConfirm }) {
   const [supplierId, setSupplierId] = useState(suppliers[0]?.id || '')
-  const [overrides, setOverrides]   = useState({}) // orderId -> handmatig ingetypte SKU
+  const [overrides, setOverrides]   = useState({}) // slotKey -> handmatig ingetypte SKU
   const [saving, setSaving]         = useState(false)
 
   const supplier = suppliers.find(s => s.id === supplierId)
@@ -606,11 +622,30 @@ function BulkSkuModal({ suppliers, batches, orders, onClose, onConfirm }) {
     return () => window.removeEventListener('keydown', close)
   }, [onClose])
 
-  const rows = orders.map((order, i) => {
-    const suggested = supplier ? formatSku(supplier.prefix, startNum + i) : ''
-    const sku = overrides[order.id] ?? suggested
-    return { order, sku }
-  })
+  // Eén "slot" per SKU-invoerveld — normale orders krijgen 1 slot, bundel-
+  // orders krijgen er N (1 per artikel). De SKU-reeks loopt oplopend door
+  // over ALLE slots heen, ongeacht order-grenzen.
+  const slots = []
+  {
+    let seq = 0
+    for (const order of orders) {
+      const itemTitles = (() => { try { return JSON.parse(order.item_titles || '[]') } catch { return [] } })()
+      const count = getBundleItemCount(order)
+      for (let i = 0; i < count; i++) {
+        slots.push({
+          slotKey: `${order.id}:${i}`,
+          order,
+          itemIndex: i,
+          itemLabel: count > 1 ? (itemTitles[i] || `Item ${i + 1}`) : null,
+          isBundleItem: count > 1,
+          seq: seq++,
+        })
+      }
+    }
+  }
+
+  const suggestedFor = (slot) => supplier ? formatSku(supplier.prefix, startNum + slot.seq) : ''
+  const skuFor = (slot) => overrides[slot.slotKey] ?? suggestedFor(slot)
 
   // Zoek de batch die bij een getypte SKU hoort (prefix + nummer binnen het
   // start/eind-bereik). Valt terug op de meest recente batch van diezelfde
@@ -631,11 +666,14 @@ function BulkSkuModal({ suppliers, batches, orders, onClose, onConfirm }) {
   const handleConfirm = async () => {
     if (!supplier || saving) return
     setSaving(true)
-    const assignments = rows.map(({ order, sku }) => ({
-      orderId: order.id,
-      sku: sku.trim().toUpperCase(),
-      batch: resolveBatch(sku),
-    }))
+    const assignments = orders.map(order => {
+      const orderSlots = slots.filter(s => s.order.id === order.id)
+      const items = orderSlots.map(slot => {
+        const sku = skuFor(slot).trim().toUpperCase()
+        return { sku, batch: sku ? resolveBatch(sku) : null }
+      })
+      return { orderId: order.id, items }
+    })
     await onConfirm(assignments)
     setSaving(false)
     onClose()
@@ -664,25 +702,47 @@ function BulkSkuModal({ suppliers, batches, orders, onClose, onConfirm }) {
             )}
           </div>
 
-          <div style={{ maxHeight: 320, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8 }}>
-            {rows.map(({ order, sku }, i) => (
-              <div
-                key={order.id}
-                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderBottom: i < rows.length - 1 ? '1px solid var(--border)' : 'none' }}
-              >
-                <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text)' }} title={order.title}>
-                  {order.title}
+          <div style={{ maxHeight: 360, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8 }}>
+            {orders.map((order, oi) => {
+              const orderSlots = slots.filter(s => s.order.id === order.id)
+              const isBundle = orderSlots.length > 1
+              const perItemPrice = parseFloat(order.price || 0) / orderSlots.length
+              return (
+                <div key={order.id} style={{ borderBottom: oi < orders.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: isBundle ? 'rgba(129,140,248,0.06)' : 'transparent' }}>
+                    <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, fontWeight: isBundle ? 700 : 400, color: 'var(--text)' }} title={order.title}>
+                      {isBundle && '📦 '}{order.title}
+                    </div>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-2)', flexShrink: 0 }}>
+                      €{parseFloat(order.price || 0).toFixed(2).replace('.', ',')}
+                      {isBundle && <span style={{ fontWeight: 400, color: 'var(--text-3)' }}> ({orderSlots.length}×)</span>}
+                    </span>
+                    {!isBundle && (
+                      <input
+                        value={skuFor(orderSlots[0])}
+                        onChange={e => setOverrides(prev => ({ ...prev, [orderSlots[0].slotKey]: e.target.value.toUpperCase() }))}
+                        style={{ width: 92, flexShrink: 0, fontFamily: 'monospace', fontSize: 12, fontWeight: 700, padding: '5px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', textAlign: 'center', textTransform: 'uppercase', outline: 'none' }}
+                      />
+                    )}
+                  </div>
+                  {isBundle && orderSlots.map(slot => (
+                    <div key={slot.slotKey} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px 6px 26px' }}>
+                      <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11, color: 'var(--text-2)' }} title={slot.itemLabel}>
+                        {slot.itemLabel}
+                      </div>
+                      <span style={{ fontSize: 11, color: 'var(--text-3)', flexShrink: 0 }}>
+                        €{perItemPrice.toFixed(2).replace('.', ',')}
+                      </span>
+                      <input
+                        value={skuFor(slot)}
+                        onChange={e => setOverrides(prev => ({ ...prev, [slot.slotKey]: e.target.value.toUpperCase() }))}
+                        style={{ width: 92, flexShrink: 0, fontFamily: 'monospace', fontSize: 12, fontWeight: 700, padding: '5px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', textAlign: 'center', textTransform: 'uppercase', outline: 'none' }}
+                      />
+                    </div>
+                  ))}
                 </div>
-                <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-2)', flexShrink: 0 }}>
-                  €{parseFloat(order.price || 0).toFixed(2).replace('.', ',')}
-                </span>
-                <input
-                  value={sku}
-                  onChange={e => setOverrides(prev => ({ ...prev, [order.id]: e.target.value.toUpperCase() }))}
-                  style={{ width: 92, flexShrink: 0, fontFamily: 'monospace', fontSize: 12, fontWeight: 700, padding: '5px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', textAlign: 'center', textTransform: 'uppercase', outline: 'none' }}
-                />
-              </div>
-            ))}
+              )
+            })}
           </div>
 
           <button
@@ -691,7 +751,7 @@ function BulkSkuModal({ suppliers, batches, orders, onClose, onConfirm }) {
             onClick={handleConfirm}
             style={{ width: '100%', marginTop: 16 }}
           >
-            {saving ? 'Bezig…' : `Bevestig koppeling (${orders.length})`}
+            {saving ? 'Bezig…' : `Bevestig koppeling (${slots.length} SKU${slots.length === 1 ? '' : "'s"})`}
           </button>
         </div>
       </div>
@@ -1257,50 +1317,71 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
     setSelectedIds(new Set())
   }
 
-  // Slaat de bulk-SKU-koppeling op: sku_ref/cost_price/batch_id op het
-  // vinted_orders-record zelf (voor directe COGS/winst/ROI-weergave), én een
-  // bijhorende sales-entry (dezelfde vorm als SaleModal produceert) zodat de
-  // koppeling ook meetelt in de Stats-pagina — die leest uitsluitend
-  // data.sales, niet vinted_orders.
+  // Slaat de bulk-SKU-koppeling op. `assignments` is nu per order een array
+  // van items (1 voor een los item, N voor een bundel — zie BulkSkuModal):
+  // - sku_ref op het order-record wordt de kommagescheiden lijst van alle
+  //   item-SKU's (bv. "RIA047, RIA048").
+  // - cost_price = SOM van de COGS van elk gekoppeld item — geeft direct het
+  //   juiste bundel-totaal in de bestaande BRUT/COGS/PROFIT/ROI-weergave
+  //   (die gewoon price - cost_price blijft doen, geen wijziging daar nodig).
+  // - batch_id wordt de kommagescheiden lijst van betrokken batch-id's
+  //   (informatief; bij een bundel kunnen items uit verschillende batches
+  //   komen, dus geen enkel ID kan hier "het" batch-id zijn).
+  // - Voor Stats-integratie (die uitsluitend data.sales leest) wordt er per
+  //   ITEM een aparte sales-entry aangemaakt, elk met batchId=dat item se
+  //   eigen batch en salePrice = bundelprijs / aantal items — zo blijft het
+  //   bestaande 1-sale-is-1-batch-item model kloppen en telt de som van de
+  //   deelverkopen automatisch op tot het correcte bundel-totaal.
   const handleBulkSkuConfirm = async (assignments) => {
     const newSales = []
     const patches = {}
-    for (const { orderId, sku, batch } of assignments) {
-      if (!sku) continue
+    for (const { orderId, items } of assignments) {
+      const validItems = (items || []).filter(it => it.sku)
+      if (!validItems.length) continue
       const order = vtOrders.find(o => o.id === orderId)
-      const cogs  = batch ? (batch.costPrice || 0) + (batch.importTax || 0) : null
+      const isBundle = validItems.length > 1
+
+      const totalCogs = validItems.reduce((sum, it) =>
+        sum + (it.batch ? (it.batch.costPrice || 0) + (it.batch.importTax || 0) : 0), 0)
+      const anyBatch = validItems.some(it => it.batch)
+      const batchIds = [...new Set(validItems.map(it => it.batch?.id).filter(Boolean))]
+
       const patch = {
-        sku_ref: sku,
-        cost_price: cogs,
-        batch_id: batch?.id || null,
-        registered_in_vault: !!batch,
+        sku_ref: validItems.map(it => it.sku).join(', '),
+        cost_price: anyBatch ? totalCogs : null,
+        batch_id: batchIds.join(',') || null,
+        registered_in_vault: anyBatch,
       }
       patches[orderId] = patch
       await supabase.from('vinted_orders').update(patch).eq('id', orderId)
 
-      if (batch && order) {
+      if (anyBatch && order) {
         let photo = order.photo_url || null
         try { photo = JSON.parse(order.photo_urls || '[]')[0] || photo } catch {}
-        newSales.push({
-          id: genId(),
-          batchId: batch.id,
-          type: 'individual',
-          quantity: 1,
-          salePrice: parseFloat(order.price || 0),
-          platform: 'Vinted',
-          buyer: order.buyer_name || order.buyer || '',
-          fees: 0,
-          shippingCost: 0,
-          notes: order.transaction_id ? `Vinted #${order.transaction_id}` : '',
-          date: order.sale_date || order.synced_at?.split('T')[0] || new Date().toISOString().split('T')[0],
-          fromLive: false,
-          photo,
-          links: [],
-          shipped: false,
-          shippedDate: null,
-          isFree: false,
-          saleTime: null,
-        })
+        const perItemPrice = parseFloat(order.price || 0) / validItems.length
+        for (const it of validItems) {
+          if (!it.batch) continue
+          newSales.push({
+            id: genId(),
+            batchId: it.batch.id,
+            type: 'individual',
+            quantity: 1,
+            salePrice: perItemPrice,
+            platform: 'Vinted',
+            buyer: order.buyer_name || order.buyer || '',
+            fees: 0,
+            shippingCost: 0,
+            notes: (order.transaction_id ? `Vinted #${order.transaction_id}` : '') + (isBundle ? ' (bundel-item)' : ''),
+            date: order.sale_date || order.synced_at?.split('T')[0] || new Date().toISOString().split('T')[0],
+            fromLive: false,
+            photo,
+            links: [],
+            shipped: false,
+            shippedDate: null,
+            isFree: false,
+            saleTime: null,
+          })
+        }
       }
     }
     if (newSales.length) updateData({ sales: [...sales, ...newSales] })
