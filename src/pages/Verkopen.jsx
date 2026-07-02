@@ -210,7 +210,7 @@ function PhotoPopup({ urls, onClose }) {
 }
 
 // ── Order detail popup ─────────────────────────────────────────────────────
-function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave }) {
+function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave, onUnlinkSku }) {
   const [downloading, setDownloading] = useState(false)
   const [downloaded, setDownloaded]   = useState(false)
   const [skuEditing,  setSkuEditing]  = useState(false)
@@ -228,6 +228,7 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave }
   const profit  = order.cost_price != null ? price - cogs : null
   const roi     = (profit != null && cogs > 0) ? (profit / cogs) * 100 : null
   const fmtE    = v => `€${Number(v).toFixed(2).replace('.', ',')}`
+  const hasSkuLink = !!(order.sku_ref || order.cost_price != null || order.batch_id)
 
   const photoUrls = (() => { try { return JSON.parse(order.photo_urls || '[]') } catch { return [] } })()
   const allPhotos = photoUrls.length ? photoUrls : (order.photo_url ? [order.photo_url] : [])
@@ -453,9 +454,9 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave }
 
           {/* SKU */}
           {fieldLabel('SKU')}
-          <div style={{ marginBottom: 16 }}>
+          <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
             {skuEditing ? (
-              <div style={{ display: 'flex', gap: 6 }}>
+              <div style={{ display: 'flex', gap: 6, flex: 1 }}>
                 <input
                   autoFocus
                   value={skuVal}
@@ -481,6 +482,12 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave }
                 </span>
                 <span style={{ fontSize: 10, color: 'var(--text-3)' }}>✏️</span>
               </div>
+            )}
+            {hasSkuLink && onUnlinkSku && !skuEditing && (
+              <button
+                onClick={() => onUnlinkSku(order.id)}
+                style={{ fontSize: 11, padding: '5px 10px', borderRadius: 6, cursor: 'pointer', background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.25)', color: 'var(--red)', fontFamily: 'inherit', fontWeight: 600 }}
+              >Ontkoppel</button>
             )}
           </div>
 
@@ -796,7 +803,7 @@ function Checkbox({ checked, onChange, size = 20 }) {
 }
 
 // ── Order rij (Vinteer-stijl) ──────────────────────────────────────────────
-function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegister, onDetail, batches, checked, onCheck }) {
+function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegister, onDetail, onUnlinkSku, batches, checked, onCheck }) {
   const [skuPickerOpen,  setSkuPickerOpen]  = useState(false)
   const [hoverPos,       setHoverPos]       = useState(null)
   const [cogsEditing,    setCogsEditing]    = useState(false)
@@ -816,6 +823,7 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
     ? `https://www.vinted.be/inbox/${order.conversation_id}`
     : order.item_url || null
   const suggested = !order.sku_ref ? suggestSku(order.title, order.description) : ''
+  const hasSkuLink = !!(order.sku_ref || order.cost_price != null || order.batch_id)
 
   const photoUrls = (() => { try { return JSON.parse(order.photo_urls || '[]') } catch { return [] } })()
   const allPhotos = photoUrls.length ? photoUrls : (order.photo_url ? [order.photo_url] : [])
@@ -983,6 +991,13 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
                 () => setSkuPickerOpen(true),
                 order.sku_ref ? `🏷 ${order.sku_ref}` : 'Lier SKU',
                 '#818cf8', 'rgba(129,140,248,0.08)', 'rgba(129,140,248,0.2)'
+              )}
+              {hasSkuLink && onUnlinkSku && (
+                <button
+                  onClick={() => onUnlinkSku(order.id)}
+                  title="SKU ontkoppelen"
+                  style={{ fontSize: 12, lineHeight: 1, padding: '2px 5px', borderRadius: 5, cursor: 'pointer', background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.2)', color: '#f87171', fontFamily: 'inherit', fontWeight: 700 }}
+                >×</button>
               )}
               {suggested && !order.sku_ref && (
                 <span
@@ -1363,6 +1378,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
           if (!it.batch) continue
           newSales.push({
             id: genId(),
+            vintedOrderId: order.id,
             batchId: it.batch.id,
             type: 'individual',
             quantity: 1,
@@ -1387,6 +1403,32 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
     if (newSales.length) updateData({ sales: [...sales, ...newSales] })
     setVtOrders(prev => prev.map(o => patches[o.id] ? { ...o, ...patches[o.id] } : o))
     setSelectedIds(new Set())
+  }
+
+  // Ontkoppelt de SKU-koppeling van 1 of meer orders: wist sku_ref/cost_price/
+  // batch_id op het order-record (waardoor "Lier SKU" weer verschijnt i.p.v.
+  // de SKU-badge) en verwijdert de bijhorende sales-entries uit data.sales
+  // zodat Stats niet dubbel telt. Sales-entries aangemaakt via de bulk-modal
+  // dragen een vintedOrderId; oudere entries (voor die koppeling bestond) zijn
+  // enkel te herkennen via de "Vinted #<id>"-notitie — beide paden worden
+  // meegenomen.
+  const unlinkSku = async (orderIds) => {
+    const ids = Array.isArray(orderIds) ? orderIds : [orderIds]
+    const patch = { sku_ref: null, cost_price: null, batch_id: null, registered_in_vault: false }
+    await supabase.from('vinted_orders').update(patch).in('id', ids)
+    setVtOrders(prev => prev.map(o => ids.includes(o.id) ? { ...o, ...patch } : o))
+
+    const isLinkedToOrder = (sale) => ids.some(id =>
+      sale.vintedOrderId === id || (sale.notes && sale.notes.startsWith(`Vinted #${id}`))
+    )
+    const remainingSales = sales.filter(s => !isLinkedToOrder(s))
+    if (remainingSales.length !== sales.length) updateData({ sales: remainingSales })
+
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      ids.forEach(id => next.delete(id))
+      return next
+    })
   }
 
   const addVintedOrder = async (row) => {
@@ -1586,6 +1628,17 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
                     style={{ fontSize: 11, padding: '2px 10px', borderRadius: 5, cursor: 'pointer', background: 'rgba(129,140,248,0.12)', border: '1px solid rgba(129,140,248,0.3)', color: '#818cf8', fontFamily: 'inherit', fontWeight: 600 }}
                   >🏷 SKU koppelen ({selectedIds.size})</button>
                 )}
+                {(() => {
+                  const selectedLinked = visibleVtOrders.filter(o =>
+                    selectedIds.has(o.id) && (o.sku_ref || o.cost_price != null || o.batch_id)
+                  )
+                  return selectedLinked.length > 0 && (
+                    <button
+                      onClick={() => unlinkSku(selectedLinked.map(o => o.id))}
+                      style={{ fontSize: 11, padding: '2px 10px', borderRadius: 5, cursor: 'pointer', background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.25)', color: '#f87171', fontFamily: 'inherit', fontWeight: 600 }}
+                    >✕ Ontkoppel geselecteerde ({selectedLinked.length})</button>
+                  )
+                })()}
                 {selectedIds.size > 0 && (
                   <button
                     onClick={deleteSelected}
@@ -1631,6 +1684,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
                     onPhotoClick={setPhotoPopup}
                     onDetail={() => setOrderDetail(order)}
                     onRegister={() => openSaleModal(order)}
+                    onUnlinkSku={unlinkSku}
                     batches={batches}
                     checked={selectedIds.has(order.id)}
                     onCheck={on => toggleId(order.id, on)}
@@ -1864,6 +1918,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
           vintedCookie={vintedCookie}
           onPhotoClick={(urls) => { setOrderDetail(null); setPhotoPopup(urls) }}
           onSave={saveVtField}
+          onUnlinkSku={id => { unlinkSku(id); setOrderDetail(null) }}
         />
       )}
 
