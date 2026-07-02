@@ -351,7 +351,7 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
             <button
               onClick={handleSyncAll}
               disabled={syncState?.status === 'running' || !activeUserId}
-              title={!activeUserId ? 'Nog aan het laden…' : 'Haalt nieuwe orders op en werkt de status van bestaande orders bij'}
+              title={!activeUserId ? 'Nog aan het laden…' : 'Nieuwe verkopen + status-updates (nieuwe aankopen enkel via de Aankopen-tab in de extensie)'}
               style={{
                 background: syncState?.status === 'running' ? D.card2 : D.purple, color: '#fff', border: 'none', borderRadius: 8,
                 padding: '7px 14px', fontSize: 12, fontWeight: 700, fontFamily: 'inherit', flexShrink: 0,
@@ -359,7 +359,7 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
                 opacity: syncState?.status === 'running' || !activeUserId ? 0.7 : 1,
               }}
             >
-              {syncState?.status === 'running' ? '⏳ Bezig…' : '🔄 Alles synchroniseren'}
+              {syncState?.status === 'running' ? '⏳ Bezig…' : '🔄 Synchroniseren'}
             </button>
             <button
               onClick={() => setShowSale(true)}
@@ -597,6 +597,7 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
           <button
             onClick={handleSyncAll}
             disabled={syncState?.status === 'running' || !activeUserId}
+            title={!activeUserId ? 'Nog aan het laden…' : 'Nieuwe verkopen + status-updates (nieuwe aankopen enkel via de Aankopen-tab in de extensie)'}
             style={{
               marginTop: 14, width: '100%', background: syncState?.status === 'running' ? D.card2 : D.purple, color: '#fff',
               border: 'none', borderRadius: 10, padding: '10px 14px', fontSize: 13, fontWeight: 700, fontFamily: 'inherit',
@@ -604,8 +605,11 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
               opacity: syncState?.status === 'running' || !activeUserId ? 0.7 : 1,
             }}
           >
-            {syncState?.status === 'running' ? '⏳ Bezig…' : '🔄 Alles synchroniseren'}
+            {syncState?.status === 'running' ? '⏳ Bezig…' : '🔄 Synchroniseren'}
           </button>
+          <div style={{ marginTop: 6, fontSize: 11, color: D.text3, textAlign: 'center' }}>
+            Nieuwe verkopen + status-updates
+          </div>
           {syncStatusText && (
             <div style={{ marginTop: 8, fontSize: 11, color: D.text2, textAlign: 'center' }}>
               {syncStatusText}

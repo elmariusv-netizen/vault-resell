@@ -415,7 +415,7 @@
   }
 
   // Haal foto + buyer info op via conversation detail
-  async function fetchConvDetail(convId) {
+  async function fetchConvDetail(convId, debug = false) {
     try {
       const d = await vGet(`/api/v2/conversations/${convId}`);
       const conv = d.conversation || d;
@@ -423,6 +423,15 @@
       const t    = conv.transaction || {};
       const photoUrl = t.item_photo?.full_size_url || t.item_photo?.url || null;
       const itemIds  = t.item_ids || [];
+
+      // TIJDELIJK: volledige raw response voor de 2 gemelde probleem-orders —
+      // om te bevestigen of current_user_side echt ontbreekt in Vinted's
+      // eigen respons, of dat de call zelf al faalt (zie catch-blok).
+      if (debug) {
+        console.log(`[Vault] DEBUG conv ${convId} — transaction keys:`, Object.keys(t).join(', '));
+        console.log(`[Vault] DEBUG conv ${convId} — transaction.current_user_side (raw):`, JSON.stringify(t.current_user_side));
+        console.log(`[Vault] DEBUG conv ${convId} — volledige transaction:`, JSON.stringify(t));
+      }
 
       return {
         photo:           photoUrl,
@@ -433,6 +442,7 @@
         itemIds,
       };
     } catch (e) {
+      if (debug) console.error(`[Vault] DEBUG conv ${convId} — fetchConvDetail FAALDE:`, e.message);
       console.warn(`[Vault] conv detail mislukt ${convId}:`, e.message);
       return { photo: null, buyer: '', buyerName: '', country: '', currentUserSide: '', itemIds: [] };
     }
@@ -446,10 +456,27 @@
   // currentUserSide — zonder die check zou zo'n order nooit meer verrijkt
   // worden en permanent als "onbekend" (== als verkoop getoond) blijven staan.
   // `onProgress(done, total)` laat de aanroeper een voortgangsindicator tonen.
+  // TIJDELIJK: gerichte debug voor 2 orders die na "Alles synchroniseren"
+  // consequent als 'sale' i.p.v. 'purchase' blijven staan, ondanks de
+  // currentUserSide-fix in autoSync(). Wordt verwijderd zodra de root cause
+  // bevestigd is — niet nog een keer blind "fixen".
+  const DEBUG_TXN_IDS = new Set(['20624965062', '20621465098']);
+
   async function enrichOrders(orders, onProgress) {
     const needsDetail = orders.filter(o =>
       (!o.photo || !o.buyer || !o.currentUserSide) && (o.conversationId || o.convId)
     );
+
+    // Log VOOR de needsDetail-filter of deze 2 orders er überhaupt inzitten,
+    // en met welke conversationId/convId — als die leeg is, wordt
+    // fetchConvDetail voor deze order NOOIT aangeroepen, ongeacht hoe vaak
+    // enrichOrders draait, en blijft currentUserSide voorgoed onbekend.
+    for (const o of orders) {
+      if (!DEBUG_TXN_IDS.has(o.transactionId)) continue;
+      const willFetch = needsDetail.includes(o);
+      console.log(`[Vault] DEBUG txn ${o.transactionId} vóór enrichment: title="${o.title}" conversationId="${o.conversationId}" convId="${o.convId}" photo=${!!o.photo} buyer="${o.buyer}" currentUserSide="${o.currentUserSide}" → wordt ${willFetch ? 'WEL' : 'NIET'} opgehaald deze ronde`);
+    }
+
     if (!needsDetail.length) return;
 
     const BATCH_SIZE = 20;
@@ -461,8 +488,11 @@
       const batch = needsDetail.slice(start, start + BATCH_SIZE);
       await Promise.all(batch.map(async o => {
         const id = o.conversationId || o.convId;
-        const { photo, buyer, buyerName, country, currentUserSide, itemIds } = await fetchConvDetail(id);
+        const isDebugTxn = DEBUG_TXN_IDS.has(o.transactionId);
+        if (isDebugTxn) console.log(`[Vault] DEBUG txn ${o.transactionId}: fetchConvDetail(${id}) start`);
+        const { photo, buyer, buyerName, country, currentUserSide, itemIds } = await fetchConvDetail(id, isDebugTxn);
         console.log(`[Vault] conv detail txn ${o.transactionId}: opp="${buyer}" country="${country}" side="${currentUserSide}"`);
+        if (isDebugTxn) console.log(`[Vault] DEBUG txn ${o.transactionId}: fetchConvDetail resultaat →`, JSON.stringify({ photo, buyer, buyerName, country, currentUserSide, itemIds }));
         if (photo)           { o.photo           = photo;           changed = true; }
         if (country)         { o.country         = country;         changed = true; }
         if (currentUserSide) { o.currentUserSide = currentUserSide; changed = true; }
@@ -522,13 +552,23 @@
     const { syncedOrders = [] } = await chrome.storage.local.get(['syncedOrders']);
     syncedIds = new Set(syncedOrders.map(o => o.transactionId).filter(Boolean));
 
-    const nieuw        = orders.filter(o => o.transactionId && !syncedIds.has(o.transactionId));
-    const teVerversen  = orders.filter(o => o.transactionId && syncedIds.has(o.transactionId) && !isOrderCompleted(o));
+    // Nieuwe aankopen (currentUserSide === 'buyer') horen NIET via deze knop
+    // binnen te komen — dat blijft exclusief de handmatige Aankopen-tab in het
+    // extensiepaneel. Status-updates van AL bekende orders (nieuw of aankoop
+    // maakt niet uit) horen wél altijd automatisch te verversen, dus die
+    // uitzondering geldt alleen voor "nieuw", niet voor "refresh".
+    const nieuw = orders.filter(o =>
+      o.transactionId && !syncedIds.has(o.transactionId) && o.currentUserSide !== 'buyer'
+    );
+    const nieuweAankopenOvergeslagen = orders.filter(o =>
+      o.transactionId && !syncedIds.has(o.transactionId) && o.currentUserSide === 'buyer'
+    );
+    const teVerversen = orders.filter(o => o.transactionId && syncedIds.has(o.transactionId) && !isOrderCompleted(o));
     const targets = [
       ...nieuw.map(o => ({ order: o, kind: 'nieuw' })),
       ...teVerversen.map(o => ({ order: o, kind: 'refresh' })),
     ];
-    console.log(`[Vault] autoSync: ${orders.length} orders — ${nieuw.length} nieuw, ${teVerversen.length} te verversen, ${orders.length - targets.length} al afgerond/overgeslagen`);
+    console.log(`[Vault] autoSync: ${orders.length} orders — ${nieuw.length} nieuw (verkoop), ${nieuweAankopenOvergeslagen.length} nieuwe aankoop overgeslagen (enkel via Aankopen-tab), ${teVerversen.length} te verversen, ${orders.length - targets.length - nieuweAankopenOvergeslagen.length} al afgerond/overgeslagen`);
 
     const reportProgress = async (progress) => {
       if (!userId) return;
@@ -545,6 +585,9 @@
       // eerder vallen (geen orderDirection meegegeven → altijd de 'sale'-default
       // in background.js syncToSupabase/syncOrder).
       const orderDirection = o.currentUserSide === 'buyer' ? 'purchase' : 'sale';
+      if (DEBUG_TXN_IDS.has(o.transactionId)) {
+        console.log(`[Vault] DEBUG txn ${o.transactionId} in autoSync (kind=${kind}): currentUserSide="${o.currentUserSide}" (type=${typeof o.currentUserSide}) → orderDirection="${orderDirection}"`);
+      }
       if (kind === 'nieuw') {
         const vId = await getVintedUserId();
         const res = await sendMsg({ type: 'SYNC_ORDER', order: { ...o, orderDirection, labelUrl: labelUrl(o.transactionId), vintedUserId: vId } });
@@ -1474,6 +1517,11 @@
         // het probleem in stand houden dat deze knop moet oplossen.
         const orders = await getSold(true)
         const active = orders.filter(o => !isCancelled(o))
+        for (const o of active) {
+          if (DEBUG_TXN_IDS.has(o.transactionId)) {
+            console.log(`[Vault] DEBUG txn ${o.transactionId} direct na getSold(true): title="${o.title}" status="${o.status}" transactionUserStatus="${o.transactionUserStatus}" conversationId="${o.conversationId}" convId="${o.convId}" currentUserSide="${o.currentUserSide}"`);
+          }
+        }
         await enrichOrders(active)
         const result = await autoSync(active, msg.userId)
         sendResponse({ success: true, count: active.length, ...result })
