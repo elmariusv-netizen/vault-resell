@@ -264,9 +264,11 @@ function mapBoundsThroughCtm(bounds, ctm, pageW, pageH) {
 // Returns { left, bottom, right, top, rotate } in PDF points (origin bottom-left).
 // `rotate` is 0, 90 or -90 degrees — the exact rotation the CONTENT needs to
 // read upright, which is a carrier-specific fact (confirmed per carrier via
-// real renders), NOT derived from the crop box's own aspect ratio, since e.g.
-// Bpost's crop box is landscape-shaped too even though its content needs a
-// different rotation direction than Mondial Relay's.
+// real renders on the RAW, un-rotated source page — only rotate when the raw
+// text/barcode is itself printed sideways, e.g. Mondial Relay). It is NOT
+// derived from the crop box's own aspect ratio: Bpost's crop box is
+// landscape-shaped too, but its content is already horizontal, so rotating
+// it (either direction) turns correctly-readable text sideways.
 //
 // Carrier-specifieke aanpak (gebaseerd op geanalyseerde echte labels):
 //  - Mondial Relay: A4 portrait, label (gedraaid) in de onderste helft
@@ -327,8 +329,7 @@ export async function detectLabelBounds(src, page) {
   // al dicht bij 4×6 ligt, zodat scale-to-fit vanzelf nauwelijks wit overlaat.
   const isA4Portrait = pageW > 550 && pageW < 640 && pageH > 800 && pageH < 900;
   if (isA4Portrait) {
-    const bottom = pageH * 0.5;
-    let left = 0, right = pageW;
+    let left = 0, bottom = pageH * 0.5, right = pageW, top = pageH;
     let refined = false;
 
     const lineBounds = findLineArtBounds(src, page);
@@ -343,13 +344,17 @@ export async function detectLabelBounds(src, page) {
       }
     }
 
-    // DPD (breedte verfijnd via lijn-tekeningen) én Vinted Go (geen
-    // verfijning): beide labels staan al correct leesbaar bovenaan — geen
-    // rotatie. Voor Vinted Go blijft er daardoor wat witruimte over (de
-    // crop-zone is landscape-vormiger dan de 4×6-doelpagina), maar rechtop
-    // leesbaar weegt zwaarder dan volledige paginavulling.
-    console.log(`[label] heuristic portrait A4 zonder rect (Vinted Go / DPD): bovenste 50%, left=${left.toFixed(0)} right=${right.toFixed(0)}, geen rotatie`);
-    return { left, bottom, right, top: pageH, rotate: 0 };
+    if (!refined) {
+      // Vinted Go: exacte content-box (zwarte header + QR + trackingnummer),
+      // geverifieerd via PyMuPDF get_drawings()/get_text() op een echt 595×842
+      // label — sluit strak aan tegen de content zelf i.p.v. de bovenste 50%
+      // van de pagina te gokken, wat onnodig witruimte liet staan.
+      left = 14; bottom = 530; right = 581; top = 828;
+      console.log(`[label] heuristic portrait A4 zonder rect (Vinted Go): exacte content-box left=${left} bottom=${bottom} right=${right} top=${top}, geen rotatie`);
+    } else {
+      console.log(`[label] heuristic portrait A4 (DPD): bovenste 50%, left=${left.toFixed(0)} right=${right.toFixed(0)}, geen rotatie`);
+    }
+    return { left, bottom, right, top, rotate: 0 };
   }
 
   // Stap 2b: Bpost — A4 landscape (breder dan hoog), label linksboven kwadrant.
@@ -363,11 +368,16 @@ export async function detectLabelBounds(src, page) {
   // moet dus vlak tegen de labelrand zelf aansluiten (niet tegen de kniplijn)
   // om de schaartjes volledig te weren.
   //
-  // Rotatierichting: -90° (niet +90° zoals Mondial Relay/PostNL) — met +90°
-  // stond dit label 180° op zijn kop, geverifieerd met een render.
+  // Rotatie: GEEN rotatie. De rauwe pagina-render toont de tekst/barcode al
+  // volledig horizontaal en leesbaar (in tegenstelling tot Mondial Relay, waar
+  // de brontekst zelf al zijwaarts staat in de niet-geroteerde pagina — daar
+  // corrigeert rotate:90 dat). Een eerdere aanname dat Bpost's landscape-
+  // vormige crop-box automatisch rotatie nodig had (eerst +90°, toen -90° na
+  // een 180°-op-zijn-kop-rapport) was fout: BEIDE richtingen draaien de al
+  // correct leesbare tekst juist ZIJWAARTS. Geverifieerd met een render.
   if (pageW > pageH) {
-    const bounds = { left: 0, bottom: pageH * 0.528, right: pageW * 0.487, top: pageH, rotate: -90 };
-    console.log(`[label] heuristic Bpost (landscape ${Math.round(pageW)}x${Math.round(pageH)}, roteer -90°): left=0 bottom=${bounds.bottom.toFixed(0)} right=${bounds.right.toFixed(0)} top=${bounds.top.toFixed(0)}`);
+    const bounds = { left: 0, bottom: pageH * 0.528, right: pageW * 0.487, top: pageH, rotate: 0 };
+    console.log(`[label] heuristic Bpost (landscape ${Math.round(pageW)}x${Math.round(pageH)}, geen rotatie): left=0 bottom=${bounds.bottom.toFixed(0)} right=${bounds.right.toFixed(0)} top=${bounds.top.toFixed(0)}`);
     return bounds;
   }
 
@@ -388,26 +398,30 @@ export async function detectLabelBounds(src, page) {
       console.log(`[label] wrapper: content-rect binnenin gevonden (${(innerBounds.right - innerBounds.left).toFixed(0)}x${(innerBounds.top - innerBounds.bottom).toFixed(0)})`);
     } else if (wrapped.vw > wrapped.vh) {
       innerBounds = { left: 0, bottom: wrapped.vh * 0.45, right: wrapped.vw * 0.55, top: wrapped.vh };
-      innerRotate = -90;
-      console.log('[label] wrapper: geen rect binnenin — landscape-heuristiek (Bpost-stijl) op virtuele pagina, roteer -90°');
-    } else {
-      // Vinted Go/DPD-achtige situatie: bovenste 50% behouden, geen rotatie —
-      // beide labels staan al correct leesbaar bovenaan. Verfijn de breedte
-      // via lijn-tekeningen als DPD's tabelraster gevonden wordt (zie de
-      // analoge stap voor de niet-ingebedde pagina hierboven).
-      let left = 0, right = wrapped.vw;
-      const lineBounds = extractLineArtBounds(Buffer.from(wrapped.xobjBytes).toString('binary'));
-      if (lineBounds) {
-        const lineW = lineBounds.right - lineBounds.left;
-        if (lineW > 50 && lineW < wrapped.vw * 0.85) {
-          const margin = 5;
-          left  = Math.max(0, lineBounds.left - margin);
-          right = Math.min(wrapped.vw, lineBounds.right + margin);
-        }
-      }
-      innerBounds = { left, bottom: wrapped.vh * 0.5, right, top: wrapped.vh };
       innerRotate = 0;
-      console.log(`[label] wrapper: geen rect binnenin — bovenste 50% op virtuele pagina, left=${left.toFixed(0)} right=${right.toFixed(0)}, geen rotatie`);
+      console.log('[label] wrapper: geen rect binnenin — landscape-heuristiek (Bpost-stijl) op virtuele pagina, geen rotatie');
+    } else {
+      // Vinted Go/DPD-achtige situatie: verfijn de breedte via lijn-tekeningen
+      // als DPD's tabelraster gevonden wordt (zie de analoge stap voor de
+      // niet-ingebedde pagina hierboven); anders exacte Vinted Go content-box,
+      // proportioneel geschaald t.o.v. de standaard 595×842-referentie.
+      const lineBounds = extractLineArtBounds(Buffer.from(wrapped.xobjBytes).toString('binary'));
+      let left, bottom, right, top;
+      const lineW = lineBounds ? lineBounds.right - lineBounds.left : 0;
+      if (lineBounds && lineW > 50 && lineW < wrapped.vw * 0.85) {
+        const margin = 5;
+        left   = Math.max(0, lineBounds.left - margin);
+        right  = Math.min(wrapped.vw, lineBounds.right + margin);
+        bottom = wrapped.vh * 0.5;
+        top    = wrapped.vh;
+        console.log(`[label] wrapper: breedte verfijnd via lijn-tekeningen (DPD) → left=${left.toFixed(0)} right=${right.toFixed(0)}`);
+      } else {
+        const scaleX = wrapped.vw / 595, scaleY = wrapped.vh / 842;
+        left = 14 * scaleX; right = 581 * scaleX; bottom = 530 * scaleY; top = 828 * scaleY;
+        console.log(`[label] wrapper: exacte Vinted Go content-box (geschaald) → left=${left.toFixed(0)} bottom=${bottom.toFixed(0)} right=${right.toFixed(0)} top=${top.toFixed(0)}`);
+      }
+      innerBounds = { left, bottom, right, top };
+      innerRotate = 0;
     }
     const mapped = mapBoundsThroughCtm(innerBounds, wrapped.ctm, pageW, pageH);
     mapped.rotate = innerRotate;
