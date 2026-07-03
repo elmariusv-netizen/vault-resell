@@ -12,7 +12,12 @@ import { formatSkuRange, getUsedSkus, getFreeSkusForBatch, assignSlotSkus, skuOp
 // de "+ Dit is eigenlijk meerdere artikelen"-optie (zelfde onderliggende
 // assignSlotSkus/skuOptionsForSlot als BulkSkuModal in Verkopen.jsx, geen
 // aparte herbouwde implementatie).
-export default function SkuPickerModal({ batches, allOrders, excludeOrderId, onPick, onPickMultiple, onClose }) {
+//
+// excludeOrderId (1 order) en excludeOrderIds (meerdere) mogen allebei
+// meegegeven worden — BulkSkuModal hergebruikt dit scherm als batch-kiezer
+// vóór zijn eigen per-order-slots-stap en moet ALLE geselecteerde orders
+// uitsluiten, niet slechts 1.
+export default function SkuPickerModal({ batches, allOrders, excludeOrderId, excludeOrderIds, onPick, onPickMultiple, onClose }) {
   const [q, setQ] = useState('')
   const [manualCount, setManualCount] = useState(undefined) // undefined = 1 (geen bundle)
   const [selectedBatch, setSelectedBatch] = useState(null)  // batch waarvoor nu N SKU's gekozen worden
@@ -20,7 +25,10 @@ export default function SkuPickerModal({ batches, allOrders, excludeOrderId, onP
 
   const count = manualCount === undefined ? 1 : manualCount
 
-  const usedSkus = useMemo(() => getUsedSkus(allOrders, excludeOrderId ? [excludeOrderId] : []), [allOrders, excludeOrderId])
+  const usedSkus = useMemo(() => {
+    const exclude = [...(excludeOrderId ? [excludeOrderId] : []), ...(excludeOrderIds || [])]
+    return getUsedSkus(allOrders, exclude)
+  }, [allOrders, excludeOrderId, excludeOrderIds])
 
   const items = useMemo(() => {
     const lower = q.toLowerCase()

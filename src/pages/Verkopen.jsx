@@ -525,33 +525,19 @@ function getBundleItemCount(order) {
 // uit dezelfde leverancier-batch (bv. RIA047, RIA048, RIA049). Bundel-orders
 // (meerdere artikelen in 1 verkoop) krijgen per artikel een eigen SKU-veld
 // i.p.v. te worden behandeld als 1 los item met de volledige bundelprijs.
-function BulkSkuModal({ suppliers, batches, allOrders, orders, onClose, onConfirm }) {
-  const [supplierId, setSupplierId] = useState(suppliers[0]?.id || '')
+function BulkSkuModal({ batches, allOrders, orders, onClose, onConfirm }) {
+  const [selectedBatch, setSelectedBatch] = useState(null) // batch waaruit deze bulk-koppeling SKU's trekt
   const [overrides, setOverrides]   = useState({}) // slotKey -> handmatig gekozen SKU (uit de dropdown)
   const [manualCounts, setManualCounts] = useState({}) // orderId -> handmatig aantal artikelen (niet-bundle orders)
   const [saving, setSaving]         = useState(false)
-
-  const supplier = suppliers.find(s => s.id === supplierId)
 
   // Welke SKU's zijn al gekoppeld aan een ANDERE order (niet de orders die nu
   // in deze bulk-actie zitten — die mogen hun eigen, eventueel al bestaande
   // koppeling gewoon herzien). Gedeelde logica met SkuPickerModal.
   const usedSkus = getUsedSkus(allOrders, orders.map(o => o.id))
-  const freeSkusForBatch = (batch) => getFreeSkusForBatch(batch, usedSkus)
+  const freeSkus = selectedBatch ? getFreeSkusForBatch(selectedBatch, usedSkus) : []
 
-  // De batch waar de dropdown-opties vandaan komen: de OUDSTE batch van deze
-  // leverancier die nog minstens 1 vrije SKU heeft (FIFO — eerst bestaande
-  // voorraad opgebruiken).
-  const currentBatch = (() => {
-    if (!supplier) return null
-    const supBatches = batches
-      .filter(b => b.supplierPrefix === supplier.prefix)
-      .sort((a, b) => (a.startNum || 0) - (b.startNum || 0))
-    return supBatches.find(b => freeSkusForBatch(b).length > 0) || null
-  })()
-  const freeSkus = currentBatch ? freeSkusForBatch(currentBatch) : []
-
-  useEffect(() => { setOverrides({}) }, [supplierId])
+  useEffect(() => { setOverrides({}) }, [selectedBatch])
 
   useEffect(() => {
     const close = e => { if (e.key === 'Escape') onClose() }
@@ -604,13 +590,13 @@ function BulkSkuModal({ suppliers, batches, allOrders, orders, onClose, onConfir
   const optionsFor = (slot) => skuOptionsForSlot(slot.slotKey, slotSkus, freeSkus)
 
   const handleConfirm = async () => {
-    if (!supplier || saving) return
+    if (!selectedBatch || saving) return
     setSaving(true)
     const assignments = orders.map(order => {
       const orderSlots = slots.filter(s => s.order.id === order.id)
       const items = orderSlots.map(slot => {
         const sku = slotSkus[slot.slotKey]
-        return { sku, batch: sku ? currentBatch : null }
+        return { sku, batch: sku ? selectedBatch : null }
       })
       return { orderId: order.id, items }
     })
@@ -633,6 +619,24 @@ function BulkSkuModal({ suppliers, batches, allOrders, orders, onClose, onConfir
     </select>
   )
 
+  // Stap 1: batch kiezen — hergebruikt exact SkuPickerModal se batch-lijst
+  // (SKU-range + merk-badge + categorie + beschikbaar-aantal, zie dab28d5)
+  // in plaats van een aparte leverancier-dropdown die geen batch-info toonde.
+  // onPick geeft (sku, batch) door — hier is enkel de batch relevant, de
+  // eerste-vrije-sku die SkuPickerModal zelf al berekende wordt genegeerd,
+  // want de N SKU-dropdowns hieronder bepalen de daadwerkelijke toewijzing.
+  if (!selectedBatch) {
+    return (
+      <SkuPickerModal
+        batches={batches}
+        allOrders={allOrders}
+        excludeOrderIds={orders.map(o => o.id)}
+        onPick={(_sku, batch) => setSelectedBatch(batch)}
+        onClose={onClose}
+      />
+    )
+  }
+
   return (
     <div className="modal-overlay" onMouseDown={e => e.target === e.currentTarget && onClose()}>
       <div className="modal" style={{ maxWidth: 480, padding: 0, overflow: 'hidden' }}>
@@ -642,30 +646,25 @@ function BulkSkuModal({ suppliers, batches, allOrders, orders, onClose, onConfir
         </div>
         <div style={{ padding: '16px 20px 20px' }}>
           <div style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', letterSpacing: '0.6px', textTransform: 'uppercase', marginBottom: 5 }}>Leverancier</div>
-            {suppliers.length ? (
-              <select
-                value={supplierId}
-                onChange={e => setSupplierId(e.target.value)}
-                style={{ width: '100%', padding: '9px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-2)', color: 'var(--text)', fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box' }}
-              >
-                {suppliers.map(s => <option key={s.id} value={s.id}>{s.prefix} — {s.name}</option>)}
-              </select>
-            ) : (
-              <div style={{ fontSize: 13, color: 'var(--text-3)', fontStyle: 'italic' }}>Geen leveranciers gevonden — maak er eerst een aan.</div>
-            )}
-            {supplier && currentBatch && (
-              <div style={{ fontSize: 11, color: slots.length > freeSkus.length ? '#f87171' : 'var(--text-3)', fontWeight: slots.length > freeSkus.length ? 700 : 400, marginTop: 5 }}>
-                {slots.length > freeSkus.length ? '⚠ ' : ''}
-                {freeSkus.length} vrije SKU{freeSkus.length === 1 ? '' : "'s"} in {formatSkuRange(currentBatch.supplierPrefix, currentBatch.startNum, currentBatch.endNum)}
-                {slots.length > freeSkus.length && ` — je vraagt er ${slots.length}, kies eventueel een andere leverancier voor de rest`}
-              </div>
-            )}
-            {supplier && !currentBatch && (
-              <div style={{ fontSize: 11, color: '#f87171', marginTop: 5 }}>
-                Geen vrije SKU's meer bij {supplier.prefix} — voeg eerst een nieuwe batch toe.
-              </div>
-            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
+              <button
+                onClick={() => setSelectedBatch(null)}
+                style={{ background: 'none', border: 'none', color: 'var(--text-3)', fontSize: 12, cursor: 'pointer', padding: 0 }}
+              >← Andere batch</button>
+              <span style={{ fontWeight: 700, fontSize: 13, color: '#818cf8', fontFamily: 'monospace' }}>
+                {formatSkuRange(selectedBatch.supplierPrefix, selectedBatch.startNum, selectedBatch.endNum)}
+              </span>
+              {selectedBatch.brand && (
+                <span style={{ fontSize: 10, fontWeight: 700, color: '#c4b5fd', background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)', padding: '2px 8px', borderRadius: 20 }}>
+                  {selectedBatch.brand}
+                </span>
+              )}
+            </div>
+            <div style={{ fontSize: 11, color: slots.length > freeSkus.length ? '#f87171' : 'var(--text-3)', fontWeight: slots.length > freeSkus.length ? 700 : 400 }}>
+              {slots.length > freeSkus.length ? '⚠ ' : ''}
+              {freeSkus.length} vrije SKU{freeSkus.length === 1 ? '' : "'s"} in deze batch
+              {slots.length > freeSkus.length && ` — je vraagt er ${slots.length}, kies eventueel een andere batch voor de rest`}
+            </div>
           </div>
 
           <div style={{ maxHeight: 360, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8 }}>
@@ -751,7 +750,7 @@ function BulkSkuModal({ suppliers, batches, allOrders, orders, onClose, onConfir
 
           <button
             className="btn btn-primary"
-            disabled={!supplier || !currentBatch || saving}
+            disabled={!selectedBatch || saving}
             onClick={handleConfirm}
             style={{ width: '100%', marginTop: 16 }}
           >
@@ -1822,7 +1821,6 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
 
       {bulkSkuOpen && (
         <BulkSkuModal
-          suppliers={suppliers}
           batches={batches}
           allOrders={vtOrders}
           orders={vtOrders.filter(o => selectedIds.has(o.id))}
