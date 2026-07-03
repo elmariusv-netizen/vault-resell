@@ -632,12 +632,18 @@ function PurchaseSettingsSection({ activeUserId, purchaseMethod, autoSyncSales, 
           onChange={setSyncSales}
           desc="Nieuwe verkopen worden automatisch opgehaald en de status van bestaande verkopen wordt bijgewerkt, zonder dat je zelf iets hoeft aan te vinken."
         />
-        <AutoSyncToggleRow
-          label="Aankopen automatisch synchroniseren"
-          checked={syncPurchases}
-          onChange={setSyncPurchases}
-          desc="Nieuwe aankopen komen alleen binnen als je ze zelf handmatig selecteert via de extensie. Zet dit aan als je wil dat ook nieuwe aankopen automatisch worden opgehaald."
-        />
+        {/* Enkel relevant als er ook via Vinted wordt ingekocht — bij
+            uitsluitend leveranciers is de Aankopen-pagina zelf al verborgen
+            (zie Nav.jsx VINTED_ONLY_PAGES), dus deze toggle heeft dan geen
+            zichtbaar effect meer. */}
+        {method !== 'suppliers' && (
+          <AutoSyncToggleRow
+            label="Aankopen automatisch synchroniseren"
+            checked={syncPurchases}
+            onChange={setSyncPurchases}
+            desc="Nieuwe aankopen komen alleen binnen als je ze zelf handmatig selecteert via de extensie. Zet dit aan als je wil dat ook nieuwe aankopen automatisch worden opgehaald."
+          />
+        )}
       </div>
 
       <button

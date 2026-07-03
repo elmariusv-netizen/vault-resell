@@ -18,8 +18,16 @@ const BOTTOM_TABS = ['home', 'new', 'verkopen', 'aankopen', 'settings']
 // (Onboarding.jsx) / Instellingen.
 const SUPPLIER_ONLY_PAGES = new Set(['inventory', 'new'])
 
+// Aankopen toont enkel automatisch gesynchroniseerde Vinted-aankopen — niet
+// relevant voor wie uitsluitend bij leveranciers inkoopt (die gebruiken
+// Voorraad/Nieuw in plaats daarvan). Zie onboarding STAP 1 / Instellingen.
+const VINTED_ONLY_PAGES = new Set(['aankopen'])
+
 export default function Nav({ currentPage, onNavigate, theme, onToggleTheme, userName, purchaseMethod }) {
-  const links = NAV_LINKS.filter((l) => purchaseMethod !== 'vinted' || !SUPPLIER_ONLY_PAGES.has(l.id))
+  const links = NAV_LINKS.filter((l) =>
+    (purchaseMethod !== 'vinted' || !SUPPLIER_ONLY_PAGES.has(l.id)) &&
+    (purchaseMethod !== 'suppliers' || !VINTED_ONLY_PAGES.has(l.id))
+  )
   const bottomLinks = links.filter((l) => BOTTOM_TABS.includes(l.id))
 
   return (
