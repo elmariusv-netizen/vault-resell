@@ -170,6 +170,10 @@ async function syncToSupabase(order) {
     transaction_status: order.transactionStatus ?? null,
     shipment_status:    order.shipmentStatus    ?? null,
     is_completed:       order.isCompleted       ?? null,
+    // Uitbetalingsdatum — afgeleid uit het "completed"-bericht in
+    // conversation.messages (zie fetchConvDetail() in content.js), niet elke
+    // (oudere) order heeft dit bericht, dan blijft dit null.
+    payout_date:        order.payoutDate        ?? null,
   };
 
   console.log('[Vault] price:', order.price);

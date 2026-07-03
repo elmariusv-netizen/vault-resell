@@ -330,8 +330,13 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave, 
 
           {/* Datum */}
           {date && (
-            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: order.payout_date ? 4 : 14, display: 'flex', alignItems: 'center', gap: 6 }}>
               <span style={{ color: 'var(--text-3)' }}>🗓</span> {formatDateLong(date)}
+            </div>
+          )}
+          {order.payout_date && (
+            <div style={{ fontSize: 12, color: 'var(--text-2)', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ color: 'var(--text-3)' }}>💶</span> Uitbetaald op {formatDateLong(order.payout_date)}
             </div>
           )}
 
@@ -962,6 +967,11 @@ function VintedOrderRow({ order, isLast, onSave, onSaveFields, onBulkConfirm, on
               {date && (
                 <span style={{ fontSize: 11, color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 3 }}>
                   🗓 {formatDateLong(date)}
+                </span>
+              )}
+              {order.payout_date && (
+                <span style={{ fontSize: 11, color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 3 }}>
+                  💶 Uitbetaald op {formatDateLong(order.payout_date)}
                 </span>
               )}
               {miniBtn(

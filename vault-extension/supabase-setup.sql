@@ -36,6 +36,13 @@ ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS transaction_status INTEGER;
 ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS shipment_status INTEGER;
 ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS is_completed BOOLEAN;
 
+-- Uitbetalingsdatum — Vinted heeft geen los payout/cashout-veld op transaction,
+-- maar conversation.messages bevat een bericht met event_type "completed"
+-- ("Je verkoop is afgerond!") waarvan created_at_ts functioneel de
+-- uitbetalingsdatum is (moment van overmaking naar de Vinted Portemonnee).
+-- Niet elke (oudere) order heeft dit bericht — dan blijft dit veld NULL.
+ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS payout_date TIMESTAMPTZ;
+
 -- Storage bucket voor vooraf gecropte 4x6-labels (automatisch gevuld door
 -- api/label-prefetch.js zodra een label beschikbaar komt)
 INSERT INTO storage.buckets (id, name, public)

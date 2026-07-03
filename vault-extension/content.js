@@ -445,6 +445,17 @@
       const shipmentStatus    = t.shipment_status ?? t.shipment?.status ?? null;
       const isCompleted       = t.is_completed ?? d.is_completed ?? null;
 
+      // Vinted geeft geen los payout/cashout-veld op transaction terug — de
+      // uitbetalingsdatum zit verstopt in conversation.messages: het bericht
+      // met event_type "completed" ("Je verkoop is afgerond!") heeft een
+      // created_at_ts die functioneel de uitbetalingsdatum is (moment waarop
+      // het bedrag naar de Vinted Portemonnee overgemaakt wordt). Niet elke
+      // (oudere) conversation heeft dit bericht — dan blijft het null.
+      const completionMsg = (conv.messages || []).find(
+        m => m.event_type === 'completed' || m.event_group === 'completion'
+      );
+      const payoutDate = completionMsg?.created_at_ts || null;
+
       return {
         photo:           photoUrl,
         buyer:           opp.login || '',
@@ -455,11 +466,12 @@
         transactionStatus,
         shipmentStatus,
         isCompleted,
+        payoutDate,
       };
     } catch (e) {
       if (debug) console.error(`[Vault] DEBUG conv ${convId} — fetchConvDetail FAALDE:`, e.message);
       console.warn(`[Vault] conv detail mislukt ${convId}:`, e.message);
-      return { photo: null, buyer: '', buyerName: '', country: '', currentUserSide: '', itemIds: [], transactionStatus: null, shipmentStatus: null, isCompleted: null };
+      return { photo: null, buyer: '', buyerName: '', country: '', currentUserSide: '', itemIds: [], transactionStatus: null, shipmentStatus: null, isCompleted: null, payoutDate: null };
     }
   }
 
@@ -484,7 +496,7 @@
     // hierna nooit meer aangeraakt worden), zodat bestaande orders alsnog
     // met transactionStatus/shipmentStatus/isCompleted worden aangevuld.
     const needsDetail = orders.filter(o =>
-      (!o.photo || !o.buyer || !o.currentUserSide || o.transactionStatus === undefined) && (o.conversationId || o.convId)
+      (!o.photo || !o.buyer || !o.currentUserSide || o.transactionStatus === undefined || o.payoutDate === undefined) && (o.conversationId || o.convId)
     );
 
     // Log VOOR de needsDetail-filter of deze 2 orders er überhaupt inzitten,
@@ -510,12 +522,13 @@
         const id = o.conversationId || o.convId;
         const isDebugTxn = DEBUG_TXN_IDS.has(o.transactionId);
         if (isDebugTxn) console.log(`[Vault] DEBUG txn ${o.transactionId}: fetchConvDetail(${id}) start`);
-        const { photo, buyer, buyerName, country, currentUserSide, itemIds, transactionStatus, shipmentStatus, isCompleted } = await fetchConvDetail(id, isDebugTxn);
+        const { photo, buyer, buyerName, country, currentUserSide, itemIds, transactionStatus, shipmentStatus, isCompleted, payoutDate } = await fetchConvDetail(id, isDebugTxn);
         console.log(`[Vault] conv detail txn ${o.transactionId}: opp="${buyer}" country="${country}" side="${currentUserSide}"`);
-        if (isDebugTxn) console.log(`[Vault] DEBUG txn ${o.transactionId}: fetchConvDetail resultaat →`, JSON.stringify({ photo, buyer, buyerName, country, currentUserSide, itemIds, transactionStatus, shipmentStatus, isCompleted }));
+        if (isDebugTxn) console.log(`[Vault] DEBUG txn ${o.transactionId}: fetchConvDetail resultaat →`, JSON.stringify({ photo, buyer, buyerName, country, currentUserSide, itemIds, transactionStatus, shipmentStatus, isCompleted, payoutDate }));
         o.transactionStatus = transactionStatus;
         o.shipmentStatus    = shipmentStatus;
         o.isCompleted       = isCompleted;
+        o.payoutDate        = payoutDate;
         changed = true;
         if (photo)           { o.photo           = photo;           changed = true; }
         if (country)         { o.country         = country;         changed = true; }
