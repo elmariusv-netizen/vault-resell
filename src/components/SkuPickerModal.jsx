@@ -54,17 +54,28 @@ export default function SkuPickerModal({ batches, allOrders, excludeOrderId, onP
           {items.length === 0 ? (
             <div style={{ padding: 24, textAlign: 'center', color: '#64748b', fontSize: 13 }}>Geen batches gevonden</div>
           ) : items.map(({ batch: b, available }) => {
-            const sku = formatSkuRange(b.supplierPrefix, b.startNum, b.endNum)
+            const range = formatSkuRange(b.supplierPrefix, b.startNum, b.endNum)
             return (
               <div
                 key={b.id}
-                onClick={() => { onPick(sku, b); onClose() }}
-                style={{ padding: '10px 20px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.04)' }}
+                onClick={() => {
+                  // Nooit de volledige batch-range ("MAU001-024") als sku_ref
+                  // opslaan — dat is enkel de weergavetekst voor deze rij. Bij
+                  // een klik hoort altijd het eerstvolgende vrije individuele
+                  // SKU-nummer binnen de batch (bv. "MAU008") opgeslagen te
+                  // worden, dezelfde getFreeSkusForBatch-logica als hierboven
+                  // gebruikt voor het "beschikbaar"-aantal.
+                  const sku = getFreeSkusForBatch(b, usedSkus)[0]
+                  if (!sku) return
+                  onPick(sku, b)
+                  onClose()
+                }}
+                style={{ padding: '10px 20px', cursor: available > 0 ? 'pointer' : 'default', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.04)', opacity: available > 0 ? 1 : 0.5 }}
                 onMouseEnter={e => e.currentTarget.style.background = '#1e293b'}
                 onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
               >
                 <div>
-                  <span style={{ fontWeight: 700, fontSize: 13, color: '#818cf8', fontFamily: 'monospace' }}>{sku}</span>
+                  <span style={{ fontWeight: 700, fontSize: 13, color: '#818cf8', fontFamily: 'monospace' }}>{range}</span>
                   {(b.name || b.brand) && (
                     <span style={{ fontSize: 12, color: '#94a3b8', marginLeft: 10 }}>{b.brand || b.name}</span>
                   )}

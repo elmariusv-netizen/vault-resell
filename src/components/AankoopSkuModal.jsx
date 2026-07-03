@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import SkuPickerModal from './SkuPickerModal'
-import { getUsedSkus, getFreeSkusForBatch, getNextSkuNum, formatSku, genId } from '../utils/skuUtils'
+import { getNextSkuNum, formatSku, genId } from '../utils/skuUtils'
 
 // ── Aankoop ↔ voorraad-batch koppeling ─────────────────────────────────────
 // Vervangt de vorige "Voor mezelf"/"Voor de handel"-toggle: een aankoop die
@@ -18,16 +18,13 @@ export default function AankoopSkuModal({ order, suppliers, batches, allOrders, 
   const supplier = suppliers.find(s => s.id === supplierId)
   const price = parseFloat(order.price || 0)
 
-  const handlePickExisting = async (_range, batch) => {
+  // SkuPickerModal berekent het eerstvolgende vrije individuele SKU-nummer
+  // al zelf (zie getFreeSkusForBatch daar) en geeft dat door als `sku` — hier
+  // enkel nog opslaan, niet nog eens herberekenen.
+  const handlePickExisting = async (sku, batch) => {
     if (saving) return
     setSaving(true)
     try {
-      const usedSkus = getUsedSkus(allOrders, [order.id])
-      const sku = getFreeSkusForBatch(batch, usedSkus)[0]
-      if (!sku) {
-        alert('Geen vrije SKU meer beschikbaar in deze batch.')
-        return
-      }
       await onConfirm({ sku, batchId: batch.id, costPrice: (batch.costPrice || 0) + (batch.importTax || 0) })
       onClose()
     } finally {
