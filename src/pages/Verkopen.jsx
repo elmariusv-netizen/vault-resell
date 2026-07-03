@@ -849,7 +849,7 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
 
   return (
     <>
-      <div style={{ borderBottom: isLast ? 'none' : '1px solid rgba(255,255,255,0.06)', background: checked ? 'rgba(129,140,248,0.10)' : 'transparent', transition: 'background 0.15s' }}>
+      <div style={{ borderBottom: isLast ? 'none' : '1px solid var(--border)', background: checked ? 'rgba(129,140,248,0.10)' : 'transparent', transition: 'background 0.15s' }}>
 
         {/* Hoofdinhoud: foto + info */}
         <div style={{ padding: '14px 16px 10px', display: 'flex', gap: 12, alignItems: 'flex-start' }}>
@@ -885,11 +885,11 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
               </>
             ) : (
               <div style={{ position: 'relative', width: 100, height: 124, flexShrink: 0 }}>
-                <div style={{ width: 100, height: 124, borderRadius: 8, background: '#1e293b', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 32 }}>
+                <div style={{ width: 100, height: 124, borderRadius: 8, background: 'var(--bg-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 32 }}>
                   {photoUploading ? '⏳' : '📦'}
                 </div>
                 {!photoUploading && (
-                  <label style={{ position: 'absolute', bottom: 6, right: 6, background: '#334155', border: '1px solid rgba(255,255,255,0.15)', color: '#94a3b8', borderRadius: '50%', width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 16, lineHeight: 1, userSelect: 'none' }} title="Foto toevoegen">
+                  <label style={{ position: 'absolute', bottom: 6, right: 6, background: 'var(--bg-2)', border: '1px solid var(--border-strong)', color: 'var(--text-2)', borderRadius: '50%', width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 16, lineHeight: 1, userSelect: 'none' }} title="Foto toevoegen">
                     +
                     <input
                       type="file"
@@ -922,7 +922,7 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
               <span
                 onClick={onDetail}
-                style={{ fontWeight: 700, fontSize: 14, color: '#4ade80', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: 1.3, flex: 1, minWidth: 0, cursor: onDetail ? 'pointer' : 'default' }}
+                style={{ fontWeight: 700, fontSize: 14, color: 'var(--green)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: 1.3, flex: 1, minWidth: 0, cursor: onDetail ? 'pointer' : 'default' }}
                 title={onDetail ? 'Klik voor details' : undefined}
               >
                 {order.title}
@@ -930,9 +930,9 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
               <button
                 onClick={onDismiss}
                 title="Verwijder"
-                style={{ flexShrink: 0, fontSize: 17, lineHeight: 1, background: 'none', border: 'none', color: '#334155', cursor: 'pointer', padding: '0 2px', fontWeight: 700, fontFamily: 'inherit' }}
-                onMouseEnter={e => e.currentTarget.style.color = '#f87171'}
-                onMouseLeave={e => e.currentTarget.style.color = '#334155'}
+                style={{ flexShrink: 0, fontSize: 17, lineHeight: 1, background: 'none', border: 'none', color: 'var(--text-3)', cursor: 'pointer', padding: '0 2px', fontWeight: 700, fontFamily: 'inherit' }}
+                onMouseEnter={e => e.currentTarget.style.color = 'var(--red)'}
+                onMouseLeave={e => e.currentTarget.style.color = 'var(--text-3)'}
               >×</button>
             </div>
 
@@ -947,16 +947,16 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
 
             {/* Rij 2: Merk · Maat · Kleur */}
             {meta && (
-              <div style={{ fontSize: 11, color: '#475569', marginBottom: 5, textTransform: 'capitalize' }}>{meta}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-2)', marginBottom: 5, textTransform: 'capitalize' }}>{meta}</div>
             )}
 
             {/* Rij 3: koper + land */}
             {(buyer || order.country) && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 5 }}>
-                <span style={{ fontSize: 12, color: '#475569', lineHeight: 1 }}>👤</span>
-                {buyer && <span style={{ fontSize: 12, color: '#94a3b8' }}>{buyer}</span>}
+                <span style={{ fontSize: 12, color: 'var(--text-2)', lineHeight: 1 }}>👤</span>
+                {buyer && <span style={{ fontSize: 12, color: 'var(--text-2)' }}>{buyer}</span>}
                 {order.country && (
-                  <span style={{ fontSize: 10, background: '#1e293b', color: '#64748b', padding: '1px 7px', borderRadius: 4, fontWeight: 600, letterSpacing: '0.2px' }}>
+                  <span style={{ fontSize: 10, background: 'var(--bg-2)', color: 'var(--text-3)', padding: '1px 7px', borderRadius: 4, fontWeight: 600, letterSpacing: '0.2px' }}>
                     {flag} {order.country}
                   </span>
                 )}
@@ -969,7 +969,7 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
                 <span style={{ fontSize: 10, color: b.color, background: b.bg, padding: '2px 7px', borderRadius: 4, fontWeight: 700, border: `1px solid ${b.color}30` }}>{b.label}</span>
               ) : null })()}
               {date && (
-                <span style={{ fontSize: 11, color: '#475569', display: 'flex', alignItems: 'center', gap: 3 }}>
+                <span style={{ fontSize: 11, color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 3 }}>
                   🗓 {formatDateLong(date)}
                 </span>
               )}
@@ -1002,14 +1002,14 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
 
         {/* Onderbalk: BRUT | COGS | PROFIT */}
         <div style={{
-          background: '#1e293b',
+          background: 'var(--bg-2)',
           display: 'flex',
-          borderTop: '1px solid rgba(255,255,255,0.04)',
+          borderTop: '1px solid var(--border)',
         }}>
           {[
             {
               label: 'BRUT',
-              node: <span style={{ fontSize: 14, fontWeight: 700, color: '#cbd5e1' }}>€{price.toFixed(2).replace('.', ',')}</span>,
+              node: <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>€{price.toFixed(2).replace('.', ',')}</span>,
             },
             {
               label: 'COGS',
@@ -1022,10 +1022,10 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
                   onBlur={saveCogs}
                   onKeyDown={e => e.key === 'Enter' && e.target.blur()}
                   onClick={e => e.stopPropagation()}
-                  style={{ width: 64, fontSize: 13, fontWeight: 700, background: 'transparent', border: 'none', borderBottom: '1px solid #4ade80', color: '#f1f5f9', outline: 'none', textAlign: 'center', fontFamily: 'inherit', padding: 0 }}
+                  style={{ width: 64, fontSize: 13, fontWeight: 700, background: 'transparent', border: 'none', borderBottom: '1px solid #4ade80', color: 'var(--text)', outline: 'none', textAlign: 'center', fontFamily: 'inherit', padding: 0 }}
                 />
               ) : (
-                <span style={{ fontSize: 14, fontWeight: 700, color: '#64748b' }}>€{cogs.toFixed(2).replace('.', ',')}</span>
+                <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-3)' }}>€{cogs.toFixed(2).replace('.', ',')}</span>
               ),
               onClick: () => !cogsEditing && setCogsEditing(true),
               title: 'Klik om te bewerken',
@@ -1034,13 +1034,13 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
               label: 'PROFIT',
               node: profit != null
                 ? <span style={{ fontSize: 14, fontWeight: 700, color: profit >= 0 ? '#4ade80' : '#f87171' }}>{profit >= 0 ? '+' : '-'}€{Math.abs(profit).toFixed(2).replace('.', ',')}</span>
-                : <span style={{ fontSize: 14, fontWeight: 700, color: '#334155' }}>—</span>,
+                : <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-3)' }}>—</span>,
             },
             {
               label: 'ROI',
               node: roi != null
                 ? <span style={{ fontSize: 14, fontWeight: 700, color: roi >= 0 ? '#4ade80' : '#f87171' }}>{roi >= 0 ? '+' : ''}{roi.toFixed(0)}%</span>
-                : <span style={{ fontSize: 14, fontWeight: 700, color: '#334155' }}>—</span>,
+                : <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-3)' }}>—</span>,
             },
           ].map((col, i, arr) => (
             <div
@@ -1051,11 +1051,11 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
                 flex: 1,
                 textAlign: 'center',
                 padding: '7px 8px',
-                borderRight: i < arr.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none',
+                borderRight: i < arr.length - 1 ? '1px solid var(--border)' : 'none',
                 cursor: col.onClick ? 'pointer' : 'default',
               }}
             >
-              <div style={{ fontSize: 9, color: '#334155', fontWeight: 700, letterSpacing: '0.8px', textTransform: 'uppercase', marginBottom: 2 }}>{col.label}</div>
+              <div style={{ fontSize: 9, color: 'var(--text-3)', fontWeight: 700, letterSpacing: '0.8px', textTransform: 'uppercase', marginBottom: 2 }}>{col.label}</div>
               {col.node}
             </div>
           ))}
@@ -1075,8 +1075,8 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
             objectFit: 'cover',
             zIndex: 9999,
             pointerEvents: 'none',
-            boxShadow: '0 24px 60px rgba(0,0,0,0.7)',
-            border: '2px solid rgba(255,255,255,0.1)',
+            boxShadow: 'var(--shadow-lg)',
+            border: '2px solid var(--border-strong)',
           }}
         />
       )}
@@ -1610,17 +1610,10 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
               </div>
             ) : (
               <div style={{
-                background: '#0f172a',
-                border: '1px solid rgba(255,255,255,0.08)',
+                background: 'var(--bg-1)',
+                border: '1px solid var(--border)',
                 borderRadius: 12,
                 overflow: 'hidden',
-                '--bg': '#1e293b',
-                '--bg-2': '#0f172a',
-                '--bg-3': '#1e293b',
-                '--border': 'rgba(255,255,255,0.1)',
-                '--text': '#f1f5f9',
-                '--text-2': '#cbd5e1',
-                '--text-3': '#94a3b8',
               }}>
                 {visibleVtOrders.map((order, i, arr) => (
                   <VintedOrderRow

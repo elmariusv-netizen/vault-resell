@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useRef } from 'react'
+import { useMemo, useState, useEffect, useRef, useCallback } from 'react'
 import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar,
   XAxis, YAxis, Tooltip, CartesianGrid, LineChart, Line,
@@ -8,26 +8,34 @@ import DateRangeFilter, { getDateBounds, filterByRange } from '../components/Dat
 import {
   formatCurrency, formatDate, formatSkuRange,
   getRemainingQty, calcSaleProfit, normalizePlatform,
+  isCancelledStatus, isFinishedStatus, isInTransitStatus, isLabelReady,
 } from '../utils/skuUtils'
 import { supabase } from '../utils/supabase'
 
-// Always-dark palette for the dashboard
+// Theme-aware — leunt op dezelfde CSS custom properties als de rest van de
+// app (zie index.css [data-theme="dark"]), zodat het dashboard netjes
+// meeschakelt met de licht/donker-toggle i.p.v. altijd donker te blijven.
 const D = {
-  bg:      '#0f1117',
-  card:    '#161b2e',
-  card2:   '#1e2437',
-  border:  'rgba(255,255,255,0.07)',
-  text:    '#f0f2f8',
-  text2:   'rgba(240,242,248,0.55)',
-  text3:   'rgba(240,242,248,0.28)',
-  blue:    '#3b82f6',
-  blueDim: 'rgba(59,130,246,0.15)',
-  green:   '#22c55e',
-  red:     '#ef4444',
-  yellow:  '#f59e0b',
+  bg:      'var(--bg)',
+  card:    'var(--bg-1)',
+  card2:   'var(--bg-2)',
+  border:  'var(--border)',
+  text:    'var(--text)',
+  text2:   'var(--text-2)',
+  text3:   'var(--text-3)',
+  blue:    'var(--blue)',
+  blueDim: 'var(--blue-dim)',
+  green:   'var(--green)',
+  red:     'var(--red)',
+  yellow:  'var(--yellow)',
   purple:  '#8b5cf6',
-  grid:    'rgba(255,255,255,0.04)',
+  grid:    'var(--border)',
 }
+
+// Vaste hex-fallback voor plekken die een alpha-suffix aan de kleur plakken
+// (bv. `kleur + '22'`) — dat werkt niet met een `var(--x)`-string, dus deze
+// ene plek blijft bewust een echte hex-waarde i.p.v. D.blue.
+const ACCENT_HEX = '#2563eb'
 
 // ── Chart data builders ───────────────────────
 function buildChartData(sales, range, bounds) {
@@ -86,7 +94,7 @@ function buildHeatmapData(sales) {
 const DashTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null
   return (
-    <div style={{ background: D.card2, border: `1px solid ${D.border}`, borderRadius: 10, padding: '10px 14px', boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
+    <div style={{ background: D.card2, border: `1px solid ${D.border}`, borderRadius: 10, padding: '10px 14px', boxShadow: 'var(--shadow-lg)' }}>
       <div style={{ fontSize: 11, color: D.text2, marginBottom: 5 }}>{label}</div>
       {payload.map((p, i) => (
         <div key={i} style={{ color: p.color || D.blue, fontWeight: 700, fontSize: 13 }}>
@@ -122,7 +130,7 @@ function HeatmapGrid({ sales }) {
   const hasData = sales.some((s) => s.saleTime)
 
   const getColor = (val) => {
-    if (val === 0) return 'rgba(255,255,255,0.05)'
+    if (val === 0) return 'var(--bg-2)'
     const a = 0.2 + (val / maxVal) * 0.8
     return `rgba(59,130,246,${a.toFixed(2)})`
   }
@@ -157,7 +165,7 @@ function HeatmapGrid({ sales }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 8, justifyContent: 'flex-end' }}>
             <span style={{ fontSize: 9, color: D.text3 }}>Minder</span>
             {[0, 0.3, 0.6, 1].map((p, i) => (
-              <div key={i} style={{ width: 12, height: 12, borderRadius: 2, background: p === 0 ? 'rgba(255,255,255,0.05)' : `rgba(59,130,246,${(0.2 + p * 0.8).toFixed(2)})` }} />
+              <div key={i} style={{ width: 12, height: 12, borderRadius: 2, background: p === 0 ? 'var(--bg-2)' : `rgba(59,130,246,${(0.2 + p * 0.8).toFixed(2)})` }} />
             ))}
             <span style={{ fontSize: 9, color: D.text3 }}>Meer</span>
           </div>
@@ -182,6 +190,20 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
   const [showSale, setShowSale] = useState(false)
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
   const [syncState, setSyncState] = useState(null) // null | { status, done, total, newCount, newFoundCount, updatedCount }
+
+  // ── Vinted-orders live ophalen voor de statuskaarten (Te verzenden/
+  // Onderweg/Labels klaar) — deze moeten de daadwerkelijke Vinted-status
+  // weerspiegelen, niet de losse, handmatige sales.shipped-vlag (die enkel
+  // bestaat voor SKU-gekoppelde orders en nooit vanzelf overeenkomt met wat
+  // Vinted echt zegt). Herladen bij mount én na een geslaagde sync.
+  const [vtOrders, setVtOrders] = useState([])
+  const fetchVtOrders = useCallback(async () => {
+    const { data: rows, error } = await supabase
+      .from('vinted_orders')
+      .select('id, status, order_direction, label_available, label_pdf_url')
+    if (!error) setVtOrders(rows || [])
+  }, [])
+  useEffect(() => { fetchVtOrders() }, [fetchVtOrders])
 
   // ── "Alles synchroniseren": zet de vault_sync_requested-vlag + opent/
   // activeert een Vinted-tab (de extensie kan geen tabs opzoeken vanuit een
@@ -233,6 +255,7 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
       const progress = row?.vault_sync_progress
       if (!progress) return
       setSyncState(progress)
+      if (progress.status === 'done') fetchVtOrders()
       if (progress.status === 'done' || progress.status === 'no_tab' || progress.status === 'error') {
         stopSyncPolling()
       }
@@ -277,11 +300,6 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
     return null
   }, [syncState])
 
-  useEffect(() => {
-    const el = document.querySelector('.content-area')
-    if (el) { el.style.background = D.bg; return () => { el.style.background = '' } }
-  }, [])
-
   const bounds = useMemo(() => getDateBounds(range, customFrom, customTo), [range, customFrom, customTo])
   const filteredSales = useMemo(() => filterByRange(sales, range, bounds), [sales, range, bounds])
 
@@ -298,11 +316,19 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
     const totalRevenue = paid.reduce((s, x) => s + (x.salePrice || 0) * (x.quantity || 1), 0)
     const totalOrders = paid.length
     const avgOrder = totalOrders > 0 ? totalRevenue / totalOrders : 0
-    const toShip = sales.filter((s) => !s.shipped && !s.isFree).length
-    const onTheWay = filteredSales.filter((s) => s.shipped).length
+
+    // Verkoop-orders (order_direction ontbreekt bij oudere rijen — die zijn
+    // altijd verkopen), niet-geannuleerd — zelfde criterium als Verkopen.jsx.
+    const activeSaleOrders = vtOrders.filter(o =>
+      (o.order_direction === 'sale' || !o.order_direction) && !isCancelledStatus(o.status)
+    )
+    const toShip = activeSaleOrders.filter(o => !isFinishedStatus(o.status) && !isInTransitStatus(o.status)).length
+    const onTheWay = activeSaleOrders.filter(o => isInTransitStatus(o.status)).length
+    const labelsReady = vtOrders.filter(isLabelReady).length
+
     const totalItems = batches.reduce((s, b) => s + getRemainingQty(b, sales), 0)
-    return { totalRevenue, totalOrders, avgOrder, toShip, onTheWay, totalItems }
-  }, [filteredSales, sales, batches])
+    return { totalRevenue, totalOrders, avgOrder, toShip, onTheWay, labelsReady, totalItems }
+  }, [filteredSales, sales, batches, vtOrders])
 
   const chartData = useMemo(() => buildChartData(filteredSales, range, bounds), [filteredSales, range, bounds])
 
@@ -417,8 +443,8 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
           />
         </div>
 
-        {/* Stat row 2 — 2 cards */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
+        {/* Stat row 2 — 3 cards */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 20 }}>
           <DashCard
             label="Te verzenden"
             value={stats.toShip}
@@ -428,8 +454,14 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
           <DashCard
             label="Onderweg"
             value={stats.onTheWay}
-            sub={`${rangeLabel[range] || 'Periode'} verzonden`}
+            sub="Nu onderweg"
             accent={D.green}
+          />
+          <DashCard
+            label="🖨️ Labels klaar"
+            value={stats.labelsReady}
+            sub="Klaar om te printen"
+            accent={D.blue}
           />
         </div>
 
@@ -496,7 +528,7 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
                     tick={{ fill: D.text3, fontSize: 10, fontFamily: 'inherit' }}
                     axisLine={false} tickLine={false} width={28} allowDecimals={false}
                   />
-                  <Tooltip content={<DashTooltip />} cursor={{ fill: 'rgba(255,255,255,0.03)' }} />
+                  <Tooltip content={<DashTooltip />} cursor={{ fill: 'var(--bg-2)' }} />
                   <Bar dataKey="count" fill={D.blue} radius={[4, 4, 0, 0]} maxBarSize={40} />
                 </BarChart>
               </ResponsiveContainer>
@@ -540,8 +572,8 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
                   <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: `1px solid ${D.border}` }}>
                     <div style={{
                       width: 36, height: 36, borderRadius: 9,
-                      background: (sup?.color || D.blue) + '22',
-                      border: `1px solid ${(sup?.color || D.blue)}33`,
+                      background: (sup?.color || ACCENT_HEX) + '22',
+                      border: `1px solid ${(sup?.color || ACCENT_HEX)}33`,
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                       flexShrink: 0, overflow: 'hidden', fontSize: 14,
                     }}>
@@ -551,7 +583,7 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
                       <div style={{ fontSize: 13, fontWeight: 600, color: D.text }}>
                         {b ? formatSkuRange(b.supplierPrefix, b.startNum, b.endNum) : '?'}
                         {s.quantity > 1 && <span style={{ color: D.text3 }}> ×{s.quantity}</span>}
-                        <span style={{ marginLeft: 7, fontSize: 10, fontWeight: 600, background: 'rgba(255,255,255,0.07)', padding: '2px 6px', borderRadius: 4, color: D.text2 }}>
+                        <span style={{ marginLeft: 7, fontSize: 10, fontWeight: 600, background: 'var(--bg-2)', padding: '2px 6px', borderRadius: 4, color: D.text2 }}>
                           {sp}
                         </span>
                         {s.isFree && <span style={{ marginLeft: 4, fontSize: 10, color: D.green, fontWeight: 700 }}>GRATIS</span>}
@@ -593,7 +625,7 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
       {/* ════════ MOBILE ════════ */}
       <div className="dash-mobile" style={{ paddingBottom: 80 }}>
         {/* Hero */}
-        <div style={{ background: 'linear-gradient(180deg, #1a1f38 0%, #0f1117 100%)', padding: '28px 20px 24px' }}>
+        <div style={{ background: 'linear-gradient(180deg, var(--bg-2) 0%, var(--bg) 100%)', padding: '28px 20px 24px' }}>
           <div style={{ fontSize: 10, color: D.text3, fontWeight: 700, letterSpacing: '.12em', textTransform: 'uppercase', marginBottom: 10 }}>
             Vandaag verdiend
           </div>
@@ -632,6 +664,7 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
             { label: 'Bestellingen', value: stats.totalOrders, color: D.blue },
             { label: 'Te verzenden', value: stats.toShip, color: D.yellow },
             { label: 'Onderweg', value: stats.onTheWay, color: D.text2 },
+            { label: '🖨️ Labels klaar', value: stats.labelsReady, color: D.blue },
             { label: 'In voorraad', value: stats.totalItems, color: D.text3 },
           ].map((p) => (
             <div key={p.label} style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 12, padding: '10px 14px', flexShrink: 0 }}>
@@ -679,7 +712,7 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
               const sup = suppliers.find((x) => b && x.prefix === b.supplierPrefix)
               return (
                 <div key={s.id} style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 14, padding: '13px 14px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <div style={{ width: 38, height: 38, borderRadius: 9, background: (sup?.color || D.blue) + '20', border: `1px solid ${(sup?.color || D.blue)}30`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden', fontSize: 14 }}>
+                  <div style={{ width: 38, height: 38, borderRadius: 9, background: (sup?.color || ACCENT_HEX) + '20', border: `1px solid ${(sup?.color || ACCENT_HEX)}30`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden', fontSize: 14 }}>
                     {s.photo ? <img src={s.photo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 8 }} /> : '🏷'}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
