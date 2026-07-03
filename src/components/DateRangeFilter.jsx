@@ -34,48 +34,8 @@ export function filterByRange(sales, range, bounds) {
   })
 }
 
-export default function DateRangeFilter({ value, onChange, customFrom, customTo, onCustom, dark = false }) {
+export default function DateRangeFilter({ value, onChange, customFrom, customTo, onCustom }) {
   const RANGES = ['today', 'week', 'month', 'all', 'custom']
-
-  if (dark) {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
-        {RANGES.map((r) => (
-          <button
-            key={r}
-            onClick={() => onChange(r)}
-            style={{
-              padding: '5px 12px',
-              borderRadius: 6,
-              border: `1px solid ${value === r ? '#3b82f6' : 'rgba(255,255,255,0.08)'}`,
-              background: value === r ? 'rgba(59,130,246,0.15)' : 'transparent',
-              color: value === r ? '#3b82f6' : 'rgba(240,242,248,0.5)',
-              fontSize: 12,
-              fontWeight: value === r ? 600 : 400,
-              cursor: 'pointer',
-              fontFamily: 'inherit',
-              transition: 'all 0.13s',
-            }}
-          >
-            {RANGE_LABELS[r]}
-          </button>
-        ))}
-        {value === 'custom' && (
-          <>
-            <input
-              type="date" value={customFrom} onChange={(e) => onCustom('from', e.target.value)}
-              style={{ background: '#161b2e', border: '1px solid rgba(255,255,255,0.1)', color: '#f0f2f8', borderRadius: 6, padding: '4px 10px', fontSize: 12, fontFamily: 'inherit', outline: 'none' }}
-            />
-            <span style={{ color: 'rgba(240,242,248,0.3)', fontSize: 12 }}>–</span>
-            <input
-              type="date" value={customTo} onChange={(e) => onCustom('to', e.target.value)}
-              style={{ background: '#161b2e', border: '1px solid rgba(255,255,255,0.1)', color: '#f0f2f8', borderRadius: 6, padding: '4px 10px', fontSize: 12, fontFamily: 'inherit', outline: 'none' }}
-            />
-          </>
-        )}
-      </div>
-    )
-  }
 
   return (
     <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>

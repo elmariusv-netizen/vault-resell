@@ -381,7 +381,6 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
               value={range} onChange={setRange}
               customFrom={customFrom} customTo={customTo}
               onCustom={(k, v) => k === 'from' ? setCustomFrom(v) : setCustomTo(v)}
-              dark
             />
             <button
               onClick={handleSyncAll}
