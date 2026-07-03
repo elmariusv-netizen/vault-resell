@@ -165,6 +165,15 @@ export function getFreeSkusForBatch(batch, usedSkus) {
   return all.filter(s => !usedSkus.has(s))
 }
 
+// Eenheidskostprijs (COGS) van 1 artikel uit een batch — enige bron van
+// waarheid bij het koppelen van een BESTAANDE batch aan een order, gedeeld
+// tussen SkuPickerModal se aanroepers (Verkopen.jsx "SKU koppelen",
+// AankoopSkuModal) en BulkSkuModal, zodat cost_price nooit op 2 plekken
+// anders berekend wordt.
+export function getBatchUnitCost(batch) {
+  return (batch?.costPrice || 0) + (batch?.importTax || 0)
+}
+
 // ── Bedrijfskosten — gedeeld tussen Kosten.jsx (totaal bovenaan) en
 // Stats.jsx (aftrek van de netto winst), zodat ze nooit uit elkaar kunnen
 // lopen. business_costs is een losse, RLS-beveiligde tabel (owner_id =

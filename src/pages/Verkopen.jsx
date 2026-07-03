@@ -2,6 +2,7 @@ import { useMemo, useState, useEffect } from 'react'
 import {
   formatCurrency, formatDateLong, formatSkuRange, calcSaleProfit, normalizePlatform,
   genId, formatSku, isLabelReady, COUNTRY_FLAGS, getStatusBadge, getUsedSkus, getFreeSkusForBatch,
+  getBatchUnitCost,
 } from '../utils/skuUtils'
 import SaleModal from '../components/SaleModal'
 import EditSaleModal from '../components/EditSaleModal'
@@ -789,7 +790,7 @@ function BulkSkuModal({ suppliers, batches, allOrders, orders, onClose, onConfir
 // dan een dun randje) — deze versie geeft een duidelijk gevuld vlak + wit
 // vinkje bij aangevinkt, en een subtiele lege outline bij niet-aangevinkt.
 // ── Order rij (Vinteer-stijl) ──────────────────────────────────────────────
-function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegister, onDetail, onUnlinkSku, batches, allOrders, checked, onCheck }) {
+function VintedOrderRow({ order, isLast, onSave, onSaveFields, onDismiss, onPhotoClick, onRegister, onDetail, onUnlinkSku, batches, allOrders, checked, onCheck }) {
   const [skuPickerOpen,  setSkuPickerOpen]  = useState(false)
   const [hoverPos,       setHoverPos]       = useState(null)
   const [cogsEditing,    setCogsEditing]    = useState(false)
@@ -1086,7 +1087,11 @@ function VintedOrderRow({ order, isLast, onSave, onDismiss, onPhotoClick, onRegi
           batches={batches}
           allOrders={allOrders}
           excludeOrderId={order.id}
-          onPick={sku => onSave(order.id, 'sku_ref', sku)}
+          onPick={(sku, batch) => onSaveFields(order.id, {
+            sku_ref: sku,
+            cost_price: getBatchUnitCost(batch),
+            batch_id: batch.id,
+          })}
           onClose={() => setSkuPickerOpen(false)}
         />
       )}
@@ -1279,6 +1284,14 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
     setVtOrders(prev => prev.map(o => o.id === id ? { ...o, [field]: value } : o))
   }
 
+  // Meerdere velden in 1 update — gebruikt bij het koppelen van een batch aan
+  // een order (sku_ref + cost_price + batch_id horen samen weggeschreven te
+  // worden, anders blijft cost_price op 0 staan terwijl sku_ref al wel klopt).
+  const saveVtFields = async (id, patch) => {
+    await supabase.from('vinted_orders').update(patch).eq('id', id)
+    setVtOrders(prev => prev.map(o => o.id === id ? { ...o, ...patch } : o))
+  }
+
   const openSaleModal = (row) => {
     setSaleModalPrefill({
       buyer:    row.buyer && row.buyer !== 'Onbekende koper' ? row.buyer : '',
@@ -1350,8 +1363,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
       const order = vtOrders.find(o => o.id === orderId)
       const isBundle = validItems.length > 1
 
-      const totalCogs = validItems.reduce((sum, it) =>
-        sum + (it.batch ? (it.batch.costPrice || 0) + (it.batch.importTax || 0) : 0), 0)
+      const totalCogs = validItems.reduce((sum, it) => sum + (it.batch ? getBatchUnitCost(it.batch) : 0), 0)
       const anyBatch = validItems.some(it => it.batch)
       const batchIds = [...new Set(validItems.map(it => it.batch?.id).filter(Boolean))]
 
@@ -1621,6 +1633,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
                     order={order}
                     isLast={i === arr.length - 1}
                     onSave={saveVtField}
+                    onSaveFields={saveVtFields}
                     onDismiss={() => dismissVintedOrder(order.id)}
                     onPhotoClick={setPhotoPopup}
                     onDetail={() => setOrderDetail(order)}

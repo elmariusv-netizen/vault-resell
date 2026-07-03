@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import SkuPickerModal from './SkuPickerModal'
-import { getNextSkuNum, formatSku, genId } from '../utils/skuUtils'
+import { getNextSkuNum, formatSku, genId, getBatchUnitCost } from '../utils/skuUtils'
 
 // ── Aankoop ↔ voorraad-batch koppeling ─────────────────────────────────────
 // Vervangt de vorige "Voor mezelf"/"Voor de handel"-toggle: een aankoop die
@@ -25,7 +25,7 @@ export default function AankoopSkuModal({ order, suppliers, batches, allOrders, 
     if (saving) return
     setSaving(true)
     try {
-      await onConfirm({ sku, batchId: batch.id, costPrice: (batch.costPrice || 0) + (batch.importTax || 0) })
+      await onConfirm({ sku, batchId: batch.id, costPrice: getBatchUnitCost(batch) })
       onClose()
     } finally {
       setSaving(false)

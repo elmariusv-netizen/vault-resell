@@ -58,7 +58,7 @@ export default function SkuPickerModal({ batches, allOrders, excludeOrderId, onP
             return (
               <div
                 key={b.id}
-                onClick={() => {
+                onClick={async () => {
                   // Nooit de volledige batch-range ("MAU001-024") als sku_ref
                   // opslaan — dat is enkel de weergavetekst voor deze rij. Bij
                   // een klik hoort altijd het eerstvolgende vrije individuele
@@ -67,7 +67,13 @@ export default function SkuPickerModal({ batches, allOrders, excludeOrderId, onP
                   // gebruikt voor het "beschikbaar"-aantal.
                   const sku = getFreeSkusForBatch(b, usedSkus)[0]
                   if (!sku) return
-                  onPick(sku, b)
+                  // Wachten tot onPick() de order daadwerkelijk heeft
+                  // opgeslagen (en de lokale allOrders-state dus bijgewerkt
+                  // is) VOORDAT dit scherm sluit — anders kan de gebruiker
+                  // meteen een volgende order koppelen terwijl usedSkus hier
+                  // nog de oude, niet-bijgewerkte lijst gebruikt, waardoor
+                  // "beschikbaar" niet daalt.
+                  await onPick(sku, b)
                   onClose()
                 }}
                 style={{ padding: '10px 20px', cursor: available > 0 ? 'pointer' : 'default', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.04)', opacity: available > 0 ? 1 : 0.5 }}
