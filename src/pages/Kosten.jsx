@@ -12,11 +12,20 @@ const CATEGORY_COLORS = {
   'Overig':                  '#6b7280',
 }
 
-function NewCostModal({ onClose, onSave }) {
+// Sentinel-waarde voor "Anders, namelijk..." in de categorie-dropdown — geen
+// echte categorienaam, enkel om te weten wanneer het tekstinvoerveld getoond
+// moet worden (zie showCustomInput in NewCostModal hieronder).
+const CUSTOM_CATEGORY_OPTION = '__custom__'
+
+// existingCategories: unieke category-waarden uit de al bestaande
+// business_costs-records van de gebruiker (zie Kosten() hieronder) — laat
+// eerder zelf getypte categorieën hergebruiken i.p.v. steeds opnieuw typen.
+function NewCostModal({ onClose, onSave, existingCategories }) {
   const [description, setDescription] = useState('')
   const [amount, setAmount] = useState('')
   const [costDate, setCostDate] = useState(new Date().toISOString().split('T')[0])
   const [category, setCategory] = useState(COST_CATEGORIES[0])
+  const [customCategory, setCustomCategory] = useState('')
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
@@ -25,13 +34,26 @@ function NewCostModal({ onClose, onSave }) {
     return () => window.removeEventListener('keydown', close)
   }, [onClose])
 
-  const canSave = description.trim() && parseFloat(amount) > 0 && costDate
+  // Aangepaste categorieën die al eens eerder getypt zijn (dus niet al in de
+  // vaste lijst zitten) — als los te kiezen opties, zodat je "Verpakkings-
+  // folie" bv. niet iedere keer opnieuw hoeft in te tikken.
+  const customOptions = existingCategories.filter(c => c && !COST_CATEGORIES.includes(c))
+
+  // "Overig" toont het tekstveld OPTIONEEL (typ je niets, dan blijft het
+  // gewoon "Overig" — ongewijzigd bestaand gedrag); de nieuwe "Anders,
+  // namelijk..."-optie toont 'm VERPLICHT, want daar is geen zinvolle
+  // standaardwaarde voor.
+  const showCustomInput = category === 'Overig' || category === CUSTOM_CATEGORY_OPTION
+  const customRequired = category === CUSTOM_CATEGORY_OPTION
+
+  const canSave = description.trim() && parseFloat(amount) > 0 && costDate && (!customRequired || customCategory.trim())
 
   const handleSave = async () => {
     if (!canSave || saving) return
     setSaving(true)
     try {
-      await onSave({ description: description.trim(), amount: parseFloat(amount), cost_date: costDate, category })
+      const finalCategory = showCustomInput && customCategory.trim() ? customCategory.trim() : category
+      await onSave({ description: description.trim(), amount: parseFloat(amount), cost_date: costDate, category: finalCategory })
       onClose()
     } finally {
       setSaving(false)
@@ -88,7 +110,18 @@ function NewCostModal({ onClose, onSave }) {
               style={{ width: '100%', padding: '9px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-2)', color: 'var(--text)', fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box' }}
             >
               {COST_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+              {customOptions.map(c => <option key={c} value={c}>{c}</option>)}
+              <option value={CUSTOM_CATEGORY_OPTION}>Anders, namelijk...</option>
             </select>
+            {showCustomInput && (
+              <input
+                autoFocus={customRequired}
+                value={customCategory}
+                onChange={e => setCustomCategory(e.target.value)}
+                placeholder={customRequired ? 'Naam van de categorie...' : 'Optioneel: specifiekere naam dan "Overig"...'}
+                style={{ width: '100%', marginTop: 8, padding: '9px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-2)', color: 'var(--text)', fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box' }}
+              />
+            )}
           </div>
 
           <button
@@ -201,6 +234,7 @@ export default function Kosten({ activeUserId }) {
   useEffect(() => { refreshInvoices() }, [refreshInvoices])
 
   const total = sumCosts(costs)
+  const existingCategories = [...new Set(costs.map(c => c.category).filter(Boolean))]
 
   const handleSave = async ({ description, amount, cost_date, category }) => {
     const row = { id: genId(), owner_id: activeUserId, description, amount, cost_date, category }
@@ -327,7 +361,7 @@ export default function Kosten({ activeUserId }) {
       )}
 
       {modalOpen && (
-        <NewCostModal onClose={() => setModalOpen(false)} onSave={handleSave} />
+        <NewCostModal onClose={() => setModalOpen(false)} onSave={handleSave} existingCategories={existingCategories} />
       )}
     </div>
   )
