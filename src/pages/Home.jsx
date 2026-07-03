@@ -37,30 +37,42 @@ const D = {
 // ene plek blijft bewust een echte hex-waarde i.p.v. D.blue.
 const ACCENT_HEX = '#2563eb'
 
+// Groepeer-sleutel voor "1 bestelling" — bundel/meerdere-artikelen-orders
+// (BulkSkuModal in Verkopen.jsx) slaan elk item als een eigen sales-entry op
+// maar delen dezelfde vintedOrderId, dus die telt als 1 bestelling. Losse
+// sales zonder vintedOrderId (volledig handmatig geregistreerd) hebben geen
+// gedeelde order om op te groeperen en tellen elk als hun eigen bestelling.
+function orderKey(sale) {
+  return sale.vintedOrderId || sale.id
+}
+
 // ── Chart data builders ───────────────────────
+// "count" is het aantal DISTINCTE bestellingen (orderKey), niet het aantal
+// sales-regels/items — een bundel van 6 items telt hier als 1. "revenue"
+// blijft wel de som van alle items.
 function buildChartData(sales, range, bounds) {
   if (range === 'all') {
     const byMonth = {}
     sales.forEach((s) => {
       if (!s.date) return
       const m = s.date.substring(0, 7)
-      if (!byMonth[m]) byMonth[m] = { revenue: 0, count: 0 }
+      if (!byMonth[m]) byMonth[m] = { revenue: 0, orderIds: new Set() }
       byMonth[m].revenue += (s.salePrice || 0) * (s.quantity || 1)
-      byMonth[m].count += s.quantity || 1
+      byMonth[m].orderIds.add(orderKey(s))
     })
     return Object.entries(byMonth).sort().map(([m, d]) => ({
       label: new Date(m + '-01').toLocaleString('nl-BE', { month: 'short', year: '2-digit' }),
       revenue: Math.round(d.revenue * 100) / 100,
-      count: d.count,
+      count: d.orderIds.size,
     }))
   }
 
   const byDay = {}
   sales.forEach((s) => {
     if (!s.date) return
-    if (!byDay[s.date]) byDay[s.date] = { revenue: 0, count: 0 }
+    if (!byDay[s.date]) byDay[s.date] = { revenue: 0, orderIds: new Set() }
     byDay[s.date].revenue += (s.salePrice || 0) * (s.quantity || 1)
-    byDay[s.date].count += s.quantity || 1
+    byDay[s.date].orderIds.add(orderKey(s))
   })
 
   const result = []
@@ -70,8 +82,9 @@ function buildChartData(sales, range, bounds) {
     const ds = cursor.toISOString().split('T')[0]
     result.push({
       label: cursor.toLocaleDateString('nl-BE', { day: 'numeric', month: 'short' }),
+      date: ds,
       revenue: Math.round((byDay[ds]?.revenue || 0) * 100) / 100,
-      count: byDay[ds]?.count || 0,
+      count: byDay[ds]?.orderIds.size || 0,
     })
     cursor.setDate(cursor.getDate() + 1)
   }
@@ -135,6 +148,21 @@ function HeatmapGrid({ sales }) {
     return `rgba(59,130,246,${a.toFixed(2)})`
   }
 
+  // Vinted geeft voor automatisch gesyncte orders geen betrouwbaar exact
+  // tijdstip terug (enkel een datum) — deze heatmap kan dus nooit vanzelf
+  // gevuld raken en blijft puur voor handmatig ingevoerde tijdstippen. Toon
+  // in dat geval een duidelijke lege-staat i.p.v. een zinloos leeg rooster.
+  if (!hasData) {
+    return (
+      <div style={{ padding: '28px 16px', textAlign: 'center' }}>
+        <div style={{ fontSize: 26, marginBottom: 8 }}>🕐</div>
+        <div style={{ fontSize: 13, color: D.text2 }}>
+          Vul een tijdstip in bij het handmatig registreren van een verkoop om deze grafiek te vullen.
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div>
       <div style={{ overflowX: 'auto', paddingBottom: 4 }}>
@@ -171,11 +199,6 @@ function HeatmapGrid({ sales }) {
           </div>
         </div>
       </div>
-      {!hasData && (
-        <div style={{ fontSize: 12, color: D.text3, textAlign: 'center', marginTop: 6 }}>
-          Voeg een tijdstip toe bij verkopen om dit heatmap te vullen
-        </div>
-      )}
     </div>
   )
 }
@@ -314,7 +337,8 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
   const stats = useMemo(() => {
     const paid = filteredSales.filter((s) => !s.isFree)
     const totalRevenue = paid.reduce((s, x) => s + (x.salePrice || 0) * (x.quantity || 1), 0)
-    const totalOrders = paid.length
+    // Aantal DISTINCTE bestellingen, niet aantal sales-regels — zie orderKey().
+    const totalOrders = new Set(paid.map(orderKey)).size
     const avgOrder = totalOrders > 0 ? totalRevenue / totalOrders : 0
 
     // Verkoop-orders (order_direction ontbreekt bij oudere rijen — die zijn
@@ -338,6 +362,16 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
   }, [filteredSales, sales, batches, vtOrders])
 
   const chartData = useMemo(() => buildChartData(filteredSales, range, bounds), [filteredSales, range, bounds])
+
+  // Klik op een dag-staaf in "Aantal verkopen per dag" → naar Verkopen met
+  // een filter op precies die dag. Alleen dag-buckets dragen een `date`-veld
+  // (zie buildChartData) — maand-buckets ('all'-bereik) hebben dat niet, dus
+  // die klik is dan bewust een no-op.
+  const handleDayBarClick = (barData) => {
+    const date = barData?.payload?.date ?? barData?.date
+    if (!date) return
+    onNavigate('verkopen', { day: date })
+  }
 
   const recentSales = useMemo(
     () => [...sales].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 6),
@@ -541,7 +575,7 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
                     axisLine={false} tickLine={false} width={28} allowDecimals={false}
                   />
                   <Tooltip content={<DashTooltip />} cursor={{ fill: 'var(--bg-2)' }} />
-                  <Bar dataKey="count" fill={D.blue} radius={[4, 4, 0, 0]} maxBarSize={40} />
+                  <Bar dataKey="count" fill={D.blue} radius={[4, 4, 0, 0]} maxBarSize={40} onClick={handleDayBarClick} cursor="pointer" />
                 </BarChart>
               </ResponsiveContainer>
             )}

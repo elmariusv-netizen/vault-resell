@@ -41,6 +41,16 @@ export default function App() {
   const [vintedCookie, setVintedCookie] = useState(() => localStorage.getItem('vault-vinted-cookie') || null)
   const [supabaseUser, setSupabaseUser] = useState(null)
   const [authChecked, setAuthChecked] = useState(false)
+  const [pendingDayFilter, setPendingDayFilter] = useState(null)
+
+  // Uitbreiding van setPage: laat Home.jsx's "klik op een dag in de grafiek"
+  // meteen een dag-filter meegeven aan de doelpagina (vooralsnog enkel
+  // Verkopen.jsx), zonder de gewone setPage-navigatie (Nav.jsx, andere
+  // onNavigate('pagina')-aanroepen zonder opts) te veranderen.
+  const navigateTo = useCallback((targetPage, opts) => {
+    if (opts?.day) setPendingDayFilter(opts.day)
+    setPage(targetPage)
+  }, [])
 
   // ── Supabase Auth ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -236,7 +246,7 @@ export default function App() {
   }
 
   const displayName = supabaseUser.email.split('@')[0]
-  const props = { data, updateData, onNavigate: setPage, onDeleteSale: handleDeleteSale }
+  const props = { data, updateData, onNavigate: navigateTo, onDeleteSale: handleDeleteSale }
 
   return (
     <div className="app-shell">
@@ -267,7 +277,7 @@ export default function App() {
           {page === 'home'      && <Home {...props} theme={theme} activeUserId={activeUserId} />}
           {page === 'inventory' && <Inventory {...props} />}
           {page === 'new'       && <NewSKU {...props} />}
-          {page === 'verkopen'  && <Verkopen data={data} onDeleteSale={handleDeleteSale} onUpdateSale={handleUpdateSale} updateData={updateData} vintedCookie={vintedCookie} />}
+          {page === 'verkopen'  && <Verkopen data={data} onDeleteSale={handleDeleteSale} onUpdateSale={handleUpdateSale} updateData={updateData} vintedCookie={vintedCookie} dayFilter={pendingDayFilter} onConsumeDayFilter={() => setPendingDayFilter(null)} />}
           {page === 'aankopen'  && <Aankopen data={data} updateData={updateData} />}
           {page === 'kosten'    && <Kosten activeUserId={activeUserId} />}
           {page === 'stats'     && <Stats data={data} theme={theme} />}

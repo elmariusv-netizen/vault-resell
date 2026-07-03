@@ -1225,7 +1225,7 @@ function AddOrderModal({ onClose, onSave }) {
   )
 }
 
-export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData, vintedCookie }) {
+export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData, vintedCookie, dayFilter, onConsumeDayFilter }) {
   const { batches, sales, suppliers } = data
 
   const [search, setSearch] = useState('')
@@ -1233,6 +1233,15 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
   const [filterMonth, setFilterMonth] = useState('all')
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
   const [editSale, setEditSale] = useState(null)
+  // Dag-filter vanuit Home.jsx's "Aantal verkopen per dag"-grafiek (klik op
+  // een staaf) — apart van filterMonth, want die dropdown kent enkel
+  // maand-opties en zou een exacte dag niet als geselecteerd kunnen tonen.
+  const [dayFilterActive, setDayFilterActive] = useState(null)
+  useEffect(() => {
+    if (!dayFilter) return
+    setDayFilterActive(dayFilter)
+    onConsumeDayFilter?.()
+  }, [dayFilter, onConsumeDayFilter])
 
   // ── Vinted Orders state ────────────────────────────────────────────────
   const [vtOrders, setVtOrders]   = useState([])
@@ -1474,6 +1483,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
     return enriched.filter((s) => {
       if (filterPlatform !== 'all' && s.platformDisplay !== filterPlatform) return false
       if (filterMonth !== 'all' && !s.date?.startsWith(filterMonth)) return false
+      if (dayFilterActive && s.date !== dayFilterActive) return false
       if (search) {
         const q = search.toLowerCase()
         return (
@@ -1487,7 +1497,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
       }
       return true
     })
-  }, [enriched, filterPlatform, filterMonth, search])
+  }, [enriched, filterPlatform, filterMonth, dayFilterActive, search])
 
   const totals = useMemo(() => filtered.reduce((acc, s) => ({
     revenue: acc.revenue + (s.isFree ? 0 : (s.salePrice || 0) * (s.quantity || 1)),
@@ -1519,6 +1529,16 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
           <option value="all">Alle maanden</option>
           {months.map((m) => <option key={m} value={m}>{m}</option>)}
         </select>
+        {dayFilterActive && (
+          <span className="filter-chip active" style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'default' }}>
+            📅 {formatDateLong(dayFilterActive)}
+            <button
+              onClick={() => setDayFilterActive(null)}
+              title="Dag-filter wissen"
+              style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0, fontWeight: 700, fontSize: 13, lineHeight: 1, fontFamily: 'inherit' }}
+            >×</button>
+          </span>
+        )}
         <span style={{ fontSize: 12, color: 'var(--text-3)', padding: '0 4px' }}>
           {filtered.length} verkopen
         </span>
