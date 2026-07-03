@@ -29,6 +29,13 @@ ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS item_titles TEXT;
 ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS batch_id TEXT;
 ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS label_pdf_url TEXT;
 
+-- Vinted's numerieke transaction/shipment-statuscodes — primaire bron voor
+-- classifyOrderStage() (skuUtils.js) achter de Home-dashboard-statuskaarten,
+-- taalonafhankelijk en dus betrouwbaarder dan tekst-matching op status.
+ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS transaction_status INTEGER;
+ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS shipment_status INTEGER;
+ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS is_completed BOOLEAN;
+
 -- Storage bucket voor vooraf gecropte 4x6-labels (automatisch gevuld door
 -- api/label-prefetch.js zodra een label beschikbaar komt)
 INSERT INTO storage.buckets (id, name, public)

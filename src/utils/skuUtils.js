@@ -117,6 +117,48 @@ export function isInTransitStatus(status) {
   return s.includes('verzond') || s.includes('shipped') || s.includes('transit') || s.includes('onderweg')
 }
 
+// ── Order-fase-classificatie — PRIMAIR op Vinted's numerieke transaction/
+// shipment-statuscodes (taalonafhankelijk, dus betrouwbaarder dan tekst-
+// matching), met de tekst-classificatie hierboven als FALLBACK voor orders
+// die nog geen transaction_status/is_completed hebben (nog niet opnieuw
+// gesynct sinds die velden zijn toegevoegd — dan is transaction_status null).
+//
+// Mapping opgebouwd uit live STATUS-MAPPING-logging (80+ orders):
+//   transaction_status=510                 → geannuleerd/mislukt (terugbetaald)
+//   is_completed===true                    → voltooid (dekt zowel 450 als 460,
+//                                             ongeacht shipment_status-variant)
+//   transaction_status=230                 → onderweg — zowel shipment_status
+//                                             300 ("verzonden") als 310 ("kan
+//                                             worden opgehaald bij afhaal-
+//                                             punt/postkantoor") tellen hier
+//                                             onder: de verkoper heeft in
+//                                             BEIDE gevallen al verzonden, dus
+//                                             dit hoort NOOIT bij "te verzenden"
+//   transaction_status=430                 → gepauzeerd (probleemgeval, telt
+//                                             nergens in mee — geen normale
+//                                             voortgang)
+//   overige/onbekende codes                → te verzenden (nog geen van de
+//                                             bovenstaande fases bereikt)
+export function classifyOrderStage(order) {
+  const numericStatus = order?.transaction_status ?? order?.transactionStatus
+  const isCompleted = order?.is_completed ?? order?.isCompleted
+
+  if (numericStatus != null) {
+    if (numericStatus === 510) return 'cancelled'
+    if (isCompleted === true) return 'finished'
+    if (numericStatus === 230) return 'in_transit'
+    if (numericStatus === 430) return 'paused'
+    return 'to_ship'
+  }
+
+  // Fallback: tekst-classificatie voor orders zonder numerieke velden.
+  const status = order?.status
+  if (isCancelledStatus(status)) return 'cancelled'
+  if (isFinishedStatus(status)) return 'finished'
+  if (isInTransitStatus(status)) return 'in_transit'
+  return 'to_ship'
+}
+
 // ── Status badge — gedeeld tussen Verkopen.jsx en Aankopen.jsx ─────────────
 // labelAvailable moet hier al de geverifieerde waarde zijn (isLabelReady(order)
 // hierboven, niet enkel het ruwe order.label_available of een gok op

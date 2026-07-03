@@ -8,7 +8,7 @@ import DateRangeFilter, { getDateBounds, filterByRange } from '../components/Dat
 import {
   formatCurrency, formatDate, formatSkuRange,
   getRemainingQty, calcSaleProfit, normalizePlatform,
-  isCancelledStatus, isFinishedStatus, isInTransitStatus, isLabelReady,
+  classifyOrderStage, isLabelReady,
 } from '../utils/skuUtils'
 import { supabase } from '../utils/supabase'
 
@@ -200,7 +200,7 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
   const fetchVtOrders = useCallback(async () => {
     const { data: rows, error } = await supabase
       .from('vinted_orders')
-      .select('id, status, order_direction, label_available, label_pdf_url')
+      .select('id, status, order_direction, label_available, label_pdf_url, transaction_status, is_completed')
     if (!error) setVtOrders(rows || [])
   }, [])
   useEffect(() => { fetchVtOrders() }, [fetchVtOrders])
@@ -318,12 +318,18 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
     const avgOrder = totalOrders > 0 ? totalRevenue / totalOrders : 0
 
     // Verkoop-orders (order_direction ontbreekt bij oudere rijen — die zijn
-    // altijd verkopen), niet-geannuleerd — zelfde criterium als Verkopen.jsx.
-    const activeSaleOrders = vtOrders.filter(o =>
-      (o.order_direction === 'sale' || !o.order_direction) && !isCancelledStatus(o.status)
-    )
-    const toShip = activeSaleOrders.filter(o => !isFinishedStatus(o.status) && !isInTransitStatus(o.status)).length
-    const onTheWay = activeSaleOrders.filter(o => isInTransitStatus(o.status)).length
+    // altijd verkopen). classifyOrderStage() gebruikt PRIMAIR Vinted's
+    // numerieke transaction_status/is_completed (taalonafhankelijk,
+    // betrouwbaarder), met de tekst-classificatie als fallback voor orders
+    // die nog niet opnieuw gesynct zijn sinds die velden bestaan. "paused"
+    // (transaction_status=430, een probleemgeval) telt bewust in GEEN van
+    // beide tellers mee — zie classifyOrderStage() in skuUtils.js.
+    const activeSaleOrders = vtOrders
+      .filter(o => o.order_direction === 'sale' || !o.order_direction)
+      .map(o => ({ order: o, stage: classifyOrderStage(o) }))
+      .filter(({ stage }) => stage !== 'cancelled')
+    const toShip = activeSaleOrders.filter(({ stage }) => stage === 'to_ship').length
+    const onTheWay = activeSaleOrders.filter(({ stage }) => stage === 'in_transit').length
     const labelsReady = vtOrders.filter(isLabelReady).length
 
     const totalItems = batches.reduce((s, b) => s + getRemainingQty(b, sales), 0)

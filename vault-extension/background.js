@@ -164,6 +164,12 @@ async function syncToSupabase(order) {
     conversation_id: order.conversationId  || null,
     order_direction: order.orderDirection  || 'sale',
     seller_name:     order.sellerName      || null,
+    // Vinted's numerieke transaction/shipment-statuscodes — primaire bron
+    // voor classifyOrderStage() (skuUtils.js), taalonafhankelijk en dus
+    // betrouwbaarder dan tekst-matching op status.
+    transaction_status: order.transactionStatus ?? null,
+    shipment_status:    order.shipmentStatus    ?? null,
+    is_completed:       order.isCompleted       ?? null,
   };
 
   console.log('[Vault] price:', order.price);
