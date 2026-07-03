@@ -98,10 +98,11 @@ function VintedKoppeling({ vintedCookie, onSave, activeUserId }) {
         </div>
 
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 700, fontSize: 15 }}>Vinted koppeling</div>
+          <div style={{ fontWeight: 700, fontSize: 15 }}>Verzendlabels (Vinted-sessie)</div>
           <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2, fontFamily: isConnected ? 'monospace' : 'inherit' }}>
             {isConnected ? masked : 'Niet gekoppeld — voeg je sessie-cookie toe om listings en labels te activeren'}
           </div>
+          <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4 }}>Nodig om verzendlabels op te halen.</div>
         </div>
 
         <div style={{ display: 'flex', gap: 8, flexShrink: 0, alignItems: 'center' }}>
@@ -447,13 +448,14 @@ function VintedAccountLink({ supabaseUser }) {
         }}>🔗</div>
 
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 700, fontSize: 15 }}>Vinted account koppelen</div>
+          <div style={{ fontWeight: 700, fontSize: 15 }}>Vinted-account (voor automatische synchronisatie)</div>
           <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2 }}>
             {linked === null ? 'Laden…'
               : linked        ? 'Gekoppeld — extensie sync werkt'
               : waiting       ? 'Wachten op koppeling…'
               :                 'Niet gekoppeld — sync werkt pas na koppeling'}
           </div>
+          <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4 }}>Nodig zodat de extensie weet welke aankopen/verkopen van jou zijn.</div>
         </div>
 
         {linked && (
@@ -920,17 +922,26 @@ export default function Settings({ data, updateData, onExport, onClearData, acti
           onUserSettingsChange={onUserSettingsChange}
         />
 
-        {/* Vinted koppeling */}
+        {/* Verzendlabels — onafhankelijk van de extensie-koppeling hieronder:
+            deze sessie-cookie wordt enkel gebruikt om labels rechtstreeks bij
+            Vinted op te halen (Labels.jsx/Verkopen.jsx/api/label.js). */}
+        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-2)', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '8px 2px' }}>
+          Verzendlabels
+        </div>
         <VintedKoppeling
           vintedCookie={vintedCookie}
           onSave={onVintedCookieChange}
           activeUserId={activeUserId}
         />
 
-        {/* Extensie installatie — Stap 1 */}
+        {/* Synchronisatie met de extensie — Stap 1 (installatie) + Stap 2
+            (account koppelen) horen samen: de account-koppeling bepaalt aan
+            welk Vault-account de extensie gesyncte orders toewijst. */}
+        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-2)', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '20px 2px 8px' }}>
+          Synchronisatie met de extensie
+        </div>
         <ExtensionInstall onConfirm={() => setExtInstalled(true)} />
 
-        {/* Vinted account koppelen — Stap 2, pas zichtbaar na bevestiging */}
         {extInstalled && (
           <VintedAccountLink supabaseUser={supabaseUser} />
         )}
