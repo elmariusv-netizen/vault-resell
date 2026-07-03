@@ -12,7 +12,16 @@ const NAV_LINKS = [
 
 const BOTTOM_TABS = ['home', 'new', 'verkopen', 'aankopen', 'settings']
 
-export default function Nav({ currentPage, onNavigate, theme, onToggleTheme, userName }) {
+// Voorraad ("inventory") en Nieuw ("new", een nieuwe leverancier-batch
+// aanmaken) zijn allebei enkel relevant voor het SKU/batch-systeem — niet
+// voor iemand die uitsluitend op Vinted inkoopt. Zie onboarding STAP 1
+// (Onboarding.jsx) / Instellingen.
+const SUPPLIER_ONLY_PAGES = new Set(['inventory', 'new'])
+
+export default function Nav({ currentPage, onNavigate, theme, onToggleTheme, userName, purchaseMethod }) {
+  const links = NAV_LINKS.filter((l) => purchaseMethod !== 'vinted' || !SUPPLIER_ONLY_PAGES.has(l.id))
+  const bottomLinks = links.filter((l) => BOTTOM_TABS.includes(l.id))
+
   return (
     <>
       {/* Desktop Sidebar */}
@@ -26,7 +35,7 @@ export default function Nav({ currentPage, onNavigate, theme, onToggleTheme, use
         </div>
 
         <nav className="sidebar-nav">
-          {NAV_LINKS.map((l) => (
+          {links.map((l) => (
             <button
               key={l.id}
               className={`sidebar-link${currentPage === l.id ? ' active' : ''}`}
@@ -57,7 +66,7 @@ export default function Nav({ currentPage, onNavigate, theme, onToggleTheme, use
 
       {/* Mobile Bottom Nav */}
       <nav className="bottom-nav">
-        {NAV_LINKS.filter((l) => BOTTOM_TABS.includes(l.id)).map((l) => (
+        {bottomLinks.map((l) => (
           <button
             key={l.id}
             className={`bottom-tab${currentPage === l.id ? ' active' : ''}`}

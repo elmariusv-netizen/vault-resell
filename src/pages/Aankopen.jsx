@@ -130,7 +130,7 @@ function AankoopRow({ order, onLinkSku, onDelete, checked, onCheck }) {
   )
 }
 
-export default function Aankopen({ data, updateData }) {
+export default function Aankopen({ data, updateData, purchaseMethod }) {
   const { batches = [], suppliers = [] } = data || {}
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
@@ -217,7 +217,15 @@ export default function Aankopen({ data, updateData }) {
         <div className="empty-state">
           <div className="empty-icon">🛍</div>
           <h3>Geen aankopen gevonden</h3>
-          <p>Synchroniseer aankopen via de extensie onder het 🛍 Aankopen tabblad.</p>
+          {/* Vinted-koppeling-hint is enkel relevant als je ook via Vinted
+              inkoopt (zie onboarding STAP 1 / Instellingen) — voor iemand
+              die uitsluitend bij leveranciers inkoopt, verwijst dit naar
+              een extensie-actie die voor hen niet van toepassing is. */}
+          <p>
+            {purchaseMethod === 'suppliers'
+              ? 'Leveranciersaankopen registreer je via Voorraad — deze pagina toont enkel automatisch gesynchroniseerde Vinted-aankopen.'
+              : 'Synchroniseer aankopen via de extensie onder het 🛍 Aankopen tabblad.'}
+          </p>
         </div>
       ) : (
         <>

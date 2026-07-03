@@ -568,14 +568,18 @@
 
   // ── Achtergrond sync — voor de Home "🔄 Synchroniseren"-knop (via FORCE_SYNC
   // hieronder) ─────────────────────────────────────────────────────────────
-  // Nieuwe VERKOPEN (currentUserSide !== 'buyer') worden hier WEL automatisch
-  // gesynct — dat is de kern-functionaliteit, elke verkoop hoort automatisch
-  // in de boekhouding terecht te komen. Nieuwe AANKOPEN (currentUserSide ===
-  // 'buyer') worden hier NOOIT automatisch gesynct — dat blijft exclusief de
+  // Of nieuwe VERKOPEN/AANKOPEN hier automatisch meesyncen is instelbaar via
+  // Onboarding.jsx STAP 2 / Instellingen → "Inkoop & synchronisatie"
+  // (user_settings.auto_sync_sales/auto_sync_purchases, doorgegeven via
+  // FORCE_SYNC — zie background.js checkAndSync()). Defaults (sales=true,
+  // purchases=false) matchen de kolom-DEFAULTs in supabase-setup.sql en het
+  // oorspronkelijke hardcoded gedrag, voor het geval de instelling niet kon
+  // worden opgehaald. Wat niet automatisch meesynct wordt enkel geteld
+  // (newFoundCount) voor gebruikersfeedback — blijft beschikbaar via de
   // handmatige paneel-flow (checkboxes + "Sync geselecteerde" in
-  // drawAankopenFooter hieronder, die rechtstreeks SYNC_TO_SUPABASE/SYNC_ORDER
-  // aanroept en niet via deze functie loopt); nieuwe aankopen worden hier
-  // alleen geteld (newFoundCount) voor gebruikersfeedback.
+  // drawVerkopenFooter/drawAankopenFooter hieronder, die rechtstreeks
+  // SYNC_TO_SUPABASE/SYNC_ORDER aanroepen en altijd werken, ongeacht deze
+  // instelling — dat is een expliciete gebruikersactie, geen "auto"-sync).
   //
   // Voor orders die al eerder gesynct zijn (verkoop of aankoop, maakt niet uit):
   //  - status verversen zolang de order nog niet "voltooid" is;
@@ -586,18 +590,17 @@
   //
   // userId (optioneel) laat voortgang terugmelden aan de webapp via
   // REPORT_SYNC_PROGRESS.
-  async function refreshKnownOrders(orders, userId) {
+  async function refreshKnownOrders(orders, userId, autoSyncSales = true, autoSyncPurchases = false) {
     const { syncedOrders = [] } = await chrome.storage.local.get(['syncedOrders']);
     syncedIds = new Set(syncedOrders.map(o => o.transactionId).filter(Boolean));
 
-    // Nieuwe verkopen horen automatisch mee te syncen. Nieuwe aankopen
-    // (currentUserSide === 'buyer') horen NIET via deze knop binnen te komen —
-    // die blijven exclusief de handmatige Aankopen-tab in het extensiepaneel.
+    const shouldAutoSync = (o) => o.currentUserSide === 'buyer' ? autoSyncPurchases : autoSyncSales;
+
     const nieuw = orders.filter(o =>
-      o.transactionId && !syncedIds.has(o.transactionId) && o.currentUserSide !== 'buyer'
+      o.transactionId && !syncedIds.has(o.transactionId) && shouldAutoSync(o)
     );
-    const nieuweAankopenOvergeslagen = orders.filter(o =>
-      o.transactionId && !syncedIds.has(o.transactionId) && o.currentUserSide === 'buyer'
+    const nieuwOvergeslagen = orders.filter(o =>
+      o.transactionId && !syncedIds.has(o.transactionId) && !shouldAutoSync(o)
     );
 
     const teVerversen = orders.filter(o => o.transactionId && syncedIds.has(o.transactionId) && !isOrderCompleted(o));
@@ -622,7 +625,7 @@
       ...teVerversen.map(o => ({ order: o, kind: 'refresh' })),
       ...teCorrigeren.map(o => ({ order: o, kind: 'direction-check' })),
     ];
-    console.log(`[Vault] refreshKnownOrders: ${orders.length} orders — ${nieuw.length} nieuw (verkoop, wordt gesynct), ${nieuweAankopenOvergeslagen.length} nieuwe aankoop overgeslagen (enkel via Aankopen-tab), ${teVerversen.length} te verversen, ${teCorrigeren.length} voltooid+richting-check`);
+    console.log(`[Vault] refreshKnownOrders: ${orders.length} orders — ${nieuw.length} nieuw (wordt automatisch gesynct, autoSyncSales=${autoSyncSales}/autoSyncPurchases=${autoSyncPurchases}), ${nieuwOvergeslagen.length} nieuw overgeslagen (enkel via het extensiepaneel), ${teVerversen.length} te verversen, ${teCorrigeren.length} voltooid+richting-check`);
 
     const reportProgress = async (progress) => {
       if (!userId) return;
@@ -669,15 +672,15 @@
           console.warn(`[Vault] refreshKnownOrders ✗ txn ${o.transactionId}`, res);
         }
       }
-      await reportProgress({ status: 'running', done: i + 1, total: targets.length, newCount, updatedCount, newFoundCount: nieuweAankopenOvergeslagen.length });
+      await reportProgress({ status: 'running', done: i + 1, total: targets.length, newCount, updatedCount, newFoundCount: nieuwOvergeslagen.length });
     }
 
-    console.log(`[Vault] refreshKnownOrders klaar: ${newCount} nieuwe verkoop gesynct, ${updatedCount} bijgewerkt, ${fail} mislukt, ${nieuweAankopenOvergeslagen.length} nieuwe aankoop overgeslagen (niet gesynct)`);
+    console.log(`[Vault] refreshKnownOrders klaar: ${newCount} nieuw automatisch gesynct, ${updatedCount} bijgewerkt, ${fail} mislukt, ${nieuwOvergeslagen.length} nieuw overgeslagen (niet automatisch gesynct)`);
     await reportProgress({
       status: 'done', done: targets.length, total: targets.length,
-      newCount, updatedCount, newFoundCount: nieuweAankopenOvergeslagen.length, finishedAt: new Date().toISOString(),
+      newCount, updatedCount, newFoundCount: nieuwOvergeslagen.length, finishedAt: new Date().toISOString(),
     });
-    return { newCount, updatedCount, newFoundCount: nieuweAankopenOvergeslagen.length, fail };
+    return { newCount, updatedCount, newFoundCount: nieuwOvergeslagen.length, fail };
   }
 
   async function loadDlIds() {
@@ -1578,7 +1581,7 @@
           }
         }
         await enrichOrders(active)
-        const result = await refreshKnownOrders(active, msg.userId)
+        const result = await refreshKnownOrders(active, msg.userId, msg.autoSyncSales, msg.autoSyncPurchases)
         sendResponse({ success: true, count: active.length, ...result })
       } catch (e) {
         console.warn('[Vault] FORCE_SYNC error:', e.message)

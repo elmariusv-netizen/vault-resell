@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { genId, getNextSkuLabel, formatSku, formatDate } from '../utils/skuUtils'
 import { supabase } from '../utils/supabase'
+import { PurchaseMethodPicker, AutoSyncToggleRow } from './Onboarding'
 
 const COLORS = ['#00ff88', '#4fc3f7', '#ce93d8', '#ffb74d', '#80cbc4', '#ff7043', '#f06292', '#aed581', '#ffd60a', '#3ecfff']
 
@@ -572,7 +573,86 @@ function PlatformsSection() {
   )
 }
 
-export default function Settings({ data, updateData, onExport, onClearData, activeUserId, vintedCookie, onVintedCookieChange, supabaseUser, onSignOut }) {
+// ── Inkoop & synchronisatie — zelfde keuzes/teksten als de onboarding-flow
+// (Onboarding.jsx STAP 1+2, PurchaseMethodPicker/AutoSyncToggleRow gedeeld),
+// hier achteraf aanpasbaar. Lokale state initialiseert 1x uit de props; de
+// pagina remount (key={page} in App.jsx) telkens je hierheen navigeert, dus
+// dat blijft altijd de actuele waarde.
+function PurchaseSettingsSection({ activeUserId, purchaseMethod, autoSyncSales, autoSyncPurchases, onUserSettingsChange }) {
+  const [method, setMethod] = useState(purchaseMethod || 'both')
+  const [syncSales, setSyncSales] = useState(autoSyncSales ?? true)
+  const [syncPurchases, setSyncPurchases] = useState(autoSyncPurchases ?? false)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  const dirty = method !== (purchaseMethod || 'both')
+    || syncSales !== (autoSyncSales ?? true)
+    || syncPurchases !== (autoSyncPurchases ?? false)
+
+  const handleSave = async () => {
+    if (!dirty || saving) return
+    setSaving(true)
+    try {
+      const { error } = await supabase.from('user_settings').upsert({
+        user_id: activeUserId,
+        purchase_method: method,
+        auto_sync_sales: syncSales,
+        auto_sync_purchases: syncPurchases,
+      }, { onConflict: 'user_id' })
+      if (error) throw error
+      onUserSettingsChange?.({ purchaseMethod: method, autoSyncSales: syncSales, autoSyncPurchases: syncPurchases })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2500)
+    } catch (e) {
+      alert(`Opslaan mislukt: ${e.message}`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="glass-card">
+      <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 4 }}>Inkoop & synchronisatie</div>
+      <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 18 }}>
+        Dezelfde keuzes als bij het opstarten — pas ze hier aan wanneer je situatie verandert.
+      </div>
+
+      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-2)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
+        Hoe koop je meestal in?
+      </div>
+      <PurchaseMethodPicker value={method} onChange={setMethod} />
+
+      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-2)', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '20px 0 8px' }}>
+        Automatisch synchroniseren
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <AutoSyncToggleRow
+          label="Verkopen automatisch synchroniseren"
+          checked={syncSales}
+          onChange={setSyncSales}
+          desc="Nieuwe verkopen worden automatisch opgehaald en de status van bestaande verkopen wordt bijgewerkt, zonder dat je zelf iets hoeft aan te vinken."
+        />
+        <AutoSyncToggleRow
+          label="Aankopen automatisch synchroniseren"
+          checked={syncPurchases}
+          onChange={setSyncPurchases}
+          desc="Nieuwe aankopen komen alleen binnen als je ze zelf handmatig selecteert via de extensie. Zet dit aan als je wil dat ook nieuwe aankopen automatisch worden opgehaald."
+        />
+      </div>
+
+      <button
+        className="btn btn-primary btn-sm"
+        style={{ marginTop: 16 }}
+        onClick={handleSave}
+        disabled={!dirty || saving}
+      >
+        {saving ? 'Bezig…' : saved ? '✓ Opgeslagen' : 'Opslaan'}
+      </button>
+    </div>
+  )
+}
+
+export default function Settings({ data, updateData, onExport, onClearData, activeUserId, vintedCookie, onVintedCookieChange, supabaseUser, onSignOut, purchaseMethod, autoSyncSales, autoSyncPurchases, onUserSettingsChange }) {
   const { suppliers, batches, sales } = data
   const documents = data.documents || []
 
@@ -824,6 +904,15 @@ export default function Settings({ data, updateData, onExport, onClearData, acti
             </div>
           )}
         </div>
+
+        {/* Inkoop & synchronisatie — zelfde keuzes als de onboarding-flow */}
+        <PurchaseSettingsSection
+          activeUserId={activeUserId}
+          purchaseMethod={purchaseMethod}
+          autoSyncSales={autoSyncSales}
+          autoSyncPurchases={autoSyncPurchases}
+          onUserSettingsChange={onUserSettingsChange}
+        />
 
         {/* Vinted koppeling */}
         <VintedKoppeling

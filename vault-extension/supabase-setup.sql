@@ -59,6 +59,19 @@ CREATE POLICY IF NOT EXISTS "anon kan updaten"
 ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS vault_sync_requested BOOLEAN DEFAULT FALSE;
 ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS vault_sync_progress JSONB;
 
+-- ══════════════════════════════════════════════════════════════════
+-- ONBOARDING-FLOW (Onboarding.jsx, ook aanpasbaar via Settings.jsx)
+-- ══════════════════════════════════════════════════════════════════
+-- purchase_method bepaalt welke Voorraad/Nieuw/Aankopen-UI zichtbaar is
+-- (zie Nav.jsx/Aankopen.jsx): 'vinted' | 'suppliers' | 'both'.
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS purchase_method TEXT DEFAULT 'both';
+-- auto_sync_sales/auto_sync_purchases bepalen of de "nieuw"-bucket in
+-- content.js's refreshKnownOrders() nieuwe verkopen/aankopen automatisch
+-- meesynct via de Home-sync-knop, i.p.v. enkel handmatig via de extensie.
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS auto_sync_sales BOOLEAN DEFAULT TRUE;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS auto_sync_purchases BOOLEAN DEFAULT FALSE;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_completed BOOLEAN DEFAULT FALSE;
+
 -- user_settings heeft (verderop in dit bestand) enkel een "authenticated"
 -- RLS-policy — de Chrome-extensie gebruikt de anon-key (geen auth-sessie) en
 -- kon dus vault_sync_requested/vault_sync_progress nooit lezen of resetten.
@@ -67,9 +80,14 @@ ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS vault_sync_progress JSONB;
 -- vlag kan lezen/bijwerken, zonder de rest van user_settings voor anon
 -- open te zetten. Views draaien standaard met de rechten van de eigenaar
 -- (niet de aanroeper), dus dit omzeilt bewust de RLS van de onderliggende
--- tabel — enkel voor deze 3 kolommen.
+-- tabel — enkel voor deze kolommen. auto_sync_sales/auto_sync_purchases
+-- toegevoegd zodat refreshKnownOrders() (content.js) weet of de "nieuw"-
+-- bucket voor verkopen/aankopen automatisch mag meesynct worden; purchase_
+-- method/onboarding_completed blijven bewust WEL buiten deze view — die
+-- heeft de extensie niet nodig, enkel de webapp (via de normale
+-- authenticated RLS hieronder).
 CREATE OR REPLACE VIEW user_sync_status AS
-  SELECT user_id, vault_sync_requested, vault_sync_progress FROM user_settings;
+  SELECT user_id, vault_sync_requested, vault_sync_progress, auto_sync_sales, auto_sync_purchases FROM user_settings;
 
 GRANT SELECT, UPDATE ON user_sync_status TO anon;
 
@@ -120,6 +138,13 @@ CREATE POLICY "user beheert eigen settings"
 
 -- UPDATE vinted_orders  SET owner_id = '<JOUW_UUID>' WHERE owner_id IS NULL;
 -- UPDATE user_settings  SET owner_id = '<JOUW_UUID>', user_id = '<JOUW_UUID>' WHERE owner_id IS NULL;
+
+-- onboarding_completed is nieuw en staat voor ELKE rij (ook al langer
+-- bestaande accounts) standaard op FALSE — zonder deze update zie je de
+-- onboarding-flow dus ook als je al langer gebruiker bent. Voer dit 1x uit
+-- voor je eigen (en eventuele andere bestaande) account(s) als je de
+-- onboarding niet opnieuw wil doorlopen:
+-- UPDATE user_settings SET onboarding_completed = true WHERE onboarding_completed = false;
 
 -- ══════════════════════════════════════════════════════════════════
 -- USER DATA (suppliers, batches, sales, documents, …)

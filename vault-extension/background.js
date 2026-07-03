@@ -453,7 +453,7 @@ async function checkAndSync() {
   checkAndSyncRunning = true;
   try {
     const checkRes = await fetch(
-      `${SYNC_STATUS_URL}?vault_sync_requested=eq.true&select=user_id&limit=1`,
+      `${SYNC_STATUS_URL}?vault_sync_requested=eq.true&select=user_id,auto_sync_sales,auto_sync_purchases&limit=1`,
       { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
     )
     if (!checkRes.ok) return
@@ -461,7 +461,12 @@ async function checkAndSync() {
     if (!rows?.length) return
 
     const userId = rows[0].user_id
-    console.log('[Vault] vault-sync-requested gevonden, user:', userId)
+    // Defaults matchen de kolom-DEFAULTs in supabase-setup.sql (sales aan,
+    // aankopen uit) — relevant voor rijen van vóór deze onboarding-migratie,
+    // waar deze kolommen nog niet bestaan/null zijn.
+    const autoSyncSales = rows[0].auto_sync_sales ?? true
+    const autoSyncPurchases = rows[0].auto_sync_purchases ?? false
+    console.log('[Vault] vault-sync-requested gevonden, user:', userId, 'autoSyncSales:', autoSyncSales, 'autoSyncPurchases:', autoSyncPurchases)
 
     // Stuur FORCE_SYNC naar elke open Vinted tab
     const tabs = await new Promise(resolve =>
@@ -471,7 +476,7 @@ async function checkAndSync() {
     if (tabs.length) {
       await Promise.all(tabs.map(tab =>
         new Promise(resolve =>
-          chrome.tabs.sendMessage(tab.id, { type: 'FORCE_SYNC', userId }, r => {
+          chrome.tabs.sendMessage(tab.id, { type: 'FORCE_SYNC', userId, autoSyncSales, autoSyncPurchases }, r => {
             if (chrome.runtime.lastError) resolve(null)
             else { console.log('[Vault] FORCE_SYNC result tab', tab.id, ':', r); resolve(r) }
           })

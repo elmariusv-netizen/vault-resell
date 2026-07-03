@@ -10,6 +10,7 @@ import Verkopen from './pages/Verkopen'
 import Aankopen from './pages/Aankopen'
 import Kosten from './pages/Kosten'
 import Auth from './pages/Auth'
+import Onboarding from './pages/Onboarding'
 import { getBackupMeta, saveBackupMeta } from './utils/storage'
 import { loadCloudData, saveCloudData } from './utils/cloudStorage'
 import { SEED_DATA } from './data/seedData'
@@ -42,6 +43,10 @@ export default function App() {
   const [supabaseUser, setSupabaseUser] = useState(null)
   const [authChecked, setAuthChecked] = useState(false)
   const [pendingDayFilter, setPendingDayFilter] = useState(null)
+  // null = nog niet geladen (toont laadscherm), daarna { purchaseMethod,
+  // onboardingCompleted, autoSyncSales, autoSyncPurchases } — bepaalt of de
+  // onboarding-flow getoond wordt en welke Nav-onderdelen zichtbaar zijn.
+  const [userSettings, setUserSettings] = useState(null)
 
   // Uitbreiding van setPage: laat Home.jsx's "klik op een dag in de grafiek"
   // meteen een dag-filter meegeven aan de doelpagina (vooralsnog enkel
@@ -127,12 +132,17 @@ export default function App() {
       .finally(() => setReady(true))
   }, [supabaseUser?.id])
 
-  // Vinted cookie from Supabase user_settings
+  // Vinted cookie + onboarding/purchase-method/auto-sync-instellingen uit
+  // Supabase user_settings — 1 gecombineerde fetch. Ontbrekende rij (gloednieuw
+  // account) of ontbrekende kolommen (bestaand account van vóór deze
+  // migratie) vallen terug op dezelfde defaults als de kolom-DEFAULTs in
+  // supabase-setup.sql, zodat de UI nooit op een onbepaalde tussentoestand
+  // blijft hangen.
   useEffect(() => {
     if (!activeUserId) return
     supabase
       .from('user_settings')
-      .select('vinted_cookie')
+      .select('vinted_cookie, purchase_method, onboarding_completed, auto_sync_sales, auto_sync_purchases')
       .eq('user_id', activeUserId)
       .maybeSingle()
       .then(({ data: row }) => {
@@ -140,6 +150,12 @@ export default function App() {
           setVintedCookie(row.vinted_cookie)
           localStorage.setItem('vault-vinted-cookie', row.vinted_cookie)
         }
+        setUserSettings({
+          purchaseMethod: row?.purchase_method || 'both',
+          onboardingCompleted: !!row?.onboarding_completed,
+          autoSyncSales: row?.auto_sync_sales ?? true,
+          autoSyncPurchases: row?.auto_sync_purchases ?? false,
+        })
       })
   }, [activeUserId])
 
@@ -236,12 +252,23 @@ export default function App() {
 
   if (!supabaseUser) return <Auth />
 
-  if (!ready || !data) {
+  if (!ready || !data || !userSettings) {
     return (
       <div className="loading">
         <span style={{ color: 'var(--green)' }}>●</span>
         Laden…
       </div>
+    )
+  }
+
+  if (!userSettings.onboardingCompleted) {
+    return (
+      <Onboarding
+        activeUserId={activeUserId}
+        onComplete={({ purchaseMethod, autoSyncSales, autoSyncPurchases }) =>
+          setUserSettings({ purchaseMethod, autoSyncSales, autoSyncPurchases, onboardingCompleted: true })
+        }
+      />
     )
   }
 
@@ -256,6 +283,7 @@ export default function App() {
         theme={theme}
         onToggleTheme={toggleTheme}
         userName={displayName}
+        purchaseMethod={userSettings.purchaseMethod}
       />
 
       <div className="content-area">
@@ -278,10 +306,25 @@ export default function App() {
           {page === 'inventory' && <Inventory {...props} />}
           {page === 'new'       && <NewSKU {...props} />}
           {page === 'verkopen'  && <Verkopen data={data} onDeleteSale={handleDeleteSale} onUpdateSale={handleUpdateSale} updateData={updateData} vintedCookie={vintedCookie} dayFilter={pendingDayFilter} onConsumeDayFilter={() => setPendingDayFilter(null)} />}
-          {page === 'aankopen'  && <Aankopen data={data} updateData={updateData} />}
+          {page === 'aankopen'  && <Aankopen data={data} updateData={updateData} purchaseMethod={userSettings.purchaseMethod} />}
           {page === 'kosten'    && <Kosten activeUserId={activeUserId} />}
           {page === 'stats'     && <Stats data={data} theme={theme} />}
-          {page === 'settings'  && <Settings {...props} onExport={handleExport} onClearData={handleClearData} activeUserId={activeUserId} vintedCookie={vintedCookie} onVintedCookieChange={setVintedCookie} supabaseUser={supabaseUser} onSignOut={() => supabase.auth.signOut()} />}
+          {page === 'settings'  && (
+            <Settings
+              {...props}
+              onExport={handleExport}
+              onClearData={handleClearData}
+              activeUserId={activeUserId}
+              vintedCookie={vintedCookie}
+              onVintedCookieChange={setVintedCookie}
+              supabaseUser={supabaseUser}
+              onSignOut={() => supabase.auth.signOut()}
+              purchaseMethod={userSettings.purchaseMethod}
+              autoSyncSales={userSettings.autoSyncSales}
+              autoSyncPurchases={userSettings.autoSyncPurchases}
+              onUserSettingsChange={(patch) => setUserSettings((prev) => ({ ...prev, ...patch }))}
+            />
+          )}
           {page === 'labels'    && <Labels data={data} vintedCookie={vintedCookie} />}
         </main>
       </div>
