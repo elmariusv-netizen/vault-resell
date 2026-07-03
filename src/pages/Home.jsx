@@ -181,7 +181,7 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
   const [customTo, setCustomTo] = useState('')
   const [showSale, setShowSale] = useState(false)
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
-  const [syncState, setSyncState] = useState(null) // null | { status, done, total, newFoundCount, updatedCount }
+  const [syncState, setSyncState] = useState(null) // null | { status, done, total, newCount, newFoundCount, updatedCount }
 
   // ── "Alles synchroniseren": zet de vault_sync_requested-vlag + opent/
   // activeert een Vinted-tab (de extensie kan geen tabs opzoeken vanuit een
@@ -203,7 +203,7 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
   const handleSyncAll = async () => {
     if (!activeUserId || syncState?.status === 'running') return
 
-    const initial = { status: 'running', done: 0, total: 0, newFoundCount: 0, updatedCount: 0 }
+    const initial = { status: 'running', done: 0, total: 0, newCount: 0, newFoundCount: 0, updatedCount: 0 }
     setSyncState(initial)
 
     try {
@@ -255,11 +255,15 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
     }
     if (syncState.status === 'done') {
       const updatedText = `${syncState.updatedCount || 0} order${syncState.updatedCount === 1 ? '' : 's'} bijgewerkt`
+      const newSales = syncState.newCount || 0
+      const salesText = newSales > 0
+        ? ` — ${newSales} nieuwe verkoop${newSales === 1 ? '' : 'en'} toegevoegd`
+        : ''
       const newFound = syncState.newFoundCount || 0
       const newText = newFound > 0
-        ? ` — ${newFound} nieuwe order${newFound === 1 ? '' : 's'} wachten (koppel ze handmatig via de extensie)`
+        ? ` — ${newFound} nieuwe aankoop${newFound === 1 ? '' : 'en'} wachten (koppel ze handmatig via de extensie)`
         : ''
-      return `✓ Klaar — ${updatedText}${newText}`
+      return `✓ Klaar — ${updatedText}${salesText}${newText}`
     }
     if (syncState.status === 'no_tab') {
       return '⚠ Geen Vinted-tabblad gevonden — controleer of het net geopende tabblad is ingelogd en probeer opnieuw.'
@@ -356,7 +360,7 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
             <button
               onClick={handleSyncAll}
               disabled={syncState?.status === 'running' || !activeUserId}
-              title={!activeUserId ? 'Nog aan het laden…' : 'Enkel status-updates van bestaande orders — nieuwe orders koppel je handmatig via de extensie'}
+              title={!activeUserId ? 'Nog aan het laden…' : 'Nieuwe verkopen worden automatisch toegevoegd — nieuwe aankopen koppel je zelf via de extensie'}
               style={{
                 background: syncState?.status === 'running' ? D.card2 : D.purple, color: '#fff', border: 'none', borderRadius: 8,
                 padding: '7px 14px', fontSize: 12, fontWeight: 700, fontFamily: 'inherit', flexShrink: 0,
@@ -602,7 +606,7 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
           <button
             onClick={handleSyncAll}
             disabled={syncState?.status === 'running' || !activeUserId}
-            title={!activeUserId ? 'Nog aan het laden…' : 'Enkel status-updates van bestaande orders — nieuwe orders koppel je handmatig via de extensie'}
+            title={!activeUserId ? 'Nog aan het laden…' : 'Nieuwe verkopen worden automatisch toegevoegd — nieuwe aankopen koppel je zelf via de extensie'}
             style={{
               marginTop: 14, width: '100%', background: syncState?.status === 'running' ? D.card2 : D.purple, color: '#fff',
               border: 'none', borderRadius: 10, padding: '10px 14px', fontSize: 13, fontWeight: 700, fontFamily: 'inherit',
@@ -613,7 +617,7 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
             {syncState?.status === 'running' ? '⏳ Bezig…' : '🔄 Synchroniseren'}
           </button>
           <div style={{ marginTop: 6, fontSize: 11, color: D.text3, textAlign: 'center' }}>
-            Enkel status-updates — nieuwe orders via de extensie
+            Nieuwe verkopen automatisch — nieuwe aankopen via de extensie
           </div>
           {syncStatusText && (
             <div style={{ marginTop: 8, fontSize: 11, color: D.text2, textAlign: 'center' }}>

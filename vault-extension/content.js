@@ -542,20 +542,18 @@
     return /voltooid|afgerond|afgesloten/i.test(o.status || '');
   }
 
-  // ── Achtergrond status-refresh — UITSLUITEND voor de Home "🔄
-  // Synchroniseren"-knop (via FORCE_SYNC hieronder) ──────────────────────────
-  // Deze functie synct NOOIT nieuwe orders (nog geen rij in vinted_orders),
-  // voor geen enkele richting (verkoop of aankoop) — de gebruiker kiest zelf,
-  // per order, welke nieuwe orders binnenkomen via de handmatige paneel-flow
-  // (checkboxes + "Sync geselecteerde" in drawVerkopenFooter/drawAankopenFooter
-  // hieronder, die rechtstreeks SYNC_TO_SUPABASE/SYNC_ORDER aanroepen en NOOIT
-  // via deze functie lopen). Bewust een eigen, expliciet benoemde functie in
-  // plaats van een gedeelde "bucket"-helper met een kind-parameter — zodat een
-  // toekomstige wijziging hier nooit per ongeluk ook nieuwe orders kan laten
-  // meesyncen.
+  // ── Achtergrond sync — voor de Home "🔄 Synchroniseren"-knop (via FORCE_SYNC
+  // hieronder) ─────────────────────────────────────────────────────────────
+  // Nieuwe VERKOPEN (currentUserSide !== 'buyer') worden hier WEL automatisch
+  // gesynct — dat is de kern-functionaliteit, elke verkoop hoort automatisch
+  // in de boekhouding terecht te komen. Nieuwe AANKOPEN (currentUserSide ===
+  // 'buyer') worden hier NOOIT automatisch gesynct — dat blijft exclusief de
+  // handmatige paneel-flow (checkboxes + "Sync geselecteerde" in
+  // drawAankopenFooter hieronder, die rechtstreeks SYNC_TO_SUPABASE/SYNC_ORDER
+  // aanroept en niet via deze functie loopt); nieuwe aankopen worden hier
+  // alleen geteld (newFoundCount) voor gebruikersfeedback.
   //
-  // Wat deze functie WEL doet, voor orders die de gebruiker al eerder zelf
-  // handmatig gesynct heeft:
+  // Voor orders die al eerder gesynct zijn (verkoop of aankoop, maakt niet uit):
   //  - status verversen zolang de order nog niet "voltooid" is;
   //  - bij al VOLTOOIDE orders, order_direction alsnog corrigeren zodra
   //    currentUserSide deze ronde bekend is (zie teCorrigeren) — dit is de
@@ -568,10 +566,15 @@
     const { syncedOrders = [] } = await chrome.storage.local.get(['syncedOrders']);
     syncedIds = new Set(syncedOrders.map(o => o.transactionId).filter(Boolean));
 
-    // Enkel geteld voor gebruikersfeedback ("N nieuwe orders wachten") — deze
-    // orders worden hier NOOIT gesynct, ongeacht currentUserSide (verkoop of
-    // aankoop maakt niet uit).
-    const nieuwGevonden = orders.filter(o => o.transactionId && !syncedIds.has(o.transactionId));
+    // Nieuwe verkopen horen automatisch mee te syncen. Nieuwe aankopen
+    // (currentUserSide === 'buyer') horen NIET via deze knop binnen te komen —
+    // die blijven exclusief de handmatige Aankopen-tab in het extensiepaneel.
+    const nieuw = orders.filter(o =>
+      o.transactionId && !syncedIds.has(o.transactionId) && o.currentUserSide !== 'buyer'
+    );
+    const nieuweAankopenOvergeslagen = orders.filter(o =>
+      o.transactionId && !syncedIds.has(o.transactionId) && o.currentUserSide === 'buyer'
+    );
 
     const teVerversen = orders.filter(o => o.transactionId && syncedIds.has(o.transactionId) && !isOrderCompleted(o));
 
@@ -591,17 +594,18 @@
     );
 
     const targets = [
+      ...nieuw.map(o => ({ order: o, kind: 'nieuw' })),
       ...teVerversen.map(o => ({ order: o, kind: 'refresh' })),
       ...teCorrigeren.map(o => ({ order: o, kind: 'direction-check' })),
     ];
-    console.log(`[Vault] refreshKnownOrders: ${orders.length} orders — ${nieuwGevonden.length} nieuw (NIET gesynct — enkel handmatig via het extensiepaneel), ${teVerversen.length} te verversen, ${teCorrigeren.length} voltooid+richting-check`);
+    console.log(`[Vault] refreshKnownOrders: ${orders.length} orders — ${nieuw.length} nieuw (verkoop, wordt gesynct), ${nieuweAankopenOvergeslagen.length} nieuwe aankoop overgeslagen (enkel via Aankopen-tab), ${teVerversen.length} te verversen, ${teCorrigeren.length} voltooid+richting-check`);
 
     const reportProgress = async (progress) => {
       if (!userId) return;
       await sendMsg({ type: 'REPORT_SYNC_PROGRESS', userId, progress });
     };
 
-    let updatedCount = 0, fail = 0;
+    let newCount = 0, updatedCount = 0, fail = 0;
     for (let i = 0; i < targets.length; i++) {
       const { order: o, kind } = targets[i];
       // Zelfde onderscheid als tabVerkopen/tabAankopen: currentUserSide === 'buyer'
@@ -612,31 +616,44 @@
       if (DEBUG_TXN_IDS.has(o.transactionId)) {
         console.log(`[Vault] DEBUG txn ${o.transactionId} in refreshKnownOrders (kind=${kind}): currentUserSide="${o.currentUserSide}" (type=${typeof o.currentUserSide}) → orderDirection="${orderDirection}"`);
       }
-      // syncToSupabase() zoekt de owner_id op via order.vintedUserId (zie
-      // background.js lookupOwnerId()); zonder dit veld faalt de lookup altijd
-      // met "no_link", ook al bestaat de koppeling wel degelijk.
+      // syncToSupabase()/syncOrder() zoeken de owner_id op via
+      // order.vintedUserId (zie background.js lookupOwnerId()); zonder dit
+      // veld faalt de lookup altijd met "no_link", ook al bestaat de
+      // koppeling wel degelijk.
       const vId = await getVintedUserId();
-      const res = await sendMsg({ type: 'SYNC_TO_SUPABASE', order: { ...o, orderDirection, vintedUserId: vId } });
-      if (res?.success) {
-        updatedCount++;
-        if (kind === 'direction-check') {
-          console.log(`[Vault] refreshKnownOrders ✓ richting gecontroleerd/gecorrigeerd txn ${o.transactionId} (voltooid, currentUserSide="${o.currentUserSide}" → ${orderDirection})`);
+      if (kind === 'nieuw') {
+        const res = await sendMsg({ type: 'SYNC_ORDER', order: { ...o, orderDirection, labelUrl: labelUrl(o.transactionId), vintedUserId: vId } });
+        if (res?.success && !res.duplicate) {
+          syncedIds.add(o.transactionId);
+          newCount++;
+          console.log(`[Vault] refreshKnownOrders ✓ nieuw txn ${o.transactionId} (${orderDirection})`);
         } else {
-          console.log(`[Vault] refreshKnownOrders ✓ status ververst txn ${o.transactionId} ("${o.status}", ${orderDirection})`);
+          fail++;
+          console.warn(`[Vault] refreshKnownOrders ✗ nieuw txn ${o.transactionId}`, res);
         }
       } else {
-        fail++;
-        console.warn(`[Vault] refreshKnownOrders ✗ txn ${o.transactionId}`, res);
+        const res = await sendMsg({ type: 'SYNC_TO_SUPABASE', order: { ...o, orderDirection, vintedUserId: vId } });
+        if (res?.success) {
+          updatedCount++;
+          if (kind === 'direction-check') {
+            console.log(`[Vault] refreshKnownOrders ✓ richting gecontroleerd/gecorrigeerd txn ${o.transactionId} (voltooid, currentUserSide="${o.currentUserSide}" → ${orderDirection})`);
+          } else {
+            console.log(`[Vault] refreshKnownOrders ✓ status ververst txn ${o.transactionId} ("${o.status}", ${orderDirection})`);
+          }
+        } else {
+          fail++;
+          console.warn(`[Vault] refreshKnownOrders ✗ txn ${o.transactionId}`, res);
+        }
       }
-      await reportProgress({ status: 'running', done: i + 1, total: targets.length, updatedCount, newFoundCount: nieuwGevonden.length });
+      await reportProgress({ status: 'running', done: i + 1, total: targets.length, newCount, updatedCount, newFoundCount: nieuweAankopenOvergeslagen.length });
     }
 
-    console.log(`[Vault] refreshKnownOrders klaar: ${updatedCount} bijgewerkt, ${fail} mislukt, ${nieuwGevonden.length} nieuw overgeslagen (niet gesynct)`);
+    console.log(`[Vault] refreshKnownOrders klaar: ${newCount} nieuwe verkoop gesynct, ${updatedCount} bijgewerkt, ${fail} mislukt, ${nieuweAankopenOvergeslagen.length} nieuwe aankoop overgeslagen (niet gesynct)`);
     await reportProgress({
       status: 'done', done: targets.length, total: targets.length,
-      updatedCount, newFoundCount: nieuwGevonden.length, finishedAt: new Date().toISOString(),
+      newCount, updatedCount, newFoundCount: nieuweAankopenOvergeslagen.length, finishedAt: new Date().toISOString(),
     });
-    return { updatedCount, newFoundCount: nieuwGevonden.length, fail };
+    return { newCount, updatedCount, newFoundCount: nieuweAankopenOvergeslagen.length, fail };
   }
 
   async function loadDlIds() {
