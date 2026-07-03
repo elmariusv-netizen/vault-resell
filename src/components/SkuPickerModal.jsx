@@ -31,7 +31,8 @@ export default function SkuPickerModal({ batches, allOrders, excludeOrderId, onP
         return (
           sku.toLowerCase().includes(lower) ||
           (b.name || '').toLowerCase().includes(lower) ||
-          (b.brand || '').toLowerCase().includes(lower)
+          (b.brand || '').toLowerCase().includes(lower) ||
+          (b.category || '').toLowerCase().includes(lower)
         )
       })
       .map(b => ({ batch: b, available: getFreeSkusForBatch(b, usedSkus).length }))
@@ -123,7 +124,7 @@ export default function SkuPickerModal({ batches, allOrders, excludeOrderId, onP
             autoFocus
             value={q}
             onChange={e => setQ(e.target.value)}
-            placeholder="Zoek SKU, naam, merk…"
+            placeholder="Zoek SKU, naam, merk, categorie…"
             style={{ width: '100%', padding: '8px 12px', background: '#1e293b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, color: '#f1f5f9', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
           />
           {onPickMultiple && (
@@ -186,17 +187,25 @@ export default function SkuPickerModal({ batches, allOrders, excludeOrderId, onP
                   await onPick(sku, b)
                   onClose()
                 }}
-                style={{ padding: '10px 20px', cursor: available > 0 ? 'pointer' : 'default', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.04)', opacity: available > 0 ? 1 : 0.5 }}
+                style={{ padding: '10px 20px', cursor: available > 0 ? 'pointer' : 'default', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, borderBottom: '1px solid rgba(255,255,255,0.04)', opacity: available > 0 ? 1 : 0.5 }}
                 onMouseEnter={e => e.currentTarget.style.background = '#1e293b'}
                 onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
               >
-                <div>
-                  <span style={{ fontWeight: 700, fontSize: 13, color: '#818cf8', fontFamily: 'monospace' }}>{range}</span>
-                  {(b.name || b.brand) && (
-                    <span style={{ fontSize: 12, color: '#94a3b8', marginLeft: 10 }}>{b.brand || b.name}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', minWidth: 0 }}>
+                  <span style={{ fontWeight: 700, fontSize: 13, color: '#818cf8', fontFamily: 'monospace', flexShrink: 0 }}>{range}</span>
+                  {b.brand && (
+                    <span style={{ fontSize: 10, fontWeight: 700, color: '#c4b5fd', background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)', padding: '2px 8px', borderRadius: 20, whiteSpace: 'nowrap' }}>
+                      {b.brand}
+                    </span>
+                  )}
+                  {b.category && (
+                    <span style={{ fontSize: 11, color: '#64748b', whiteSpace: 'nowrap' }}>{b.category}</span>
+                  )}
+                  {!b.brand && !b.category && b.name && (
+                    <span style={{ fontSize: 12, color: '#94a3b8', whiteSpace: 'nowrap' }}>{b.name}</span>
                   )}
                 </div>
-                <span style={{ fontSize: 11, color: available > 0 ? '#4ade80' : '#64748b', fontWeight: 600 }}>
+                <span style={{ fontSize: 11, color: available > 0 ? '#4ade80' : '#64748b', fontWeight: 600, flexShrink: 0 }}>
                   {available > 0 ? `${available} beschikbaar` : 'uitverkocht'}
                 </span>
               </div>
