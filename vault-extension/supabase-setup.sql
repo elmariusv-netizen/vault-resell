@@ -179,6 +179,28 @@ CREATE POLICY "anon kan lezen voor koppeling"
   ON pending_links FOR SELECT TO anon USING (true);
 
 -- ══════════════════════════════════════════════════════════════════
+-- GENEGEERDE ORDERS — voorkomt dat een bewust verwijderde order (✕/bulk-
+-- verwijderen in Verkopen.jsx/Aankopen.jsx) bij de volgende sync gewoon
+-- terugkomt. api/sync-order.js checkt deze tabel vóór elke upsert — dat
+-- endpoint is de enige gegarandeerde chokepoint voor alle sync-paden (Home-
+-- knop, extensie-checkbox-flows, achtergrond-refresh).
+-- ══════════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS ignored_orders (
+  owner_id       UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  transaction_id TEXT NOT NULL,
+  ignored_at     TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (owner_id, transaction_id)
+);
+
+ALTER TABLE ignored_orders ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "user beheert eigen ignored orders"
+  ON ignored_orders FOR ALL TO authenticated
+  USING (auth.uid() = owner_id)
+  WITH CHECK (auth.uid() = owner_id);
+
+-- ══════════════════════════════════════════════════════════════════
 -- BEDRIJFSKOSTEN + FACTUREN-ARCHIEF (Kosten.jsx)
 -- ══════════════════════════════════════════════════════════════════
 

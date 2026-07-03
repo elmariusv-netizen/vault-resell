@@ -1233,7 +1233,7 @@ function AddOrderModal({ onClose, onSave }) {
   )
 }
 
-export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData, vintedCookie, activeUserId }) {
+export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData, vintedCookie }) {
   const { batches, sales, suppliers } = data
 
   const [search, setSearch] = useState('')
@@ -1250,8 +1250,6 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
   const [photoPopup, setPhotoPopup]   = useState(null)   // string[] | null
   const [orderDetail, setOrderDetail] = useState(null)   // row | null
   const [addOrderOpen, setAddOrderOpen] = useState(false)
-  const [syncing,   setSyncing]   = useState(false)
-  const [syncToast, setSyncToast] = useState(null)  // null | string
   const [selectedIds, setSelectedIds] = useState(new Set())
   const [bulkSkuOpen, setBulkSkuOpen] = useState(false)
 
@@ -1312,9 +1310,17 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
     setVtOrders(prev => prev.filter(o => o.id !== orderId))
   }
 
+  // Registreert de verwijderde orders in ignored_orders VOORDAT de rij zelf
+  // verdwijnt — anders zou een sync die toevallig net dan draait de order nog
+  // vinden en opnieuw aanmaken (api/sync-order.js checkt deze tabel vóór elke
+  // upsert, voor alle sync-paden).
   const deleteSelected = async () => {
     if (!window.confirm(`${selectedIds.size} order(s) definitief verwijderen?`)) return
     const ids = [...selectedIds]
+    const toIgnore = vtOrders
+      .filter(o => selectedIds.has(o.id) && o.owner_id && o.transaction_id)
+      .map(o => ({ owner_id: o.owner_id, transaction_id: o.transaction_id }))
+    if (toIgnore.length) await supabase.from('ignored_orders').upsert(toIgnore, { onConflict: 'owner_id,transaction_id' })
     await supabase.from('vinted_orders').delete().in('id', ids)
     setVtOrders(prev => prev.filter(o => !selectedIds.has(o.id)))
     setSelectedIds(new Set())
@@ -1437,46 +1443,6 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
     setVtOrders(prev => [newRow, ...prev])
   }
 
-  const handleSync = async () => {
-    window.open('https://www.vinted.be/my_orders', '_blank')
-    if (activeUserId) {
-      try {
-        await supabase.from('user_settings')
-          .upsert({ user_id: activeUserId, vault_sync_requested: true }, { onConflict: 'user_id' })
-      } catch (e) {
-        console.warn('[Vault] sync flag mislukt:', e.message)
-      }
-    }
-    setSyncing(true)
-    const startCount = vtOrders.length
-    const deadline   = Date.now() + 30000
-    const pollId = setInterval(async () => {
-      if (Date.now() > deadline) {
-        clearInterval(pollId)
-        setSyncing(false)
-        setSyncToast('Geen nieuwe orders gevonden — selecteer orders in de extensie')
-        setTimeout(() => setSyncToast(null), 4000)
-        return
-      }
-      const fresh = await fetchAllVintedOrders()
-      if (fresh.length > startCount) {
-        clearInterval(pollId)
-        const SKU_RE = /\b([A-Z]{2,4}\d{3,6})\b/
-        setVtOrders(fresh.map(row => {
-          if (!row.sku_ref && row.description) {
-            const m = row.description.match(SKU_RE)
-            if (m) return { ...row, sku_ref: m[1] }
-          }
-          return row
-        }))
-        setSyncing(false)
-        const added = fresh.length - startCount
-        setSyncToast(`✓ ${added} nieuwe order${added !== 1 ? 's' : ''} gesynchroniseerd`)
-        setTimeout(() => setSyncToast(null), 4000)
-      }
-    }, 2000)
-  }
-
   const platforms = useMemo(() => {
     const set = new Set(sales.map((s) => normalizePlatform(s.platform)).filter(Boolean))
     try {
@@ -1585,12 +1551,6 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
                   style={{ fontSize: 12, padding: '4px 12px' }}
                   onClick={() => window.open('https://www.vinted.be/my_orders', '_blank')}
                 >🔗 Open Vinted</button>
-                <button
-                  className="btn btn-secondary"
-                  style={{ fontSize: 12, padding: '4px 12px' }}
-                  onClick={handleSync}
-                  disabled={syncing}
-                >{syncing ? '⏳ Synchroniseren…' : '⚡ Auto-sync'}</button>
                 <button
                   className="btn btn-primary"
                   style={{ fontSize: 12, padding: '4px 12px' }}
@@ -1883,18 +1843,6 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
           onClose={() => setBulkSkuOpen(false)}
           onConfirm={handleBulkSkuConfirm}
         />
-      )}
-
-      {syncToast && (
-        <div style={{
-          position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',
-          background: '#1e293b', color: '#f1f5f9', padding: '10px 20px', borderRadius: 10,
-          fontSize: 13, fontWeight: 500, zIndex: 9999,
-          boxShadow: '0 8px 32px rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)',
-          maxWidth: 420, textAlign: 'center',
-        }}>
-          {syncToast}
-        </div>
       )}
 
       {photoPopup && (

@@ -159,8 +159,15 @@ export default function Aankopen({ data, updateData }) {
   // Definitieve verwijdering uit vinted_orders — zelfde directe delete als
   // Verkopen.jsx's bulk "🗑 Verwijder geselecteerde" (niet de losse ✕ daar,
   // die enkel registered_in_vault zet en de order lokaal verbergt).
+  // Registreert de order eerst in ignored_orders zodat een sync die toevallig
+  // net dan draait 'm niet opnieuw aanmaakt (api/sync-order.js checkt deze
+  // tabel vóór elke upsert, voor alle sync-paden).
   const handleDelete = async (order) => {
     if (!window.confirm(`"${order.title}" definitief verwijderen?`)) return
+    if (order.owner_id && order.transaction_id) {
+      await supabase.from('ignored_orders')
+        .upsert({ owner_id: order.owner_id, transaction_id: order.transaction_id }, { onConflict: 'owner_id,transaction_id' })
+    }
     await supabase.from('vinted_orders').delete().eq('id', order.id)
     setOrders(prev => prev.filter(o => o.id !== order.id))
   }
@@ -176,6 +183,10 @@ export default function Aankopen({ data, updateData }) {
   const deleteSelected = async () => {
     if (!window.confirm(`${selectedIds.size} order(s) definitief verwijderen?`)) return
     const ids = [...selectedIds]
+    const toIgnore = orders
+      .filter(o => selectedIds.has(o.id) && o.owner_id && o.transaction_id)
+      .map(o => ({ owner_id: o.owner_id, transaction_id: o.transaction_id }))
+    if (toIgnore.length) await supabase.from('ignored_orders').upsert(toIgnore, { onConflict: 'owner_id,transaction_id' })
     await supabase.from('vinted_orders').delete().in('id', ids)
     setOrders(prev => prev.filter(o => !selectedIds.has(o.id)))
     setSelectedIds(new Set())

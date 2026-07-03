@@ -16,14 +16,33 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'server misconfigured' })
   }
 
+  const sbHeaders = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${SERVICE_KEY}`,
+    'apikey': SERVICE_KEY,
+  }
+
+  // Orders die de gebruiker bewust verwijderd heeft (zie ignored_orders,
+  // gevuld door de ✕/bulk-verwijderknoppen in Verkopen.jsx/Aankopen.jsx) mogen
+  // nooit via een sync terugkomen. Dit endpoint is de enige gegarandeerde
+  // chokepoint voor alle sync-paden (Home-knop, extensie-checkbox-flows,
+  // achtergrond-refresh) — daarom hier checken, niet client-side.
+  if (order.owner_id) {
+    const ignoredRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/ignored_orders?owner_id=eq.${encodeURIComponent(order.owner_id)}&transaction_id=eq.${encodeURIComponent(order.transaction_id)}&select=transaction_id&limit=1`,
+      { headers: sbHeaders }
+    )
+    if (ignoredRes.ok) {
+      const ignoredRows = await ignoredRes.json()
+      if (ignoredRows?.length) {
+        return res.status(200).json({ success: true, skipped: true, reason: 'ignored' })
+      }
+    }
+  }
+
   const response = await fetch(`${SUPABASE_URL}/rest/v1/vinted_orders`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${SERVICE_KEY}`,
-      'apikey': SERVICE_KEY,
-      'Prefer': 'return=minimal,resolution=merge-duplicates',
-    },
+    headers: { ...sbHeaders, 'Prefer': 'return=minimal,resolution=merge-duplicates' },
     body: JSON.stringify(order),
   })
 
