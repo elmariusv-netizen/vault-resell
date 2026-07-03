@@ -322,7 +322,9 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave, 
           {/* Status badge */}
           {(() => { const b = getStatusBadge(order.status, isLabelReady(order)); return b ? (
             <div style={{ marginBottom: 12 }}>
-              <span style={{ fontSize: 11, color: b.color, background: b.bg, padding: '3px 10px', borderRadius: 6, fontWeight: 700, border: `1px solid ${b.color}30` }}>{b.label}</span>
+              <span style={{ fontSize: 11, color: b.color, background: b.bg, padding: '3px 10px', borderRadius: 999, fontWeight: 700, border: `1px solid ${b.color}30` }}>
+                {(b.label === 'Voltooid' || b.label === 'Geleverd') && '✓ '}{b.label}
+              </span>
             </div>
           ) : null })()}
 
@@ -953,7 +955,9 @@ function VintedOrderRow({ order, isLast, onSave, onSaveFields, onBulkConfirm, on
             {/* Rij 4: datum + acties */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
               {(() => { const b = getStatusBadge(order.status, isLabelReady(order)); return b ? (
-                <span style={{ fontSize: 10, color: b.color, background: b.bg, padding: '2px 7px', borderRadius: 4, fontWeight: 700, border: `1px solid ${b.color}30` }}>{b.label}</span>
+                <span style={{ fontSize: 10, color: b.color, background: b.bg, padding: '2px 8px', borderRadius: 999, fontWeight: 700, border: `1px solid ${b.color}30` }}>
+                  {(b.label === 'Voltooid' || b.label === 'Geleverd') && '✓ '}{b.label}
+                </span>
               ) : null })()}
               {date && (
                 <span style={{ fontSize: 11, color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 3 }}>
