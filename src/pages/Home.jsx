@@ -200,7 +200,7 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
   const fetchVtOrders = useCallback(async () => {
     const { data: rows, error } = await supabase
       .from('vinted_orders')
-      .select('id, status, order_direction, label_available, label_pdf_url, transaction_status, is_completed')
+      .select('id, status, order_direction, label_available, label_pdf_url, transaction_status, shipment_status, is_completed')
     if (!error) setVtOrders(rows || [])
   }, [])
   useEffect(() => { fetchVtOrders() }, [fetchVtOrders])
@@ -330,10 +330,11 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
       .filter(({ stage }) => stage !== 'cancelled')
     const toShip = activeSaleOrders.filter(({ stage }) => stage === 'to_ship').length
     const onTheWay = activeSaleOrders.filter(({ stage }) => stage === 'in_transit').length
+    const atPickupPoint = activeSaleOrders.filter(({ stage }) => stage === 'at_pickup_point').length
     const labelsReady = vtOrders.filter(isLabelReady).length
 
     const totalItems = batches.reduce((s, b) => s + getRemainingQty(b, sales), 0)
-    return { totalRevenue, totalOrders, avgOrder, toShip, onTheWay, labelsReady, totalItems }
+    return { totalRevenue, totalOrders, avgOrder, toShip, onTheWay, atPickupPoint, labelsReady, totalItems }
   }, [filteredSales, sales, batches, vtOrders])
 
   const chartData = useMemo(() => buildChartData(filteredSales, range, bounds), [filteredSales, range, bounds])
@@ -448,8 +449,8 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
           />
         </div>
 
-        {/* Stat row 2 — 3 cards */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 20 }}>
+        {/* Stat row 2 — 4 cards */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
           <DashCard
             label="Te verzenden"
             value={stats.toShip}
@@ -459,8 +460,14 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
           <DashCard
             label="Onderweg"
             value={stats.onTheWay}
-            sub="Nu onderweg"
+            sub="Pakket in transit"
             accent={D.green}
+          />
+          <DashCard
+            label="📍 Bij afhaalpunt"
+            value={stats.atPickupPoint}
+            sub="Wacht op ophalen door koper"
+            accent={D.yellow}
           />
           <DashCard
             label="🖨️ Labels klaar"
@@ -669,6 +676,7 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
             { label: 'Bestellingen', value: stats.totalOrders, color: D.blue },
             { label: 'Te verzenden', value: stats.toShip, color: D.yellow },
             { label: 'Onderweg', value: stats.onTheWay, color: D.text2 },
+            { label: '📍 Bij afhaalpunt', value: stats.atPickupPoint, color: D.yellow },
             { label: '🖨️ Labels klaar', value: stats.labelsReady, color: D.blue },
             { label: 'In voorraad', value: stats.totalItems, color: D.text3 },
           ].map((p) => (

@@ -127,13 +127,19 @@ export function isInTransitStatus(status) {
 //   transaction_status=510                 → geannuleerd/mislukt (terugbetaald)
 //   is_completed===true                    → voltooid (dekt zowel 450 als 460,
 //                                             ongeacht shipment_status-variant)
-//   transaction_status=230                 → onderweg — zowel shipment_status
-//                                             300 ("verzonden") als 310 ("kan
-//                                             worden opgehaald bij afhaal-
-//                                             punt/postkantoor") tellen hier
-//                                             onder: de verkoper heeft in
-//                                             BEIDE gevallen al verzonden, dus
-//                                             dit hoort NOOIT bij "te verzenden"
+//   transaction_status=230, shipment_status=300 → onderweg (pakket echt in transit)
+//   transaction_status=230, shipment_status=310 → bij afhaalpunt — het pakket
+//                                             ligt al te wachten op ophalen
+//                                             door de koper (postkantoor/
+//                                             afhaalpunt), dat vóelt voor de
+//                                             gebruiker niet meer als
+//                                             "onderweg". Geen van beide
+//                                             hoort ooit bij "te verzenden":
+//                                             de verkoper heeft in BEIDE
+//                                             gevallen al verzonden.
+//   transaction_status=230, overige/onbekende shipment_status → onderweg
+//                                             (veiligste default voor een
+//                                             nog niet geziene variant)
 //   transaction_status=430                 → gepauzeerd (probleemgeval, telt
 //                                             nergens in mee — geen normale
 //                                             voortgang)
@@ -141,17 +147,20 @@ export function isInTransitStatus(status) {
 //                                             bovenstaande fases bereikt)
 export function classifyOrderStage(order) {
   const numericStatus = order?.transaction_status ?? order?.transactionStatus
+  const shipmentStatus = order?.shipment_status ?? order?.shipmentStatus
   const isCompleted = order?.is_completed ?? order?.isCompleted
 
   if (numericStatus != null) {
     if (numericStatus === 510) return 'cancelled'
     if (isCompleted === true) return 'finished'
-    if (numericStatus === 230) return 'in_transit'
+    if (numericStatus === 230) return shipmentStatus === 310 ? 'at_pickup_point' : 'in_transit'
     if (numericStatus === 430) return 'paused'
     return 'to_ship'
   }
 
-  // Fallback: tekst-classificatie voor orders zonder numerieke velden.
+  // Fallback: tekst-classificatie voor orders zonder numerieke velden. Kent
+  // (nog) geen apart "bij afhaalpunt" — zo'n order valt hier terug op
+  // 'to_ship', dezelfde bestaande beperking als vóór deze numerieke fix.
   const status = order?.status
   if (isCancelledStatus(status)) return 'cancelled'
   if (isFinishedStatus(status)) return 'finished'
