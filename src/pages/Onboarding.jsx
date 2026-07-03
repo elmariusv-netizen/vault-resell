@@ -10,6 +10,53 @@ export const PURCHASE_METHODS = [
   { value: 'both', title: 'Beide', desc: 'Je doet allebei.' },
 ]
 
+// Native radio-bolletjes met enkel accentColor bleken in de praktijk zo
+// subtiel dat een klik geen waarneembaar effect leek te hebben. Zelfde
+// aanpak als Checkbox.jsx: de ECHTE input blijft bestaan (dus gewoon
+// klikbaar/toetsenbord-toegankelijk en met een correcte onChange), maar
+// wordt onzichtbaar gemaakt (opacity:0) en een custom, duidelijk gevuld
+// bolletje eroverheen getekend (pointerEvents:none, zodat de klik gewoon
+// doorgaat naar de echte input eronder).
+function RadioDot({ checked, size = 18 }) {
+  return (
+    <span style={{ position: 'relative', display: 'inline-flex', width: size, height: size, flexShrink: 0, marginTop: 2 }}>
+      <span
+        style={{
+          position: 'absolute', inset: 0, borderRadius: '50%', boxSizing: 'border-box',
+          border: `2px solid ${checked ? 'var(--green)' : 'var(--border-strong)'}`,
+          background: 'var(--bg-1)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          transition: 'border-color 0.15s',
+        }}
+      >
+        {checked && <span style={{ width: size * 0.5, height: size * 0.5, borderRadius: '50%', background: 'var(--green)' }} />}
+      </span>
+    </span>
+  )
+}
+
+function ToggleSwitch({ checked, width = 42, height = 24 }) {
+  return (
+    <span style={{ position: 'relative', display: 'inline-flex', width, height, flexShrink: 0 }}>
+      <span
+        style={{
+          width: '100%', height: '100%', borderRadius: height / 2, boxSizing: 'border-box',
+          background: checked ? 'var(--green)' : 'var(--border-strong)',
+          transition: 'background 0.15s', position: 'relative',
+        }}
+      >
+        <span
+          style={{
+            position: 'absolute', top: 2, left: checked ? width - height + 2 : 2,
+            width: height - 4, height: height - 4, borderRadius: '50%',
+            background: '#fff', transition: 'left 0.15s', boxShadow: '0 1px 3px rgba(0,0,0,0.35)',
+          }}
+        />
+      </span>
+    </span>
+  )
+}
+
 export function PurchaseMethodPicker({ value, onChange }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -20,7 +67,7 @@ export function PurchaseMethodPicker({ value, onChange }) {
             display: 'flex', gap: 12, alignItems: 'flex-start', padding: 14, borderRadius: 12,
             border: `1px solid ${value === m.value ? 'var(--green-border)' : 'var(--border)'}`,
             background: value === m.value ? 'var(--green-dim)' : 'transparent',
-            cursor: 'pointer', transition: 'all 0.13s',
+            cursor: 'pointer', transition: 'all 0.13s', position: 'relative',
           }}
         >
           <input
@@ -29,8 +76,9 @@ export function PurchaseMethodPicker({ value, onChange }) {
             value={m.value}
             checked={value === m.value}
             onChange={() => onChange(m.value)}
-            style={{ marginTop: 3, width: 16, height: 16, accentColor: 'var(--green)', cursor: 'pointer', flexShrink: 0 }}
+            style={{ position: 'absolute', top: 14, left: 14, width: 18, height: 18, margin: 0, opacity: 0, cursor: 'pointer' }}
           />
+          <RadioDot checked={value === m.value} />
           <div>
             <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)' }}>{m.title}</div>
             <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 2, lineHeight: 1.5 }}>{m.desc}</div>
@@ -44,14 +92,15 @@ export function PurchaseMethodPicker({ value, onChange }) {
 export function AutoSyncToggleRow({ label, checked, onChange, desc }) {
   return (
     <div style={{ padding: 14, borderRadius: 12, border: '1px solid var(--border)' }}>
-      <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, cursor: 'pointer' }}>
+      <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, cursor: 'pointer', position: 'relative' }}>
         <span style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)' }}>{label}</span>
         <input
           type="checkbox"
           checked={checked}
           onChange={e => onChange(e.target.checked)}
-          style={{ width: 18, height: 18, accentColor: 'var(--green)', cursor: 'pointer', flexShrink: 0 }}
+          style={{ position: 'absolute', right: 0, top: '50%', transform: 'translateY(-50%)', width: 42, height: 24, margin: 0, opacity: 0, cursor: 'pointer' }}
         />
+        <ToggleSwitch checked={checked} />
       </label>
       <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 8, lineHeight: 1.5 }}>{desc}</div>
     </div>
