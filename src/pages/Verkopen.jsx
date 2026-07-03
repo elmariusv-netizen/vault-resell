@@ -625,6 +625,14 @@ function BulkSkuModal({ batches, allOrders, orders, onClose, onConfirm }) {
   // onPick geeft (sku, batch) door — hier is enkel de batch relevant, de
   // eerste-vrije-sku die SkuPickerModal zelf al berekende wordt genegeerd,
   // want de N SKU-dropdowns hieronder bepalen de daadwerkelijke toewijzing.
+  //
+  // closeOnPick={false}: zonder dit riep SkuPickerModal na een geslaagde
+  // onPick meteen de doorgegeven onClose() aan — en dat IS hier de echte
+  // onClose van de hele bulk-modal, die 'm dus meteen unmountte vóórdat de
+  // vervolgstap (N SKU-dropdowns hieronder) ooit te zien was. × / Escape /
+  // buiten-klikken in de batch-lijst blijven wél gewoon de hele bulk-modal
+  // sluiten via die echte onClose — dat is correct, er is op dat punt nog
+  // niks anders om naar terug te keren.
   if (!selectedBatch) {
     return (
       <SkuPickerModal
@@ -633,6 +641,7 @@ function BulkSkuModal({ batches, allOrders, orders, onClose, onConfirm }) {
         excludeOrderIds={orders.map(o => o.id)}
         onPick={(_sku, batch) => setSelectedBatch(batch)}
         onClose={onClose}
+        closeOnPick={false}
       />
     )
   }

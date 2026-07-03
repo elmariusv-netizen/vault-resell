@@ -17,7 +17,17 @@ import { formatSkuRange, getUsedSkus, getFreeSkusForBatch, assignSlotSkus, skuOp
 // meegegeven worden — BulkSkuModal hergebruikt dit scherm als batch-kiezer
 // vóór zijn eigen per-order-slots-stap en moet ALLE geselecteerde orders
 // uitsluiten, niet slechts 1.
-export default function SkuPickerModal({ batches, allOrders, excludeOrderId, excludeOrderIds, onPick, onPickMultiple, onClose }) {
+//
+// closeOnPick (default true): of dit scherm zichzelf mag sluiten na een
+// geslaagde onPick/onPickMultiple. Voor de oorspronkelijke 1-order-flows
+// (VintedOrderRow, AankoopSkuModal) is dat correct — de koppeling is dan
+// meteen klaar. BulkSkuModal hergebruikt dit scherm enkel om een BATCH te
+// kiezen vóór zijn eigen vervolgstap (N SKU-dropdowns) en geeft daarom
+// closeOnPick={false} mee: anders sloot de aanroeper's eigen onClose (die de
+// hele bulk-modal unmount) meteen na het kiezen van een batch, vóórdat die
+// vervolgstap ooit getoond werd. × / Escape / buiten-klikken blijven wél de
+// echte onClose aanroepen — dat is losstaand van closeOnPick.
+export default function SkuPickerModal({ batches, allOrders, excludeOrderId, excludeOrderIds, onPick, onPickMultiple, onClose, closeOnPick = true }) {
   const [q, setQ] = useState('')
   const [manualCount, setManualCount] = useState(undefined) // undefined = 1 (geen bundle)
   const [selectedBatch, setSelectedBatch] = useState(null)  // batch waarvoor nu N SKU's gekozen worden
@@ -65,7 +75,7 @@ export default function SkuPickerModal({ batches, allOrders, excludeOrderId, exc
       const items = slotKeys.map(k => ({ sku: slotSkus[k], batch: selectedBatch })).filter(it => it.sku)
       if (!items.length) return
       await onPickMultiple(items)
-      onClose()
+      if (closeOnPick) onClose()
     }
 
     return (
@@ -193,7 +203,7 @@ export default function SkuPickerModal({ batches, allOrders, excludeOrderId, exc
                   // nog de oude, niet-bijgewerkte lijst gebruikt, waardoor
                   // "beschikbaar" niet daalt.
                   await onPick(sku, b)
-                  onClose()
+                  if (closeOnPick) onClose()
                 }}
                 style={{ padding: '10px 20px', cursor: available > 0 ? 'pointer' : 'default', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, borderBottom: '1px solid rgba(255,255,255,0.04)', opacity: available > 0 ? 1 : 0.5 }}
                 onMouseEnter={e => e.currentTarget.style.background = '#1e293b'}
