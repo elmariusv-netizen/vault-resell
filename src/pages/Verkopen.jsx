@@ -783,7 +783,7 @@ function BulkSkuModal({ batches, allOrders, orders, onClose, onConfirm }) {
 // dan een dun randje) — deze versie geeft een duidelijk gevuld vlak + wit
 // vinkje bij aangevinkt, en een subtiele lege outline bij niet-aangevinkt.
 // ── Order rij (Vinteer-stijl) ──────────────────────────────────────────────
-function VintedOrderRow({ order, isLast, onSave, onSaveFields, onBulkConfirm, onDismiss, onPhotoClick, onRegister, onDetail, onUnlinkSku, batches, allOrders, checked, onCheck }) {
+function VintedOrderRow({ order, onSave, onSaveFields, onBulkConfirm, onDismiss, onPhotoClick, onRegister, onDetail, onUnlinkSku, batches, allOrders, checked, onCheck }) {
   const [skuPickerOpen,  setSkuPickerOpen]  = useState(false)
   const [hoverPos,       setHoverPos]       = useState(null)
   const [cogsEditing,    setCogsEditing]    = useState(false)
@@ -843,7 +843,16 @@ function VintedOrderRow({ order, isLast, onSave, onSaveFields, onBulkConfirm, on
 
   return (
     <>
-      <div style={{ borderBottom: isLast ? 'none' : '1px solid var(--border)', background: checked ? 'rgba(129,140,248,0.10)' : 'transparent', transition: 'background 0.15s' }}>
+      <div
+        className="glass-card"
+        style={{
+          padding: 0,
+          overflow: 'hidden',
+          marginBottom: 14,
+          background: checked ? 'rgba(129,140,248,0.10)' : undefined,
+          transition: 'background 0.15s, border-color 0.15s, box-shadow 0.15s',
+        }}
+      >
 
         {/* Hoofdinhoud: foto + info */}
         <div style={{ padding: '14px 16px 10px', display: 'flex', gap: 12, alignItems: 'flex-start' }}>
@@ -1642,17 +1651,11 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
                 Nog geen orders gesynchroniseerd via de Chrome extensie.
               </div>
             ) : (
-              <div style={{
-                background: 'var(--bg-1)',
-                border: '1px solid var(--border)',
-                borderRadius: 12,
-                overflow: 'hidden',
-              }}>
-                {visibleVtOrders.map((order, i, arr) => (
+              <div>
+                {visibleVtOrders.map((order) => (
                   <VintedOrderRow
                     key={order.id}
                     order={order}
-                    isLast={i === arr.length - 1}
                     onSave={saveVtField}
                     onSaveFields={saveVtFields}
                     onBulkConfirm={handleBulkSkuConfirm}
