@@ -32,11 +32,14 @@ export default function NewSKU({ data, updateData, onNavigate }) {
     return { range: formatSkuRange(supplier.prefix, startNum, endNum), startNum, endNum }
   }, [supplier, quantity, batches])
 
+  // importTax is een TOTAAL bedrag voor de hele batch (bv. 1 douanefactuur
+  // voor de hele zending), geen bedrag per stuk — komt dus maar 1x bij de
+  // totale inkoopkost, niet vermenigvuldigd met het aantal.
   const totalCost = useMemo(() => {
     const q = parseInt(quantity) || 0
     const c = parseFloat(costPrice) || 0
     const t = parseFloat(importTax) || 0
-    return q * (c + t)
+    return q * c + t
   }, [quantity, costPrice, importTax])
 
   const handlePhotos = (e) => {
@@ -337,7 +340,7 @@ export default function NewSKU({ data, updateData, onNavigate }) {
                 <input type="number" step="0.01" min="0" value={costPrice} onChange={(e) => setCostPrice(e.target.value)} placeholder="0,00" />
               </div>
               <div className="form-group">
-                <label>Import tax per stuk (€)</label>
+                <label>Import tax totaal (€)</label>
                 <input type="number" step="0.01" min="0" value={importTax} onChange={(e) => setImportTax(e.target.value)} placeholder="0,00" />
               </div>
             </div>

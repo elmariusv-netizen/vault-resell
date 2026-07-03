@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
 import Modal from './Modal'
-import { genId, formatSkuRange, calcSaleProfit, formatCurrency, getRemainingQty } from '../utils/skuUtils'
+import { genId, formatSkuRange, calcSaleProfit, formatCurrency, getRemainingQty, getBatchUnitCost } from '../utils/skuUtils'
 
 const PLATFORMS = [
   { value: 'Vinted', label: 'Vinted', tooltip: null },
@@ -85,8 +85,10 @@ export default function SaleModal({ data, onClose, onSave, defaultBatchId, prefi
   const liveCount = batch?.liveCount || 0
 
   const unitCostPrice = batch ? (parseFloat(batch.costPrice) || 0) : 0
-  const unitImportTax = batch ? (parseFloat(batch.importTax) || 0) : 0
-  const unitCost = unitCostPrice + unitImportTax
+  // importTax is een TOTAAL bedrag voor de hele batch, geen bedrag per stuk
+  // — zie getBatchUnitCost() in skuUtils.js.
+  const unitImportTax = batch ? (parseFloat(batch.importTax) || 0) / (batch.quantity || 1) : 0
+  const unitCost = batch ? getBatchUnitCost(batch) : 0
 
   useEffect(() => { setFromLive(false) }, [batchId])
   useEffect(() => { if (isFree) setPrice('0') }, [isFree])

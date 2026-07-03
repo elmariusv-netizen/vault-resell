@@ -5,7 +5,7 @@ import MediaModal from '../components/MediaModal'
 import SkuDetailModal from '../components/SkuDetailModal'
 import {
   genId, formatSku, formatSkuRange, formatCurrency, formatDate,
-  getRemainingQty, getSupplierColor,
+  getRemainingQty, getSupplierColor, getBatchUnitCost,
 } from '../utils/skuUtils'
 
 function LiveModal({ batch, remaining, onClose, onSave }) {
@@ -193,7 +193,7 @@ export default function Inventory({ data, updateData }) {
           supColor: sup?.color || '#666',
           brand: b.brand || '',
           name: b.name || '',
-          costPrice: (b.costPrice || 0) + (b.importTax || 0),
+          costPrice: getBatchUnitCost(b),
           status,
           photo: skuPhotos[code] || null,
         }
@@ -299,7 +299,7 @@ export default function Inventory({ data, updateData }) {
                 const sku = formatSkuRange(b.supplierPrefix, b.startNum, b.endNum)
                 const color = getSupplierColor(suppliers, b.supplierPrefix)
                 const sup = suppliers.find((s) => s.prefix === b.supplierPrefix)
-                const unitCost = (b.costPrice || 0) + (b.importTax || 0)
+                const unitCost = getBatchUnitCost(b)
                 const pCount = batchPhotoCount(b)
                 const vCount = batchVideoCount(b.id)
                 const primaryPhoto = b.photos?.[0] || b.photo

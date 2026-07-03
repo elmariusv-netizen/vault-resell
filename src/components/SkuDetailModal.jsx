@@ -1,5 +1,5 @@
 import Modal from './Modal'
-import { formatCurrency, formatDate, formatSkuRange, calcSaleProfit } from '../utils/skuUtils'
+import { formatCurrency, formatDate, formatSkuRange, calcSaleProfit, getBatchUnitCost } from '../utils/skuUtils'
 
 export default function SkuDetailModal({ batch, sales, suppliers, onClose }) {
   if (!batch) return null
@@ -12,7 +12,7 @@ export default function SkuDetailModal({ batch, sales, suppliers, onClose }) {
                      freeSales.reduce((n, s)  => n + (s.quantity || 1), 0)
   const revenue    = batchSales.reduce((n, s) => n + (s.salePrice || 0) * (s.quantity || 1), 0)
   const avgPrice   = soldCount > 0 ? revenue / soldCount : 0
-  const unitCost   = (parseFloat(batch.costPrice) || 0) + (parseFloat(batch.importTax) || 0)
+  const unitCost   = getBatchUnitCost(batch)
 
   const profits = batchSales.map((s) => calcSaleProfit(s, batch))
   const totalProfit = profits.reduce((n, p) => n + (p?.profit || 0), 0)

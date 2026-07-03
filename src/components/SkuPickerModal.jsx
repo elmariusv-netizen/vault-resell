@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { formatSkuRange, getUsedSkus, getFreeSkusForBatch } from '../utils/skuUtils'
+import { formatSkuRange, getUsedSkus, getFreeSkusForBatch, assignSlotSkus, skuOptionsForSlot } from '../utils/skuUtils'
 
 // ── SKU koppel modal ───────────────────────────────────────────────────────
 // Gedeeld tussen Verkopen.jsx (VintedOrderRow "SKU koppelen") en Aankopen.jsx —
@@ -7,8 +7,18 @@ import { formatSkuRange, getUsedSkus, getFreeSkusForBatch } from '../utils/skuUt
 // het aantal nog ongebruikte SKU's binnen de batch (batch-hoeveelheid minus
 // reeds elders gekoppelde sku_ref-waarden, zie getFreeSkusForBatch), niet een
 // statisch veld dat nooit daalde wanneer een SKU via dit scherm gekoppeld werd.
-export default function SkuPickerModal({ batches, allOrders, excludeOrderId, onPick, onClose }) {
+//
+// onPickMultiple is optioneel: enkel als de aanroeper 'm meegeeft verschijnt
+// de "+ Dit is eigenlijk meerdere artikelen"-optie (zelfde onderliggende
+// assignSlotSkus/skuOptionsForSlot als BulkSkuModal in Verkopen.jsx, geen
+// aparte herbouwde implementatie).
+export default function SkuPickerModal({ batches, allOrders, excludeOrderId, onPick, onPickMultiple, onClose }) {
   const [q, setQ] = useState('')
+  const [manualCount, setManualCount] = useState(undefined) // undefined = 1 (geen bundle)
+  const [selectedBatch, setSelectedBatch] = useState(null)  // batch waarvoor nu N SKU's gekozen worden
+  const [overrides, setOverrides] = useState({})            // slotKey -> handmatig gekozen SKU
+
+  const count = manualCount === undefined ? 1 : manualCount
 
   const usedSkus = useMemo(() => getUsedSkus(allOrders, excludeOrderId ? [excludeOrderId] : []), [allOrders, excludeOrderId])
 
@@ -34,6 +44,73 @@ export default function SkuPickerModal({ batches, allOrders, excludeOrderId, onP
     return () => window.removeEventListener('keydown', close)
   }, [onClose])
 
+  // ── Meerdere-artikelen-modus: N SKU-dropdowns uit de gekozen batch ───────
+  if (selectedBatch) {
+    const freeSkus = getFreeSkusForBatch(selectedBatch, usedSkus)
+    const slotKeys = Array.from({ length: count }, (_, i) => `slot-${i}`)
+    const slotSkus = assignSlotSkus(slotKeys, freeSkus, overrides)
+    const range = formatSkuRange(selectedBatch.supplierPrefix, selectedBatch.startNum, selectedBatch.endNum)
+    const filledCount = slotKeys.filter(k => slotSkus[k]).length
+
+    const handleConfirm = async () => {
+      const items = slotKeys.map(k => ({ sku: slotSkus[k], batch: selectedBatch })).filter(it => it.sku)
+      if (!items.length) return
+      await onPickMultiple(items)
+      onClose()
+    }
+
+    return (
+      <div className="modal-overlay" onMouseDown={e => e.target === e.currentTarget && onClose()}>
+        <div className="modal" style={{ maxWidth: 420, padding: 0, overflow: 'hidden', background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)' }}>
+          <div style={{ padding: '16px 20px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: '#f1f5f9' }}>Koppel SKU's ({count})</h2>
+              <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: 22, cursor: 'pointer', lineHeight: 1 }}>×</button>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <button
+                onClick={() => setSelectedBatch(null)}
+                style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: 12, cursor: 'pointer', padding: 0 }}
+              >← Andere batch</button>
+              <span style={{ fontWeight: 700, fontSize: 13, color: '#818cf8', fontFamily: 'monospace' }}>{range}</span>
+            </div>
+          </div>
+
+          <div style={{ padding: '14px 20px', maxHeight: 320, overflowY: 'auto' }}>
+            {count > freeSkus.length && (
+              <div style={{ fontSize: 11, color: '#f87171', fontWeight: 600, marginBottom: 10 }}>
+                ⚠ Nog maar {freeSkus.length} SKU{freeSkus.length === 1 ? '' : "'s"} beschikbaar in deze batch
+              </div>
+            )}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {slotKeys.map((key, i) => (
+                <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 11, color: '#64748b', width: 48, flexShrink: 0 }}>Item {i + 1}</span>
+                  <select
+                    value={slotSkus[key] || ''}
+                    onChange={e => setOverrides(prev => ({ ...prev, [key]: e.target.value }))}
+                    disabled={!freeSkus.length}
+                    style={{ flex: 1, fontFamily: 'monospace', fontSize: 12, fontWeight: 700, padding: '6px 8px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.1)', background: '#1e293b', color: '#f1f5f9', outline: 'none' }}
+                  >
+                    {!slotSkus[key] && <option value="">Geen vrije SKU</option>}
+                    {skuOptionsForSlot(key, slotSkus, freeSkus).map(sku => <option key={sku} value={sku}>{sku}</option>)}
+                  </select>
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={handleConfirm}
+              disabled={!filledCount}
+              style={{ width: '100%', marginTop: 14, padding: '9px', borderRadius: 8, border: 'none', background: '#6366f1', color: '#fff', fontWeight: 700, fontSize: 13, cursor: filledCount ? 'pointer' : 'default', opacity: filledCount ? 1 : 0.5 }}
+            >
+              Bevestig koppeling ({filledCount} SKU{filledCount === 1 ? '' : "'s"})
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="modal-overlay" onMouseDown={e => e.target === e.currentTarget && onClose()}>
       <div className="modal" style={{ maxWidth: 420, padding: 0, overflow: 'hidden', background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)' }}>
@@ -49,6 +126,34 @@ export default function SkuPickerModal({ batches, allOrders, excludeOrderId, onP
             placeholder="Zoek SKU, naam, merk…"
             style={{ width: '100%', padding: '8px 12px', background: '#1e293b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, color: '#f1f5f9', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
           />
+          {onPickMultiple && (
+            manualCount === undefined ? (
+              <span
+                onClick={() => setManualCount(2)}
+                style={{ display: 'inline-block', marginTop: 10, fontSize: 11, color: '#94a3b8', cursor: 'pointer', userSelect: 'none' }}
+              >+ Dit is eigenlijk meerdere artikelen</span>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10 }}>
+                <span style={{ fontSize: 11, color: '#94a3b8' }}>Aantal artikelen:</span>
+                <input
+                  type="number"
+                  min={2}
+                  value={manualCount}
+                  onChange={e => setManualCount(e.target.value)}
+                  onBlur={() => setManualCount(prev => {
+                    let n = parseInt(prev, 10)
+                    if (!Number.isFinite(n) || n < 2) n = 2
+                    return n
+                  })}
+                  style={{ width: 48, fontSize: 12, fontWeight: 700, padding: '3px 6px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.1)', background: '#1e293b', color: '#f1f5f9', textAlign: 'center', outline: 'none' }}
+                />
+                <span
+                  onClick={() => setManualCount(undefined)}
+                  style={{ fontSize: 11, color: '#f87171', cursor: 'pointer', userSelect: 'none' }}
+                >✕ annuleer</span>
+              </div>
+            )
+          )}
         </div>
         <div style={{ maxHeight: 320, overflowY: 'auto' }}>
           {items.length === 0 ? (
@@ -59,6 +164,11 @@ export default function SkuPickerModal({ batches, allOrders, excludeOrderId, onP
               <div
                 key={b.id}
                 onClick={async () => {
+                  if (available === 0) return
+                  // Bij "meerdere artikelen" eerst de batch kiezen en dan pas
+                  // N SKU-dropdowns tonen (zie hierboven) — pas hier meteen
+                  // afronden als er maar 1 item nodig is.
+                  if (count > 1) { setSelectedBatch(b); return }
                   // Nooit de volledige batch-range ("MAU001-024") als sku_ref
                   // opslaan — dat is enkel de weergavetekst voor deze rij. Bij
                   // een klik hoort altijd het eerstvolgende vrije individuele

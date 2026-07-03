@@ -41,13 +41,10 @@ export function getRemainingQty(batch, sales) {
 }
 
 export function calcSaleProfit(sale, batch) {
+  const totalCost = getBatchUnitCost(batch) * (sale.quantity || 1)
   if (sale.isFree) {
-    const unitCost = (batch.costPrice || 0) + (batch.importTax || 0)
-    const totalCost = unitCost * (sale.quantity || 1)
     return { totalCost, totalRevenue: 0, fees: 0, profit: 0 }
   }
-  const unitCost = (batch.costPrice || 0) + (batch.importTax || 0)
-  const totalCost = unitCost * (sale.quantity || 1)
   const totalRevenue = (sale.salePrice || 0) * (sale.quantity || 1)
   const fees = (sale.fees || 0) + (sale.shippingCost || 0)
   const profit = totalRevenue - totalCost - fees
@@ -170,8 +167,46 @@ export function getFreeSkusForBatch(batch, usedSkus) {
 // tussen SkuPickerModal se aanroepers (Verkopen.jsx "SKU koppelen",
 // AankoopSkuModal) en BulkSkuModal, zodat cost_price nooit op 2 plekken
 // anders berekend wordt.
+// importTax is een TOTAAL bedrag voor de hele batch (ingevoerd bij het
+// aanmaken van de batch in Voorraad), geen bedrag per stuk — moet dus eerst
+// door de batch-hoeveelheid gedeeld worden vóór het bij costPrice (dat al wél
+// een per-stuk bedrag is) opgeteld wordt.
 export function getBatchUnitCost(batch) {
-  return (batch?.costPrice || 0) + (batch?.importTax || 0)
+  const unitTax = (batch?.importTax || 0) / (batch?.quantity || 1)
+  return (batch?.costPrice || 0) + unitTax
+}
+
+// ── Slot-toewijzing voor meerdere SKU-dropdowns uit dezelfde batch — enige
+// bron van waarheid, gedeeld tussen BulkSkuModal en SkuPickerModal se
+// "meerdere artikelen"-modus, zodat er geen 2 losse implementaties van
+// dezelfde claim-logica ontstaan.
+//
+// Elk slot krijgt de handmatige override (overrides[key]) als die zelf nog
+// vrij is en niet al door een EERDER slot geclaimd werd binnen dezelfde
+// actie, anders de eerste nog niet-geclaimde vrije SKU. Voorkomt dat
+// dezelfde SKU tweemaal in 1 actie terechtkomt.
+export function assignSlotSkus(slotKeys, freeSkus, overrides = {}) {
+  const slotSkus = {}
+  const claimed = new Set()
+  for (const key of slotKeys) {
+    let sku = overrides[key]
+    if (!sku || !freeSkus.includes(sku) || claimed.has(sku)) {
+      sku = freeSkus.find(s => !claimed.has(s)) || ''
+    }
+    slotSkus[key] = sku
+    if (sku) claimed.add(sku)
+  }
+  return slotSkus
+}
+
+// Dropdown-opties voor 1 slot: alle vrije SKU's, min de SKU's die door
+// ANDERE slots in dezelfde actie al gekozen zijn (de eigen huidige keuze
+// blijft wel altijd zichtbaar in zijn eigen dropdown).
+export function skuOptionsForSlot(slotKey, slotSkus, freeSkus) {
+  const claimedByOthers = new Set(
+    Object.entries(slotSkus).filter(([k]) => k !== slotKey).map(([, v]) => v)
+  )
+  return freeSkus.filter(s => s === slotSkus[slotKey] || !claimedByOthers.has(s))
 }
 
 // ── Bedrijfskosten — gedeeld tussen Kosten.jsx (totaal bovenaan) en

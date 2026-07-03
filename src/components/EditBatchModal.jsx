@@ -139,7 +139,7 @@ export default function EditBatchModal({ batch, suppliers, onClose, onSave }) {
               <input type="number" step="0.01" min="0" value={form.costPrice} onChange={(e) => set('costPrice', e.target.value)} placeholder="0,00" />
             </div>
             <div className="form-group">
-              <label>Import tax per stuk (€)</label>
+              <label>Import tax totaal (€)</label>
               <input type="number" step="0.01" min="0" value={form.importTax} onChange={(e) => set('importTax', e.target.value)} placeholder="0,00" />
             </div>
           </div>

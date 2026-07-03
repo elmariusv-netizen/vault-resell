@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import Modal from './Modal'
-import { formatSkuRange, formatCurrency, calcSaleProfit, getRemainingQty } from '../utils/skuUtils'
+import { formatSkuRange, formatCurrency, calcSaleProfit, getRemainingQty, getBatchUnitCost } from '../utils/skuUtils'
 
 const PLATFORMS = ['Vinted', 'Privé persoon', 'Medeverkoper/Groothandel']
 
@@ -34,7 +34,7 @@ export default function EditSaleModal({ data, sale, onClose, onSave }) {
 
   const batch     = batches.find((b) => b.id === batchId)
   const remaining = batch ? getRemainingQty(batch, sales.filter((s) => s.id !== sale.id)) : 0
-  const unitCost  = batch ? (parseFloat(batch.costPrice) || 0) + (parseFloat(batch.importTax) || 0) : 0
+  const unitCost  = batch ? getBatchUnitCost(batch) : 0
 
   const effectivePrice    = isFree ? 0 : parseFloat(salePrice) || 0
   const effectiveShipping = parseFloat(shippingCost) || 0

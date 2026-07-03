@@ -7,7 +7,7 @@ import DateRangeFilter, { getDateBounds, filterByRange } from '../components/Dat
 import {
   formatCurrency, formatSkuRange, calcSaleProfit,
   getRemainingQty, getSupplierColor, normalizePlatform,
-  fetchBusinessCosts, sumCosts,
+  fetchBusinessCosts, sumCosts, getBatchUnitCost,
 } from '../utils/skuUtils'
 
 const ChartTooltip = ({ active, payload, label }) => {
@@ -58,7 +58,7 @@ export default function Stats({ data, theme }) {
     }, 0)
     const totalCosts = sumCosts(filteredCosts)
     const totalProfit = salesProfit - totalCosts
-    const totalInvested = batches.reduce((s, b) => s + ((b.costPrice || 0) + (b.importTax || 0)) * b.quantity, 0)
+    const totalInvested = batches.reduce((s, b) => s + getBatchUnitCost(b) * b.quantity, 0)
     const totalStock = batches.reduce((s, b) => s + getRemainingQty(b, sales), 0)
     const margin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0
     const avgProfit = totalSold > 0 ? totalProfit / totalSold : 0

@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect } from 'react'
 import {
   formatCurrency, formatDateLong, formatSkuRange, calcSaleProfit, normalizePlatform,
   genId, formatSku, isLabelReady, COUNTRY_FLAGS, getStatusBadge, getUsedSkus, getFreeSkusForBatch,
-  getBatchUnitCost,
+  getBatchUnitCost, assignSlotSkus, skuOptionsForSlot,
 } from '../utils/skuUtils'
 import SaleModal from '../components/SaleModal'
 import EditSaleModal from '../components/EditSaleModal'
@@ -597,33 +597,11 @@ function BulkSkuModal({ suppliers, batches, allOrders, orders, onClose, onConfir
     }
   }
 
-  // Elk slot krijgt een concrete SKU toegewezen uit freeSkus: de handmatige
-  // keuze (overrides) als die zelf nog vrij is en niet al door een EERDER
-  // slot geclaimd werd binnen deze zelfde koppel-actie, anders de eerste nog
-  // niet-geclaimde vrije SKU (= huidig standaardgedrag). Dit voorkomt dat
-  // dezelfde SKU tweemaal in deze actie terechtkomt.
-  const slotSkus = {}
-  {
-    const claimed = new Set()
-    for (const slot of slots) {
-      let sku = overrides[slot.slotKey]
-      if (!sku || !freeSkus.includes(sku) || claimed.has(sku)) {
-        sku = freeSkus.find(s => !claimed.has(s)) || ''
-      }
-      slotSkus[slot.slotKey] = sku
-      if (sku) claimed.add(sku)
-    }
-  }
-
-  // Dropdown-opties voor een slot: alle vrije SKU's, min de SKU's die door
-  // ANDERE slots in deze actie al gekozen zijn (de eigen huidige keuze blijft
-  // wel altijd zichtbaar in zijn eigen dropdown).
-  const optionsFor = (slot) => {
-    const claimedByOthers = new Set(
-      Object.entries(slotSkus).filter(([k]) => k !== slot.slotKey).map(([, v]) => v)
-    )
-    return freeSkus.filter(s => s === slotSkus[slot.slotKey] || !claimedByOthers.has(s))
-  }
+  // Slot → SKU-toewijzing en dropdown-opties: gedeelde logica met
+  // SkuPickerModal se "meerdere artikelen"-modus (zie assignSlotSkus/
+  // skuOptionsForSlot in skuUtils.js).
+  const slotSkus = assignSlotSkus(slots.map(s => s.slotKey), freeSkus, overrides)
+  const optionsFor = (slot) => skuOptionsForSlot(slot.slotKey, slotSkus, freeSkus)
 
   const handleConfirm = async () => {
     if (!supplier || saving) return
@@ -790,7 +768,7 @@ function BulkSkuModal({ suppliers, batches, allOrders, orders, onClose, onConfir
 // dan een dun randje) — deze versie geeft een duidelijk gevuld vlak + wit
 // vinkje bij aangevinkt, en een subtiele lege outline bij niet-aangevinkt.
 // ── Order rij (Vinteer-stijl) ──────────────────────────────────────────────
-function VintedOrderRow({ order, isLast, onSave, onSaveFields, onDismiss, onPhotoClick, onRegister, onDetail, onUnlinkSku, batches, allOrders, checked, onCheck }) {
+function VintedOrderRow({ order, isLast, onSave, onSaveFields, onBulkConfirm, onDismiss, onPhotoClick, onRegister, onDetail, onUnlinkSku, batches, allOrders, checked, onCheck }) {
   const [skuPickerOpen,  setSkuPickerOpen]  = useState(false)
   const [hoverPos,       setHoverPos]       = useState(null)
   const [cogsEditing,    setCogsEditing]    = useState(false)
@@ -1092,6 +1070,7 @@ function VintedOrderRow({ order, isLast, onSave, onSaveFields, onDismiss, onPhot
             cost_price: getBatchUnitCost(batch),
             batch_id: batch.id,
           })}
+          onPickMultiple={items => onBulkConfirm([{ orderId: order.id, items }])}
           onClose={() => setSkuPickerOpen(false)}
         />
       )}
@@ -1634,6 +1613,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
                     isLast={i === arr.length - 1}
                     onSave={saveVtField}
                     onSaveFields={saveVtFields}
+                    onBulkConfirm={handleBulkSkuConfirm}
                     onDismiss={() => dismissVintedOrder(order.id)}
                     onPhotoClick={setPhotoPopup}
                     onDetail={() => setOrderDetail(order)}
