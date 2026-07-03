@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect } from 'react'
 import {
-  formatCurrency, formatDateLong, formatSkuRange, calcSaleProfit, normalizePlatform,
+  formatCurrency, formatDateLong, formatDateTimeLong, formatSkuRange, calcSaleProfit, normalizePlatform,
   genId, formatSku, isLabelReady, COUNTRY_FLAGS, getStatusBadge, getUsedSkus, getFreeSkusForBatch,
   getBatchUnitCost, assignSlotSkus, skuOptionsForSlot,
 } from '../utils/skuUtils'
@@ -331,12 +331,12 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave, 
           {/* Datum */}
           {date && (
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: order.payout_date ? 4 : 14, display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ color: 'var(--text-3)' }}>🗓</span> {formatDateLong(date)}
+              <span style={{ color: 'var(--text-3)' }}>🗓</span> {order.sold_at ? formatDateTimeLong(order.sold_at) : formatDateLong(date)}
             </div>
           )}
           {order.payout_date && (
-            <div style={{ fontSize: 12, color: 'var(--text-2)', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ color: 'var(--text-3)' }}>💶</span> Uitbetaald op {formatDateLong(order.payout_date)}
+            <div style={{ fontSize: 12, color: 'var(--blue)', fontWeight: 600, marginBottom: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span>💶</span> Uitbetaald op {formatDateLong(order.payout_date)}
             </div>
           )}
 
@@ -966,11 +966,11 @@ function VintedOrderRow({ order, isLast, onSave, onSaveFields, onBulkConfirm, on
               ) : null })()}
               {date && (
                 <span style={{ fontSize: 11, color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 3 }}>
-                  🗓 {formatDateLong(date)}
+                  🗓 {order.sold_at ? formatDateTimeLong(order.sold_at) : formatDateLong(date)}
                 </span>
               )}
               {order.payout_date && (
-                <span style={{ fontSize: 11, color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 3 }}>
+                <span style={{ fontSize: 11, color: 'var(--blue)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 3 }}>
                   💶 Uitbetaald op {formatDateLong(order.payout_date)}
                 </span>
               )}

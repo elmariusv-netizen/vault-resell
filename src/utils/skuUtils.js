@@ -73,6 +73,19 @@ export function formatDateLong(dateStr) {
   return new Intl.DateTimeFormat('nl-BE', { day: 'numeric', month: 'long', year: 'numeric' }).format(d)
 }
 
+// Zelfde als formatDateLong, maar met het exacte tijdstip erbij (bv. voor
+// vinted_orders.sold_at, dat — in tegenstelling tot sale_date — een
+// volledige timestamp bevat) — "28 juni 2026, 15:10". nl-BE's ingebouwde
+// datetime-format zet er "om" tussen i.p.v. een komma, dus datum en tijd
+// worden apart geformatteerd en zelf samengevoegd.
+export function formatDateTimeLong(dateStr) {
+  if (!dateStr) return '—'
+  const d = new Date(dateStr)
+  if (isNaN(d)) return dateStr
+  const time = new Intl.DateTimeFormat('nl-BE', { hour: '2-digit', minute: '2-digit' }).format(d)
+  return `${formatDateLong(dateStr)}, ${time}`
+}
+
 export function getSupplierColor(suppliers, prefix) {
   const s = suppliers.find((s) => s.prefix === prefix)
   return s?.color || '#666'

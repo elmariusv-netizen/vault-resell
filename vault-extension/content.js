@@ -292,6 +292,12 @@
         buyer_name:            o.buyer?.real_name || o.buyer?.display_name || o.buyer?.name || o.user?.real_name || o.user?.display_name || '',
         country:               o.buyer?.country_iso_code || o.country_iso_code || '',
         date:                  (resolvedDate || '').slice(0, 10),
+        // resolvedDate is doorgaans een volledige ISO-timestamp (met tijd) —
+        // sale_date/DB-kolom "date" hierboven blijft bewust enkel de datum
+        // (bestaand contract voor sortering/andere pagina's), maar soldAt
+        // bewaart de volledige timestamp erbij zodat de Verkopen-kaart ook
+        // het exacte verkooptijdstip kan tonen.
+        soldAt:                resolvedDate || null,
         status:                o.status || '',
         transactionUserStatus: o.transaction_user_status ?? null,
         conversationId:        String(o.conversation_id || o.thread_id || ''),

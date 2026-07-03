@@ -152,6 +152,10 @@ async function syncToSupabase(order) {
     tracking_code:   order.tracking_code   || null,
     buyer_name:      order.buyerName || order.buyer_name || null,
     sale_date:       order.date || null,
+    // Volledige verkoop-timestamp (met tijd) — sale_date hierboven blijft
+    // bewust datum-only (bestaand contract), sold_at is een aparte kolom
+    // voor het exacte tijdstip op de Verkopen-kaart.
+    sold_at:         order.soldAt || null,
     // label_available wordt bewust NIET hier gezet — de oude
     // transactionUserStatus==='needs_action'/"verzendlabel"-tekst-heuristiek
     // bleek onbetrouwbaar (zie de PDF-verificatiefix op de Labels-pagina) en

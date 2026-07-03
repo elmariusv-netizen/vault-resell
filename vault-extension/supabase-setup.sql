@@ -43,6 +43,11 @@ ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS is_completed BOOLEAN;
 -- Niet elke (oudere) order heeft dit bericht — dan blijft dit veld NULL.
 ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS payout_date TIMESTAMPTZ;
 
+-- Exact verkooptijdstip — sale_date (DATE) blijft datum-only voor bestaande
+-- consumers (Aankopen.jsx/Labels.jsx/sortering), sold_at is de aparte
+-- kolom met de volledige timestamp voor de Verkopen-kaart.
+ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS sold_at TIMESTAMPTZ;
+
 -- Storage bucket voor vooraf gecropte 4x6-labels (automatisch gevuld door
 -- api/label-prefetch.js zodra een label beschikbaar komt)
 INSERT INTO storage.buckets (id, name, public)
