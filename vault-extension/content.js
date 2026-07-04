@@ -1491,18 +1491,21 @@
     console.log('[Vault] label kandidaten:', candidateOrders.length, 'of', orders.length,
       '— statussen:', [...new Set(orders.map(o => `${o.status}|${o.transactionUserStatus}`))].join(' · '));
 
-    const alreadySent = await getAutoSentSet();
-    // Kandidaten die al eerder succesvol geverifieerd + verstuurd zijn hoeven
-    // niet opnieuw getest te worden (het label bestaat dan al aantoonbaar en
-    // staat al gecropt klaar) — enkel de rest moet de test-fetch doorstaan.
-    const known      = candidateOrders.filter(o => alreadySent.has(o.transactionId));
-    const unverified = candidateOrders.filter(o => !alreadySent.has(o.transactionId));
-
+    // GEEN "al bekend, sla over"-shortcut meer op basis van vlt_auto_sent_labels
+    // (chrome.storage.local): dat was een write-once vlag die nooit meer
+    // ongedaan gemaakt werd zodra 1 eerdere poging ooit slaagde — als Vinted
+    // een label later ongeldig maakt/opnieuw laat aanmaken (bv. na een
+    // retour/heruitgifte), bleef die order dan PERMANENT uitgesloten van
+    // verdere pogingen, ook al stond de "Verzendlabel aanmaken"-knop
+    // opnieuw in de chat (bevestigd op txn/conversatie 23538654249). Elke
+    // needs_action-kandidaat doorloopt nu altijd opnieuw de echte
+    // test-fetch — prefetchLabel() is idempotent, dus dit kost enkel wat
+    // extra Vinted-API-calls voor reeds werkende labels, geen risico.
     const { createLabels: autoCreate } = await getLiveSyncSettings();
 
-    const verified = [...known];
+    const verified = [];
     let skipped = 0;
-    for (const o of unverified) {
+    for (const o of candidateOrders) {
       try {
         // prefetchLabel() ÍS de test-fetch: haalt het echte label op (via de
         // presigned shipment-URL), de server controleert status + content-type
