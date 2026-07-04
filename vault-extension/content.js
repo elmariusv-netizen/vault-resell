@@ -1022,6 +1022,65 @@
     return row;
   }
 
+  // Supabase-veldnaam → cache-sleutel, gedeeld tussen showSettingsScreen()'s
+  // write() en background.js's setLiveSyncSetting() (die exact dezelfde
+  // mapping heeft — hou ze in sync als er ooit een 5e toggle bijkomt).
+  const LIVE_SYNC_FIELD_TO_KEY = {
+    auto_sync_sales: 'sales', auto_sync_purchases: 'purchases',
+    auto_sync_labels: 'labels', auto_create_labels: 'createLabels',
+  };
+
+  function normalizeLiveSyncSettings(raw) {
+    return {
+      sales: raw?.sales ?? true,
+      purchases: raw?.purchases ?? false,
+      labels: raw?.labels ?? false,
+      createLabels: raw?.createLabels ?? false,
+    };
+  }
+
+  // ── ENIGE canonieke leesplek voor de 4 live-sync/auto-create-toggles —
+  // zowel de ⚙-instellingenscherm-weergave (showSettingsScreen) als de
+  // scan-logica (refreshLabels) roepen UITSLUITEND deze functie aan, zodat
+  // ze nooit meer een ander antwoord kunnen geven dan elkaar.
+  //
+  // Synchroon in-memory gecachet (liveSyncSettingsMem) — een testrun bewees
+  // dat zelfs een "optimistische" chrome.storage.local.set() vóór de
+  // netwerk-roundtrip niet genoeg is: write() zelf begint met een `await
+  // chrome.storage.local.get(...)`, dus een read die in dezelfde microtask
+  // volgt (bv. direct een andere tab aanklikken) kan de set() nog vóór zijn.
+  // writeToggle() hieronder werkt liveSyncSettingsMem daarom SYNCHROON bij,
+  // vóór enige await — dat kan een JS-thread nooit interleaven.
+  //
+  // chrome.storage.onChanged houdt de cache ook actueel voor wijzigingen van
+  // BUITEN deze content-script-instantie (bv. checkAndSync()'s periodieke
+  // Supabase-refresh in background.js, of de 3 sync-toggles die ook vanuit
+  // de webapp-Instellingen-pagina aanpasbaar zijn).
+  let liveSyncSettingsMem = null;
+
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.liveSyncSettings) {
+      liveSyncSettingsMem = normalizeLiveSyncSettings(changes.liveSyncSettings.newValue);
+    }
+  });
+
+  async function getLiveSyncSettings() {
+    if (liveSyncSettingsMem) return liveSyncSettingsMem;
+    const { liveSyncSettings } = await chrome.storage.local.get(['liveSyncSettings']);
+    liveSyncSettingsMem = normalizeLiveSyncSettings(liveSyncSettings);
+    return liveSyncSettingsMem;
+  }
+
+  // Werkt de in-memory cache SYNCHROON bij (geen enkele await ervoor) zodat
+  // een getLiveSyncSettings()-aanroep die in dezelfde tick volgt op een
+  // toggle-klik altijd de nieuwe waarde ziet — ongeacht hoe traag de
+  // achterliggende chrome.storage.local/Supabase-schrijfacties zijn.
+  function writeToggleSync(field, value) {
+    const key = LIVE_SYNC_FIELD_TO_KEY[field] || field;
+    liveSyncSettingsMem = { ...normalizeLiveSyncSettings(liveSyncSettingsMem), [key]: value };
+    return key;
+  }
+
   async function showSettingsScreen() {
     const content = document.getElementById('vlt-content');
     const footer  = document.getElementById('vlt-footer');
@@ -1037,21 +1096,44 @@
     content.appendChild(el('div', `font-size:12px;color:${D.sub};line-height:1.6;margin:-8px 0 16px`,
       'Synct automatisch elke ~4 minuten op de achtergrond, zolang Chrome open is — ook als je niet op deze tab zit. Staat een schakelaar uit, dan synct die bron enkel handmatig (paneel-checkboxes of de webapp-synchroniseer-knop).'));
 
-    const { liveSyncSettings = {} } = await chrome.storage.local.get(['liveSyncSettings']);
+    const liveSyncSettings = await getLiveSyncSettings();
     const card = el('div', `background:${D.card};border-radius:16px;padding:0 16px;box-shadow:0 1px 4px rgba(0,0,0,0.07)`);
 
     const write = async (field, value) => {
+      // Bewust GEEN await vóór writeToggleSync() hieronder — showSettingsScreen()
+      // heeft liveSyncSettingsMem al gevuld vóórdat deze knoppen ooit klikbaar
+      // werden (regel hierboven, await getLiveSyncSettings()), dus een directe
+      // (synchrone) lezing hier is altijd veilig én voorkomt dat write() zelf
+      // een microtask-yield introduceert vóór de cache-mutatie — anders zou
+      // een getLiveSyncSettings()-aanroep die in dezelfde tick volgt (bv. een
+      // scan die meteen na het klikken start) writeToggleSync() nog vóór
+      // kunnen zijn.
+      const key = LIVE_SYNC_FIELD_TO_KEY[field] || field;
+      const prevValue = normalizeLiveSyncSettings(liveSyncSettingsMem)[key];
+      writeToggleSync(field, value);
+
+      const { liveSyncSettings: prev = {} } = await chrome.storage.local.get(['liveSyncSettings']);
+      await chrome.storage.local.set({ liveSyncSettings: { ...prev, [key]: value, writtenAt: Date.now() } });
+
       const vintedUserId = await getVintedUserId();
       const res = await sendMsg({ type: 'SET_LIVE_SYNC_SETTING', vintedUserId, field, value });
-      if (!res?.success) toast(`Instelling opslaan mislukt: ${res?.error || 'onbekende fout'}`, false);
+      if (!res?.success) {
+        toast(`Instelling opslaan mislukt: ${res?.error || 'onbekende fout'}`, false);
+        // Rollback: Supabase-write mislukt, dus noch de in-memory cache noch
+        // chrome.storage.local mogen blijven beweren dat de instelling aan
+        // staat terwijl ze nergens persistent is opgeslagen.
+        liveSyncSettingsMem = { ...normalizeLiveSyncSettings(liveSyncSettingsMem), [key]: prevValue };
+        const { liveSyncSettings: cur = {} } = await chrome.storage.local.get(['liveSyncSettings']);
+        await chrome.storage.local.set({ liveSyncSettings: { ...cur, [key]: prevValue, writtenAt: Date.now() } });
+      }
     };
 
     card.appendChild(settingsRow('Verkopen', 'Commandes vendues, montants, acheteurs',
-      liveSyncSettings.sales ?? true, v => write('auto_sync_sales', v)));
+      liveSyncSettings.sales, v => write('auto_sync_sales', v)));
     card.appendChild(settingsRow('Aankopen', 'Commandes achetées sur Vinted',
-      liveSyncSettings.purchases ?? false, v => write('auto_sync_purchases', v)));
+      liveSyncSettings.purchases, v => write('auto_sync_purchases', v)));
     card.appendChild(settingsRow('Labels', 'Verzendlabels automatisch verifiëren en klaarzetten',
-      liveSyncSettings.labels ?? false, v => write('auto_sync_labels', v), false));
+      liveSyncSettings.labels, v => write('auto_sync_labels', v), false));
 
     content.appendChild(card);
 
@@ -1416,8 +1498,7 @@
     const known      = candidateOrders.filter(o => alreadySent.has(o.transactionId));
     const unverified = candidateOrders.filter(o => !alreadySent.has(o.transactionId));
 
-    const { liveSyncSettings = {} } = await chrome.storage.local.get(['liveSyncSettings']);
-    const autoCreate = !!liveSyncSettings.createLabels;
+    const { createLabels: autoCreate } = await getLiveSyncSettings();
 
     const verified = [...known];
     let skipped = 0;
