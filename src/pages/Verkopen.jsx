@@ -1,8 +1,8 @@
-import { useMemo, useState, useEffect } from 'react'
+import { useMemo, useState, useEffect, useRef } from 'react'
 import {
   formatCurrency, formatDateLong, formatDateTimeLong, formatSkuRange, calcSaleProfit, normalizePlatform,
   genId, formatSku, isLabelReady, COUNTRY_FLAGS, getStatusBadge, getUsedSkus, getFreeSkusForBatch,
-  getBatchUnitCost, assignSlotSkus, skuOptionsForSlot,
+  getBatchUnitCost, assignSlotSkus, skuOptionsForSlot, MANUAL_STATUSES, getManualStatus, getEffectiveStatusBadge,
 } from '../utils/skuUtils'
 import SaleModal from '../components/SaleModal'
 import EditSaleModal from '../components/EditSaleModal'
@@ -333,11 +333,11 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave, 
           {/* Titel */}
           <div style={{ fontSize: 17, fontWeight: 700, lineHeight: 1.35, marginBottom: 8, color: 'var(--text)' }}>{order.title}</div>
 
-          {/* Status badge */}
-          {(() => { const b = getStatusBadge(order.status, isLabelReady(order)); return b ? (
+          {/* Status badge — handmatige status heeft voorrang op de automatische */}
+          {(() => { const b = getEffectiveStatusBadge(order); return b ? (
             <div style={{ marginBottom: 12 }}>
               <span style={{ fontSize: 11, color: b.color, background: b.bg, padding: '3px 10px', borderRadius: 999, fontWeight: 700, border: `1px solid ${b.color}30` }}>
-                {(b.label === 'Voltooid' || b.label === 'Geleverd') && '✓ '}{b.label}
+                {b.icon ? `${b.icon} ` : (/voltooid|geleverd/i.test(b.label) ? '✓ ' : '')}{b.label}
               </span>
             </div>
           ) : null })()}
@@ -796,6 +796,88 @@ function BulkSkuModal({ batches, allOrders, orders, onClose, onConfirm }) {
 // Native accent-color checkboxes renderen inconsistent (soms nauwelijks meer
 // dan een dun randje) — deze versie geeft een duidelijk gevuld vlak + wit
 // vinkje bij aangevinkt, en een subtiele lege outline bij niet-aangevinkt.
+// ── Klikbare status-badge — toont manual_status indien gezet, anders de
+// automatische Vinted-status (getStatusBadge), en laat via een dropdown een
+// handmatige override kiezen voor eigen administratie/overzicht. De
+// automatische classificatie (order.status) wordt hierbij nooit aangepast —
+// enkel manual_status wijzigt, dus de Home-dashboard-tellingen (die op
+// order.status draaien) blijven ongemoeid.
+function ManualStatusBadge({ order, onSave }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onDocClick = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [open])
+
+  const manual = getManualStatus(order.manual_status)
+  const auto = getStatusBadge(order.status, isLabelReady(order))
+  const current = manual || auto
+  const icon = manual ? manual.icon : (auto && /voltooid|geleverd/i.test(auto.label) ? '✓' : null)
+
+  const choose = (value) => { onSave(order.id, 'manual_status', value); setOpen(false) }
+
+  return (
+    <div ref={ref} style={{ position: 'relative', display: 'inline-block' }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: 700,
+          color: current?.color || 'var(--text-3)', background: current?.bg || 'var(--bg-2)',
+          padding: '2px 8px', borderRadius: 999, border: `1px solid ${current ? current.color + '30' : 'var(--border)'}`,
+          cursor: 'pointer', fontFamily: 'inherit', lineHeight: 1.5,
+        }}
+      >
+        {icon && <span>{icon} </span>}{current?.label || 'Status'}
+        <span style={{ fontSize: 8, opacity: 0.7 }}>▾</span>
+      </button>
+
+      {open && (
+        <div
+          style={{
+            position: 'absolute', top: '100%', left: 0, marginTop: 4, zIndex: 20,
+            background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 10,
+            boxShadow: '0 12px 32px rgba(0,0,0,0.18)', overflow: 'hidden', minWidth: 160,
+          }}
+        >
+          {MANUAL_STATUSES.map(s => (
+            <div
+              key={s.value}
+              onClick={() => choose(s.value)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8, padding: '7px 12px', fontSize: 12, fontWeight: 600,
+                color: s.color, cursor: 'pointer', whiteSpace: 'nowrap',
+                background: order.manual_status === s.value ? s.bg : 'transparent',
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = s.bg}
+              onMouseLeave={e => e.currentTarget.style.background = order.manual_status === s.value ? s.bg : 'transparent'}
+            >
+              <span>{s.icon}</span>{s.label}
+            </div>
+          ))}
+          {order.manual_status && (
+            <div
+              onClick={() => choose(null)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8, padding: '7px 12px', fontSize: 11, fontWeight: 600,
+                color: 'var(--text-3)', cursor: 'pointer', whiteSpace: 'nowrap',
+                borderTop: '1px solid var(--border)',
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-2)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+            >
+              <span>↺</span>Automatisch (Vinted-status)
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Order rij (Vinteer-stijl) ──────────────────────────────────────────────
 function VintedOrderRow({ order, onSave, onSaveFields, onBulkConfirm, onDismiss, onPhotoClick, onRegister, onDetail, onUnlinkSku, batches, allOrders, checked, onCheck }) {
   const [skuPickerOpen,  setSkuPickerOpen]  = useState(false)
@@ -982,11 +1064,7 @@ function VintedOrderRow({ order, onSave, onSaveFields, onBulkConfirm, onDismiss,
 
             {/* Rij 4: datum + acties */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-              {(() => { const b = getStatusBadge(order.status, isLabelReady(order)); return b ? (
-                <span style={{ fontSize: 10, color: b.color, background: b.bg, padding: '2px 8px', borderRadius: 999, fontWeight: 700, border: `1px solid ${b.color}30` }}>
-                  {(b.label === 'Voltooid' || b.label === 'Geleverd') && '✓ '}{b.label}
-                </span>
-              ) : null })()}
+              <ManualStatusBadge order={order} onSave={onSave} />
               {date && (
                 <span style={{ fontSize: 11, color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 3 }}>
                   🗓 {order.sold_at ? formatDateTimeLong(order.sold_at) : formatDateLong(date)}

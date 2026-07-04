@@ -48,6 +48,13 @@ ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS payout_date TIMESTAMPTZ;
 -- kolom met de volledige timestamp voor de Verkopen-kaart.
 ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS sold_at TIMESTAMPTZ;
 
+-- Handmatige status-override voor eigen administratie/overzicht — staat los
+-- van de automatische Vinted-status (status/transaction_status/shipment_status
+-- blijven ongemoeid). NULL = geen override, toon de automatische badge.
+-- Toegestane waarden staan in MANUAL_STATUSES (skuUtils.js): to_process,
+-- prepared, shipped, done, dispute, cancelled.
+ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS manual_status TEXT;
+
 -- Storage bucket voor vooraf gecropte 4x6-labels (automatisch gevuld door
 -- api/label-prefetch.js zodra een label beschikbaar komt)
 INSERT INTO storage.buckets (id, name, public)

@@ -200,6 +200,34 @@ export function getStatusBadge(status, labelAvailable) {
   return null
 }
 
+// ── Handmatige status — overschrijft de automatische Vinted-status enkel voor
+// weergave/administratie (order.status zelf blijft ongemoeid, dus de
+// automatische classificatie hierboven blijft altijd correct werken). Wordt
+// opgeslagen in vinted_orders.manual_status (TEXT, nullable) — null betekent
+// "geen override, toon de automatische badge".
+export const MANUAL_STATUSES = [
+  { value: 'to_process', label: 'À traiter',  icon: '⏱', color: '#d97706', bg: 'rgba(217,119,6,0.12)' },
+  { value: 'prepared',   label: 'Préparée',   icon: '📦', color: '#2563eb', bg: 'rgba(37,99,235,0.12)' },
+  { value: 'shipped',    label: 'Expédiée',   icon: '🚚', color: '#9333ea', bg: 'rgba(147,51,234,0.12)' },
+  { value: 'done',       label: 'Terminée',   icon: '✓',  color: '#16a34a', bg: 'rgba(22,163,74,0.12)' },
+  { value: 'dispute',    label: 'En litige',  icon: '⚠',  color: '#ea580c', bg: 'rgba(234,88,12,0.12)' },
+  { value: 'cancelled',  label: 'Annulée',    icon: '⊗',  color: '#6b7280', bg: 'rgba(107,114,128,0.10)' },
+]
+
+export function getManualStatus(value) {
+  return MANUAL_STATUSES.find(s => s.value === value) || null
+}
+
+// Effectieve badge voor read-only weergave (bv. de detail-modal): handmatige
+// keuze heeft voorrang, anders de automatische badge — dezelfde voorrangsregel
+// als de klikbare badge op de kaart, zodat beide plekken nooit uiteenlopen.
+export function getEffectiveStatusBadge(order) {
+  const manual = getManualStatus(order?.manual_status)
+  if (manual) return { label: manual.label, icon: manual.icon, color: manual.color, bg: manual.bg }
+  const auto = getStatusBadge(order?.status, isLabelReady(order))
+  return auto ? { ...auto, icon: null } : null
+}
+
 // ── Gedeelde "welke SKU's zijn al gebruikt"-logica ─────────────────────────
 // Enige bron van waarheid voor zowel SkuPickerModal (los, per order) als
 // BulkSkuModal (bulk) — beide moeten exact hetzelfde "beschikbaar"-getal
