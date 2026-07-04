@@ -849,13 +849,13 @@ function ManualStatusBadge({ order, onSave }) {
               onClick={() => choose(s.value)}
               style={{
                 display: 'flex', alignItems: 'center', gap: 8, padding: '7px 12px', fontSize: 12, fontWeight: 600,
-                color: s.color, cursor: 'pointer', whiteSpace: 'nowrap',
+                color: 'var(--text)', cursor: 'pointer', whiteSpace: 'nowrap',
                 background: order.manual_status === s.value ? s.bg : 'transparent',
               }}
               onMouseEnter={e => e.currentTarget.style.background = s.bg}
               onMouseLeave={e => e.currentTarget.style.background = order.manual_status === s.value ? s.bg : 'transparent'}
             >
-              <span>{s.icon}</span>{s.label}
+              <span style={{ color: s.color }}>{s.icon}</span>{s.label}
             </div>
           ))}
           {order.manual_status && (
