@@ -1143,10 +1143,10 @@
     // default-uit kolom in Supabase (auto_create_labels).
     content.appendChild(el('div', `font-size:11px;font-weight:700;color:${D.sub};text-transform:uppercase;letter-spacing:0.05em;margin:20px 0 8px`, 'Automatische acties'));
     content.appendChild(el('div', `font-size:12px;color:${D.sub};line-height:1.6;margin:-4px 0 14px`,
-      '⚠️ Dit voert zelf een actie uit bij Vinted (klikt de "Label aanmaken"-knop in je conversatie aan) — ongeverifieerd tegen een officiële API, dus enkel gebruiken als je dit bewust wil.'));
+      '⚠️ Dit voert zelf een actie uit bij Vinted (klikt de "Verzendlabel aanmaken"-knop in je conversatie aan) — ongeverifieerd tegen een officiële API, dus enkel gebruiken als je dit bewust wil.'));
     const actionCard = el('div', `background:${D.card};border-radius:16px;padding:0 16px;box-shadow:0 1px 4px rgba(0,0,0,0.07)`);
-    actionCard.appendChild(settingsRow('Labels automatisch aanmaken', 'Klikt "Label aanmaken" in de chat als een label needs_action staat maar nog niet ophaalbaar is',
-      liveSyncSettings.createLabels ?? false, v => write('auto_create_labels', v), false));
+    actionCard.appendChild(settingsRow('Labels automatisch aanmaken', 'Klikt "Verzendlabel aanmaken" in de chat als een label needs_action staat maar nog niet ophaalbaar is',
+      liveSyncSettings.createLabels, v => write('auto_create_labels', v), false));
     content.appendChild(actionCard);
   }
 
@@ -1529,6 +1529,18 @@
           console.log(`[Vault] label niet ophaalbaar voor txn ${o.transactionId} — probeer automatisch aan te maken via conversatie ${convId}…`);
           const clickResult = await sendMsg({ type: 'CREATE_LABEL_VIA_CHAT', conversationId: convId, transactionId: o.transactionId }, 25000);
           if (clickResult?.clicked) {
+            // TIJDELIJKE DEBUG-LOGGING — niet gepusht. Bevestigd via
+            // handmatige test dat 1 klik niet genoeg is (createLabelViaTab
+            // klikt nu 2x) — dit logt of de DOM tussen de 2 klikken
+            // daadwerkelijk verandert (bv. een tussenliggende bevestigingsstap),
+            // zodat we kunnen zien of blind 2x klikken volstaat of dat er
+            // specifiek op een tussenstap gereageerd moet worden.
+            if (clickResult.debugDomChangedBetweenClicks !== undefined) {
+              console.log(`[Vault] DEBUG DOM tussen de 2 klikken gewijzigd: ${clickResult.debugDomChangedBetweenClicks}`);
+              console.log(`[Vault] DEBUG vóór 1e klik:`, clickResult.debugBeforeFirstClick);
+              console.log(`[Vault] DEBUG na 1e klik:`, clickResult.debugAfterFirstClick);
+              console.log(`[Vault] DEBUG 2e klik uitgevoerd: ${clickResult.debugSecondClickPerformed}`);
+            }
             try {
               await prefetchLabel(o.transactionId);
               await addAutoSent(o.transactionId);
@@ -1536,10 +1548,10 @@
               console.log(`[Vault] Label automatisch aangemaakt voor txn ${o.transactionId}`);
               continue;
             } catch (e2) {
-              console.log(`[Vault] "Label aanmaken"-knop geklikt voor txn ${o.transactionId}, maar label nog steeds niet ophaalbaar (${e2.message}) — later opnieuw proberen`);
+              console.log(`[Vault] "Verzendlabel aanmaken"-knop 2x geklikt voor txn ${o.transactionId}, maar label nog steeds niet ophaalbaar (${e2.message}) — later opnieuw proberen`);
             }
           } else {
-            console.log(`[Vault] kon "Label aanmaken"-knop niet vinden/klikken voor txn ${o.transactionId} (${clickResult?.reason || 'onbekend'}) — overgeslagen`);
+            console.log(`[Vault] kon "Verzendlabel aanmaken"-knop niet vinden/klikken voor txn ${o.transactionId} (${clickResult?.reason || 'onbekend'}) — overgeslagen`);
           }
         }
         skipped++;

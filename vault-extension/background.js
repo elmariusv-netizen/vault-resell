@@ -335,7 +335,7 @@ async function fetchListingsViaTab() {
   });
 }
 
-// ── "Label aanmaken" automatisch aanklikken in de Vinted-conversatie ──────
+// ── "Verzendlabel aanmaken" automatisch aanklikken in de Vinted-conversatie ──────
 // ONGEVERIFIEERD tegen een live sessie (zie projectrapportage) — er bestaat
 // geen publieke documentatie voor deze interne Vinted-actie, dus dit is
 // bewust gebouwd als DOM-klik i.p.v. een aanroepbare API, en bewust zo strikt
@@ -370,23 +370,73 @@ async function createLabelViaTab(conversationId, txId) {
           chrome.scripting.executeScript({
             target: { tabId },
             func: (txIdForLog) => {
+              // NL bevestigd via live test (txn 20348276871/20348... via
+              // conversatie 23115683032 en 23538654249). FR/EN blijven
+              // voorlopig ongeverifieerde educated guesses.
               const LABEL_BUTTON_TEXTS = [
-                'label aanmaken',
+                'verzendlabel aanmaken',
                 "créer l'étiquette", "créer l'étiquette d'expédition",
                 'create shipping label', 'create label',
               ];
-              const buttons = [...document.querySelectorAll('button')];
-              const match = buttons.find(b => {
-                const t = (b.textContent || '').trim().toLowerCase();
-                return LABEL_BUTTON_TEXTS.includes(t);
-              });
+              const findButton = () => {
+                const buttons = [...document.querySelectorAll('button')];
+                return buttons.find(b => LABEL_BUTTON_TEXTS.includes((b.textContent || '').trim().toLowerCase()));
+              };
+
+              const match = findButton();
               if (!match) {
-                console.log('[Vault-tab] geen "Label aanmaken"-knop gevonden voor txn', txIdForLog);
+                console.log('[Vault-tab] geen "Verzendlabel aanmaken"-knop gevonden voor txn', txIdForLog);
                 return { clicked: false, reason: 'button_not_found' };
               }
-              console.log('[Vault-tab] "Label aanmaken"-knop gevonden, klik voor txn', txIdForLog, '—', match.textContent.trim());
+
+              // Bevestigd via handmatige test: 1 klik is niet genoeg, er is
+              // een TWEEDE klik nodig vóór het label écht aangemaakt wordt
+              // (reden nog onbekend — mogelijk een tussenliggende
+              // bevestigingsstap). We loggen daarom de DOM-toestand vóór en
+              // na de eerste klik (button-count + of het element zelf nog
+              // bestaat/dezelfde tekst/disabled-state heeft) zodat een
+              // toekomstige ronde kan tonen of er een specifieke
+              // tussenstap is om op te reageren, i.p.v. blind 2x dezelfde
+              // knop te raken.
+              const snapshot = () => ({
+                buttonCount: document.querySelectorAll('button').length,
+                matchInDom: document.body.contains(match),
+                matchText: document.body.contains(match) ? match.textContent.trim() : null,
+                matchDisabled: document.body.contains(match) ? match.disabled : null,
+              });
+
+              const before = snapshot();
+              console.log('[Vault-tab] "Verzendlabel aanmaken"-knop gevonden, eerste klik voor txn', txIdForLog, '—', match.textContent.trim());
               match.click();
-              return { clicked: true, buttonText: match.textContent.trim() };
+
+              return new Promise(resolve => {
+                setTimeout(() => {
+                  const after = snapshot();
+                  const domChanged = JSON.stringify(before) !== JSON.stringify(after);
+                  console.log('[Vault-tab] DOM ná eerste klik — voor:', JSON.stringify(before), 'na:', JSON.stringify(after), 'gewijzigd:', domChanged);
+
+                  // Tweede klik: als het oorspronkelijke element nog in de DOM
+                  // zit, klik dat opnieuw; anders opnieuw zoeken (bv. als
+                  // Vinted een nieuw element met dezelfde tekst gerenderd
+                  // heeft i.p.v. hetzelfde element hergebruikt).
+                  const secondTarget = after.matchInDom ? match : findButton();
+                  if (secondTarget) {
+                    console.log('[Vault-tab] tweede klik voor txn', txIdForLog, '—', secondTarget.textContent.trim());
+                    secondTarget.click();
+                  } else {
+                    console.log('[Vault-tab] geen knop meer gevonden voor tweede klik (txn', txIdForLog, ') — mogelijk al voltooid na de eerste klik');
+                  }
+
+                  resolve({
+                    clicked: true,
+                    buttonText: match.textContent.trim(),
+                    debugDomChangedBetweenClicks: domChanged,
+                    debugBeforeFirstClick: before,
+                    debugAfterFirstClick: after,
+                    debugSecondClickPerformed: !!secondTarget,
+                  });
+                }, 800);
+              });
             },
             args: [txId],
           }, (results) => {
