@@ -94,6 +94,12 @@ ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS purchase_method TEXT DEFAULT 
 ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS auto_sync_sales BOOLEAN DEFAULT TRUE;
 ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS auto_sync_purchases BOOLEAN DEFAULT FALSE;
 ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS auto_sync_labels BOOLEAN DEFAULT FALSE;
+-- Bewust opt-in en los van auto_sync_labels hierboven: dit klikt zelf de
+-- "Label aanmaken"-actie in de Vinted-conversatie aan (een echte schrijfactie
+-- bij Vinted, gedetecteerd via DOM-tekst-match, ongeverifieerd tegen een
+-- publieke API — zie createLabelViaTab() in background.js), dus staat
+-- standaard UIT.
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS auto_create_labels BOOLEAN DEFAULT FALSE;
 ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_completed BOOLEAN DEFAULT FALSE;
 
 -- user_settings heeft (verderop in dit bestand) enkel een "authenticated"
@@ -112,7 +118,7 @@ ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_completed BOOLEAN 
 -- authenticated RLS hieronder). auto_sync_labels toegevoegd voor dezelfde
 -- reden — de Live-synchronisatie-toggle voor Labels in het extensiepaneel.
 CREATE OR REPLACE VIEW user_sync_status AS
-  SELECT user_id, vault_sync_requested, vault_sync_progress, auto_sync_sales, auto_sync_purchases, auto_sync_labels FROM user_settings;
+  SELECT user_id, vault_sync_requested, vault_sync_progress, auto_sync_sales, auto_sync_purchases, auto_sync_labels, auto_create_labels FROM user_settings;
 
 GRANT SELECT, UPDATE ON user_sync_status TO anon;
 

@@ -1054,6 +1054,18 @@
       liveSyncSettings.labels ?? false, v => write('auto_sync_labels', v), false));
 
     content.appendChild(card);
+
+    // Losse sectie: dit is GEEN sync-instelling maar een echte schrijfactie
+    // bij Vinted (klikt zelf een knop in je chat aan) — bewust visueel
+    // gescheiden en met expliciete waarschuwing, vandaar ook de aparte
+    // default-uit kolom in Supabase (auto_create_labels).
+    content.appendChild(el('div', `font-size:11px;font-weight:700;color:${D.sub};text-transform:uppercase;letter-spacing:0.05em;margin:20px 0 8px`, 'Automatische acties'));
+    content.appendChild(el('div', `font-size:12px;color:${D.sub};line-height:1.6;margin:-4px 0 14px`,
+      '⚠️ Dit voert zelf een actie uit bij Vinted (klikt de "Label aanmaken"-knop in je conversatie aan) — ongeverifieerd tegen een officiële API, dus enkel gebruiken als je dit bewust wil.'));
+    const actionCard = el('div', `background:${D.card};border-radius:16px;padding:0 16px;box-shadow:0 1px 4px rgba(0,0,0,0.07)`);
+    actionCard.appendChild(settingsRow('Labels automatisch aanmaken', 'Klikt "Label aanmaken" in de chat als een label needs_action staat maar nog niet ophaalbaar is',
+      liveSyncSettings.createLabels ?? false, v => write('auto_create_labels', v), false));
+    content.appendChild(actionCard);
   }
 
   // ── Tab: Listings ──────────────────────────────────────────────────────────
@@ -1404,6 +1416,9 @@
     const known      = candidateOrders.filter(o => alreadySent.has(o.transactionId));
     const unverified = candidateOrders.filter(o => !alreadySent.has(o.transactionId));
 
+    const { liveSyncSettings = {} } = await chrome.storage.local.get(['liveSyncSettings']);
+    const autoCreate = !!liveSyncSettings.createLabels;
+
     const verified = [...known];
     let skipped = 0;
     for (const o of unverified) {
@@ -1418,6 +1433,31 @@
         verified.push(o);
         console.log(`[Vault] label geverifieerd + verstuurd — txn ${o.transactionId} "${o.title}"`);
       } catch (e) {
+        // Bewust opt-in en ONGEVERIFIEERD tegen een live sessie (zie
+        // projectrapportage): probeer, enkel als de gebruiker dit expliciet
+        // heeft aangezet én er een conversatie bekend is, één keer de "Label
+        // aanmaken"-actie in de chat te klikken, en herhaal dan de ECHTE
+        // test-fetch — deze functie claimt zelf geen succes op basis van de
+        // klik alleen, enkel op basis van een daadwerkelijk gelukte
+        // prefetchLabel() erna.
+        const convId = o.conversationId || o.convId;
+        if (autoCreate && convId) {
+          console.log(`[Vault] label niet ophaalbaar voor txn ${o.transactionId} — probeer automatisch aan te maken via conversatie ${convId}…`);
+          const clickResult = await sendMsg({ type: 'CREATE_LABEL_VIA_CHAT', conversationId: convId, transactionId: o.transactionId }, 25000);
+          if (clickResult?.clicked) {
+            try {
+              await prefetchLabel(o.transactionId);
+              await addAutoSent(o.transactionId);
+              verified.push(o);
+              console.log(`[Vault] Label automatisch aangemaakt voor txn ${o.transactionId}`);
+              continue;
+            } catch (e2) {
+              console.log(`[Vault] "Label aanmaken"-knop geklikt voor txn ${o.transactionId}, maar label nog steeds niet ophaalbaar (${e2.message}) — later opnieuw proberen`);
+            }
+          } else {
+            console.log(`[Vault] kon "Label aanmaken"-knop niet vinden/klikken voor txn ${o.transactionId} (${clickResult?.reason || 'onbekend'}) — overgeslagen`);
+          }
+        }
         skipped++;
         console.log(`[Vault] label NIET beschikbaar (overgeslagen) — txn ${o.transactionId} "${o.title}": ${e.message}`);
       }

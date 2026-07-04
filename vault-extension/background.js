@@ -335,6 +335,73 @@ async function fetchListingsViaTab() {
   });
 }
 
+// ── "Label aanmaken" automatisch aanklikken in de Vinted-conversatie ──────
+// ONGEVERIFIEERD tegen een live sessie (zie projectrapportage) — er bestaat
+// geen publieke documentatie voor deze interne Vinted-actie, dus dit is
+// bewust gebouwd als DOM-klik i.p.v. een aanroepbare API, en bewust zo strikt
+// mogelijk: enkel een knop met een EXACTE (niet fuzzy) tekst-match uit een
+// vaste taal-whitelist wordt aangeklikt — geen enkele andere knop, geen
+// eventuele bevestigingsdialoog erna (de opdracht is expliciet "1 simpele
+// klik, geen opties"). Wordt niets gevonden, dan gebeurt er niets — de
+// aanroeper (refreshLabels() in content.js) verifieert nadien zelf via een
+// echte prefetchLabel()-aanroep of het daadwerkelijk gelukt is; deze functie
+// claimt zelf geen succes, enkel of de knop gevonden/geklikt is.
+async function createLabelViaTab(conversationId, txId) {
+  return new Promise((resolve) => {
+    const url = `https://www.vinted.be/inbox/${conversationId}`;
+    chrome.tabs.create({ url, active: false }, (tab) => {
+      const tabId = tab.id;
+      let resolved = false;
+
+      function done(data) {
+        if (resolved) return;
+        resolved = true;
+        chrome.tabs.onUpdated.removeListener(onUpdated);
+        chrome.tabs.remove(tabId, () => {});
+        resolve(data);
+      }
+
+      function onUpdated(id, info) {
+        if (id !== tabId || info.status !== 'complete') return;
+        // De conversatie-inhoud (met de actieknop, in een system-message-kaart)
+        // rendert client-side ná de initiële page-load — even wachten voordat
+        // we de DOM doorzoeken, anders vinden we de knop nog niet.
+        setTimeout(() => {
+          chrome.scripting.executeScript({
+            target: { tabId },
+            func: (txIdForLog) => {
+              const LABEL_BUTTON_TEXTS = [
+                'label aanmaken',
+                "créer l'étiquette", "créer l'étiquette d'expédition",
+                'create shipping label', 'create label',
+              ];
+              const buttons = [...document.querySelectorAll('button')];
+              const match = buttons.find(b => {
+                const t = (b.textContent || '').trim().toLowerCase();
+                return LABEL_BUTTON_TEXTS.includes(t);
+              });
+              if (!match) {
+                console.log('[Vault-tab] geen "Label aanmaken"-knop gevonden voor txn', txIdForLog);
+                return { clicked: false, reason: 'button_not_found' };
+              }
+              console.log('[Vault-tab] "Label aanmaken"-knop gevonden, klik voor txn', txIdForLog, '—', match.textContent.trim());
+              match.click();
+              return { clicked: true, buttonText: match.textContent.trim() };
+            },
+            args: [txId],
+          }, (results) => {
+            const data = results?.[0]?.result || { clicked: false, reason: 'no_result' };
+            done(data);
+          });
+        }, 2500);
+      }
+
+      chrome.tabs.onUpdated.addListener(onUpdated);
+      setTimeout(() => done({ clicked: false, reason: 'timeout' }), 20000);
+    });
+  });
+}
+
 // ── Fetch label bytes via content script in an existing Vinted tab ────────
 function fetchBytesViaTab(tabId, url) {
   return new Promise((resolve) => {
@@ -423,6 +490,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     setLiveSyncSetting(message.vintedUserId, message.field, message.value).then(sendResponse);
     return true;
   }
+  if (message.type === 'CREATE_LABEL_VIA_CHAT') {
+    createLabelViaTab(message.conversationId, message.transactionId).then(sendResponse);
+    return true;
+  }
 });
 
 async function setLiveSyncSetting(vintedUserId, field, value) {
@@ -441,7 +512,11 @@ async function setLiveSyncSetting(vintedUserId, field, value) {
     if (!res.ok) return { success: false, error: `PATCH ${res.status}` };
 
     const { liveSyncSettings = {} } = await chrome.storage.local.get(['liveSyncSettings']);
-    const key = field === 'auto_sync_sales' ? 'sales' : field === 'auto_sync_purchases' ? 'purchases' : 'labels';
+    const FIELD_TO_KEY = {
+      auto_sync_sales: 'sales', auto_sync_purchases: 'purchases',
+      auto_sync_labels: 'labels', auto_create_labels: 'createLabels',
+    };
+    const key = FIELD_TO_KEY[field] || field;
     await chrome.storage.local.set({
       liveSyncSettings: { ...liveSyncSettings, userId: ownerId, [key]: value },
     });
@@ -501,7 +576,7 @@ async function checkAndSync() {
     // voor runLiveSync() (chrome.alarms) hieronder — dat scheelt een tweede,
     // losse poll-loop tegen Supabase (zie rapportage vóór deze uitbreiding).
     const checkRes = await fetch(
-      `${SYNC_STATUS_URL}?select=user_id,vault_sync_requested,auto_sync_sales,auto_sync_purchases,auto_sync_labels&limit=1`,
+      `${SYNC_STATUS_URL}?select=user_id,vault_sync_requested,auto_sync_sales,auto_sync_purchases,auto_sync_labels,auto_create_labels&limit=1`,
       { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
     )
     if (!checkRes.ok) return
@@ -510,13 +585,14 @@ async function checkAndSync() {
 
     const userId = rows[0].user_id
     // Defaults matchen de kolom-DEFAULTs in supabase-setup.sql (sales aan,
-    // aankopen/labels uit) — relevant voor rijen van vóór deze onboarding-
-    // migratie, waar deze kolommen nog niet bestaan/null zijn.
+    // aankopen/labels/label-aanmaken uit) — relevant voor rijen van vóór deze
+    // onboarding-migratie, waar deze kolommen nog niet bestaan/null zijn.
     const autoSyncSales = rows[0].auto_sync_sales ?? true
     const autoSyncPurchases = rows[0].auto_sync_purchases ?? false
     const autoSyncLabels = rows[0].auto_sync_labels ?? false
+    const autoCreateLabels = rows[0].auto_create_labels ?? false
     await chrome.storage.local.set({
-      liveSyncSettings: { userId, sales: autoSyncSales, purchases: autoSyncPurchases, labels: autoSyncLabels }
+      liveSyncSettings: { userId, sales: autoSyncSales, purchases: autoSyncPurchases, labels: autoSyncLabels, createLabels: autoCreateLabels }
     })
 
     if (!rows[0].vault_sync_requested) return
