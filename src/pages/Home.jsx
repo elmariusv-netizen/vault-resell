@@ -46,6 +46,15 @@ function orderKey(sale) {
   return sale.vintedOrderId || sale.id
 }
 
+// date.toISOString() converteert naar UTC — in een tijdzone vóór op UTC
+// (bv. CEST, UTC+2) levert lokale middernacht dan de VORIGE kalenderdag op,
+// waardoor elke dag-bucket hieronder 1 dag verschoven zou staan t.o.v. de
+// zichtbare label (die wél toLocaleDateString/lokale tijd gebruikt). Altijd
+// de lokale datumonderdelen gebruiken voor een dag-sleutel.
+function localDateStr(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 // ── Chart data builders ───────────────────────
 // "count" is het aantal DISTINCTE bestellingen (orderKey), niet het aantal
 // sales-regels/items — een bundel van 6 items telt hier als 1. "revenue"
@@ -79,7 +88,7 @@ function buildChartData(sales, range, bounds) {
   const cursor = new Date(bounds.from); cursor.setHours(0, 0, 0, 0)
   const end = new Date(bounds.to); end.setHours(23, 59, 59, 0)
   while (cursor <= end) {
-    const ds = cursor.toISOString().split('T')[0]
+    const ds = localDateStr(cursor)
     result.push({
       label: cursor.toLocaleDateString('nl-BE', { day: 'numeric', month: 'short' }),
       date: ds,
@@ -326,11 +335,14 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
   const bounds = useMemo(() => getDateBounds(range, customFrom, customTo), [range, customFrom, customTo])
   const filteredSales = useMemo(() => filterByRange(sales, range, bounds), [sales, range, bounds])
 
-  const todayStr = new Date().toISOString().split('T')[0]
+  const todayStr = localDateStr(new Date())
+  // Geen batch-guard: een net-gesynchroniseerde verkoop zonder gekoppelde SKU
+  // (batchId null) moet vandaag al meetellen — getBatchUnitCost(undefined)
+  // valt terug op €0 kostprijs, dus calcSaleProfit werkt ook zonder batch.
   const todayProfit = useMemo(() =>
     sales.filter((s) => s.date === todayStr).reduce((sum, s) => {
       const b = batches.find((x) => x.id === s.batchId)
-      return sum + (b ? calcSaleProfit(s, b).profit : 0)
+      return sum + calcSaleProfit(s, b).profit
     }, 0)
   , [sales, batches, todayStr])
 
@@ -382,7 +394,7 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
     const today = new Date()
     return Array.from({ length: 7 }, (_, i) => {
       const d = new Date(today); d.setDate(d.getDate() - (6 - i))
-      const ds = d.toISOString().split('T')[0]
+      const ds = localDateStr(d)
       const rev = sales.filter((s) => s.date === ds).reduce((sum, s) => sum + (s.salePrice || 0) * (s.quantity || 1), 0)
       return { i, rev }
     })

@@ -1418,6 +1418,76 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
     return () => { cancelled = true }
   }, [])
 
+  // Auto-registratie: zonder dit bleef een verse Vinted-verkoop onzichtbaar
+  // voor het Dashboard (Home.jsx leest uitsluitend data.sales, nooit
+  // vinted_orders rechtstreeks) totdat iemand handmatig op "+ Empl." klikte.
+  // Elke niet-geannuleerde verkooporder krijgt hier meteen een data.sales-
+  // entry met de echte sale_date/sold_at, óók zonder gekoppelde SKU/batch
+  // (batchId dan null → €0 kostprijs, zie getBatchUnitCost). COGS kan later
+  // alsnog via "SKU koppelen" aangevuld worden; dat vervangt deze entry (zie
+  // handleBulkSkuConfirm) zodat er nooit dubbel geteld wordt.
+  //
+  // autoRegisterSeenRef: React 18 StrictMode (dev) voert effects 2x uit met
+  // dezelfde stale sales/vtOrders-closure — zonder deze ref-guard zou de 2e
+  // uitvoering dezelfde orders nog een keer proberen te registreren vóórdat
+  // de eerste update is doorgerenderd. Refs overleven StrictMode's dubbele
+  // invocatie (in tegenstelling tot de closure-waarden), dus dit sluit de
+  // race definitief.
+  const autoRegisterSeenRef = useRef(new Set())
+  useEffect(() => {
+    const registeredOrderIds = new Set(sales.map(s => s.vintedOrderId).filter(Boolean))
+    const eligible = (o) =>
+      !autoRegisterSeenRef.current.has(o.id) &&
+      !/geannuleerd|cancel/i.test(o.status || '') &&
+      (o.order_direction === 'sale' || !o.order_direction)
+
+    const toRegister = vtOrders.filter(o =>
+      !o.registered_in_vault && !registeredOrderIds.has(o.id) && eligible(o)
+    )
+    // Zelfherstel: order heeft al een data.sales-entry (bv. via "+ Empl.",
+    // of een eerdere auto-registratie waarvan de Supabase-update werd
+    // onderbroken) maar registered_in_vault staat nog op false — enkel de
+    // vlag bijwerken, geen nieuwe (dubbele) sales-entry aanmaken.
+    const toReconcile = vtOrders.filter(o =>
+      !o.registered_in_vault && registeredOrderIds.has(o.id) && eligible(o)
+    )
+    if (!toRegister.length && !toReconcile.length) return
+
+    toRegister.forEach(o => autoRegisterSeenRef.current.add(o.id))
+    toReconcile.forEach(o => autoRegisterSeenRef.current.add(o.id))
+
+    const newSales = toRegister.map(order => {
+      let photo = order.photo_url || null
+      try { photo = JSON.parse(order.photo_urls || '[]')[0] || photo } catch {}
+      return {
+        id: genId(),
+        vintedOrderId: order.id,
+        batchId: order.batch_id && !order.batch_id.includes(',') ? order.batch_id : null,
+        type: 'individual',
+        quantity: 1,
+        salePrice: parseFloat(order.price || 0),
+        platform: 'Vinted',
+        buyer: order.buyer_name || order.buyer || '',
+        fees: 0,
+        shippingCost: 0,
+        notes: order.transaction_id ? `Vinted #${order.transaction_id}` : '',
+        date: order.sale_date || order.synced_at?.split('T')[0] || new Date().toISOString().split('T')[0],
+        fromLive: false,
+        photo,
+        links: [],
+        shipped: false,
+        shippedDate: null,
+        isFree: false,
+        saleTime: order.sold_at ? order.sold_at.split('T')[1]?.slice(0, 5) : null,
+      }
+    })
+
+    const idsToFlag = [...toRegister, ...toReconcile].map(o => o.id)
+    if (newSales.length) updateData({ sales: [...sales, ...newSales] })
+    supabase.from('vinted_orders').update({ registered_in_vault: true }).in('id', idsToFlag)
+    setVtOrders(prev => prev.map(o => idsToFlag.includes(o.id) ? { ...o, registered_in_vault: true } : o))
+  }, [vtOrders, sales, updateData])
+
   const saveVtField = async (id, field, value) => {
     await supabase.from('vinted_orders').update({ [field]: value }).eq('id', id)
     setVtOrders(prev => prev.map(o => o.id === id ? { ...o, [field]: value } : o))
@@ -1545,7 +1615,14 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
         }
       }
     }
-    if (newSales.length) updateData({ sales: [...sales, ...newSales] })
+    if (newSales.length) {
+      // Verwijder eventuele auto-registratie-entry (zie de vtOrders-effect
+      // hierboven) voor deze orders vóórdat de nieuw-gesplitste bundel/SKU-
+      // entries erbij komen — anders telt dezelfde order dubbel mee.
+      const touchedOrderIds = new Set(Object.keys(patches))
+      const remaining = sales.filter(s => !touchedOrderIds.has(s.vintedOrderId))
+      updateData({ sales: [...remaining, ...newSales] })
+    }
     setVtOrders(prev => prev.map(o => patches[o.id] ? { ...o, ...patches[o.id] } : o))
     setSelectedIds(new Set())
   }
