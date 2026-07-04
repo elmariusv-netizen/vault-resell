@@ -10,7 +10,12 @@ const NAV_LINKS = [
   { id: 'settings',  label: 'Instellingen', icon: '⚙' },
 ]
 
-const BOTTOM_TABS = ['home', 'new', 'verkopen', 'aankopen', 'settings']
+// Mobiele bottom-nav is bewust beperkt tot de dagelijkse hoofdacties — "Nieuw"
+// (leverancier-batch) en "Instellingen" horen hier niet meer bij (Instellingen
+// blijft bereikbaar via het kleine tandwiel-icoontje in de mobiele header
+// hieronder), en overige pagina's (Voorraad/Aankopen/Kosten/Stats) blijven
+// enkel via de desktop-sidebar bereikbaar.
+const BOTTOM_TABS = ['home', 'verkopen', 'labels']
 
 // Voorraad ("inventory") en Nieuw ("new", een nieuwe leverancier-batch
 // aanmaken) zijn allebei enkel relevant voor het SKU/batch-systeem — niet
@@ -66,10 +71,19 @@ export default function Nav({ currentPage, onNavigate, theme, onToggleTheme, use
       {/* Mobile Header */}
       <header className="mobile-header">
         <div className="nav-brand">VAULT</div>
-        {userName && <span className="mobile-user">{userName}</span>}
-        <button className="theme-toggle-icon" onClick={onToggleTheme} title="Thema wisselen">
-          {theme === 'light' ? '🌙' : '☀️'}
-        </button>
+        <div className="mobile-header-right">
+          {userName && <span className="mobile-user">{userName}</span>}
+          {/* Instellingen is bewust geen volwaardige bottom-nav-knop meer op
+              mobiel (zie BOTTOM_TABS hierboven) — enkel dit kleine
+              tandwiel-icoontje houdt de pagina bereikbaar, minder prominent
+              dan de dagelijkse hoofdacties. */}
+          <button className="theme-toggle-icon" onClick={() => onNavigate('settings')} title="Instellingen">
+            ⚙
+          </button>
+          <button className="theme-toggle-icon" onClick={onToggleTheme} title="Thema wisselen">
+            {theme === 'light' ? '🌙' : '☀️'}
+          </button>
+        </div>
       </header>
 
       {/* Mobile Bottom Nav */}
