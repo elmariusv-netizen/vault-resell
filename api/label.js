@@ -649,8 +649,16 @@ export default async function handler(req, res) {
 
   const response = await fetch(pdfFetchUrl, fetchOptions);
   if (!response.ok) {
-    console.error('[label] fetch status', response.status, 'url:', pdfFetchUrl.slice(0, 80));
-    return res.status(response.status).json({ error: `Label fetch mislukt: ${response.status}` });
+    // Vinted's eigen foutmelding loggen (niet enkel de status-code) — een 403
+    // kan zowel een auth-probleem (verlopen/foutieve cookie) als een normaal
+    // "label bestaat nog niet"-antwoord zijn, en dat onderscheid zit enkel in
+    // de response body, niet in de statuscode zelf.
+    const errorBody = await response.text().catch(() => '');
+    console.error('[label] fetch status', response.status, 'url:', pdfFetchUrl.slice(0, 80), 'cookiePresent:', !!cookie, 'body:', errorBody.slice(0, 500));
+    return res.status(response.status).json({
+      error: `Label fetch mislukt: ${response.status}`,
+      vintedError: errorBody.slice(0, 500),
+    });
   }
 
   const pdfBytes = Buffer.from(await response.arrayBuffer());
