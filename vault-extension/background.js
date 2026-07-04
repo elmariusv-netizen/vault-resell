@@ -518,7 +518,10 @@ async function setLiveSyncSetting(vintedUserId, field, value) {
     };
     const key = FIELD_TO_KEY[field] || field;
     await chrome.storage.local.set({
-      liveSyncSettings: { ...liveSyncSettings, userId: ownerId, [key]: value },
+      // writtenAt: zie checkAndSync() — voorkomt dat een al lopende, tragere
+      // poll-tick deze net gezette waarde meteen weer overschrijft met zijn
+      // eigen (dan verouderde) snapshot.
+      liveSyncSettings: { ...liveSyncSettings, userId: ownerId, [key]: value, writtenAt: Date.now() },
     });
     return { success: true };
   } catch (e) {
@@ -569,6 +572,14 @@ let checkAndSyncRunning = false;
 async function checkAndSync() {
   if (checkAndSyncRunning) return;
   checkAndSyncRunning = true;
+  // Vastgelegd VÓÓR de Supabase-fetch hieronder start — gebruikt verderop om
+  // te detecteren of een toggle-klik (setLiveSyncSetting) de cache al heeft
+  // bijgewerkt ná het moment dat DEZE fetch zijn (dan inmiddels verouderde)
+  // snapshot ophaalde. Zonder deze guard kan een trage/al lopende poll-tick
+  // een net gezette togglewaarde in chrome.storage.local terugzetten naar de
+  // oude waarde, ook al staat Supabase zelf al wel correct — de toggle lijkt
+  // dan "niet bewaard" terwijl hij dat eigenlijk wel is.
+  const fetchStartedAt = Date.now();
   try {
     // Geen vault_sync_requested-filter meer op deze fetch: we lezen nu élke
     // tick de volledige rij, zodat we meteen ook de 3 live-sync-toggles
@@ -591,9 +602,15 @@ async function checkAndSync() {
     const autoSyncPurchases = rows[0].auto_sync_purchases ?? false
     const autoSyncLabels = rows[0].auto_sync_labels ?? false
     const autoCreateLabels = rows[0].auto_create_labels ?? false
-    await chrome.storage.local.set({
-      liveSyncSettings: { userId, sales: autoSyncSales, purchases: autoSyncPurchases, labels: autoSyncLabels, createLabels: autoCreateLabels }
-    })
+
+    const { liveSyncSettings: prevCached = {} } = await chrome.storage.local.get(['liveSyncSettings'])
+    if (prevCached.writtenAt && prevCached.writtenAt > fetchStartedAt) {
+      console.log('[Vault] checkAndSync: lokale toggle-write is recenter dan deze fetch — cache-overschrijving overgeslagen')
+    } else {
+      await chrome.storage.local.set({
+        liveSyncSettings: { userId, sales: autoSyncSales, purchases: autoSyncPurchases, labels: autoSyncLabels, createLabels: autoCreateLabels }
+      })
+    }
 
     if (!rows[0].vault_sync_requested) return
     console.log('[Vault] vault-sync-requested gevonden, user:', userId, 'autoSyncSales:', autoSyncSales, 'autoSyncPurchases:', autoSyncPurchases)
