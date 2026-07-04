@@ -1067,6 +1067,16 @@ hr.divider { border: none; border-top: 1px solid var(--border); margin: 18px 0; 
 }
 
 @media (max-width: 900px) {
+  /* .app-shell is display:flex met de DEFAULT flex-direction:row. Op mobiel
+     verbergt .sidebar zich wel (display:none), maar Nav.jsx rendert ook
+     .mobile-header als aparte sibling van .content-area binnen datzelfde
+     rij-georiënteerde flex-shell — zonder expliciete breedte nam die enkel
+     zoveel ruimte in als zijn eigen inhoud (merk + gebruiker + toggle-knop),
+     wat precies de lege linkerkolom + dichtgeknepen .content-area gaf die
+     op elke pagina terugkwam. flex-direction:column laat mobile-header en
+     content-area normaal onder elkaar stapelen, elk over de volle breedte. */
+  .app-shell { flex-direction: column; }
+
   .sidebar { display: none; }
 
   .mobile-header { display: flex; }
