@@ -138,7 +138,7 @@ export default function App() {
     if (!activeUserId) return
     supabase
       .from('user_settings')
-      .select('vinted_cookie, purchase_method, onboarding_completed, auto_sync_sales, auto_sync_purchases')
+      .select('vinted_cookie, purchase_method, onboarding_completed, auto_sync_sales, auto_sync_purchases, auto_sync_labels')
       .eq('user_id', activeUserId)
       .maybeSingle()
       .then(({ data: row }) => {
@@ -151,6 +151,7 @@ export default function App() {
           onboardingCompleted: !!row?.onboarding_completed,
           autoSyncSales: row?.auto_sync_sales ?? true,
           autoSyncPurchases: row?.auto_sync_purchases ?? false,
+          autoSyncLabels: row?.auto_sync_labels ?? false,
         })
       })
   }, [activeUserId])
@@ -285,6 +286,7 @@ export default function App() {
               purchaseMethod={userSettings.purchaseMethod}
               autoSyncSales={userSettings.autoSyncSales}
               autoSyncPurchases={userSettings.autoSyncPurchases}
+              autoSyncLabels={userSettings.autoSyncLabels}
               onUserSettingsChange={(patch) => setUserSettings((prev) => ({ ...prev, ...patch }))}
             />
           )}

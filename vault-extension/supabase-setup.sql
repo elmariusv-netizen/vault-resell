@@ -87,8 +87,13 @@ ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS purchase_method TEXT DEFAULT 
 -- auto_sync_sales/auto_sync_purchases bepalen of de "nieuw"-bucket in
 -- content.js's refreshKnownOrders() nieuwe verkopen/aankopen automatisch
 -- meesynct via de Home-sync-knop, i.p.v. enkel handmatig via de extensie.
+-- Sinds de "Live synchronisatie"-toggles in het extensiepaneel (⚙) hebben
+-- deze twee een tweede betekenis gekregen: ze bepalen ook of background.js's
+-- chrome.alarms-timer (elke ~4 min, zie runLiveSync()) deze databron
+-- periodiek op de achtergrond ververst, niet enkel na een handmatige trigger.
 ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS auto_sync_sales BOOLEAN DEFAULT TRUE;
 ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS auto_sync_purchases BOOLEAN DEFAULT FALSE;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS auto_sync_labels BOOLEAN DEFAULT FALSE;
 ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_completed BOOLEAN DEFAULT FALSE;
 
 -- user_settings heeft (verderop in dit bestand) enkel een "authenticated"
@@ -104,9 +109,10 @@ ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_completed BOOLEAN 
 -- bucket voor verkopen/aankopen automatisch mag meesynct worden; purchase_
 -- method/onboarding_completed blijven bewust WEL buiten deze view — die
 -- heeft de extensie niet nodig, enkel de webapp (via de normale
--- authenticated RLS hieronder).
+-- authenticated RLS hieronder). auto_sync_labels toegevoegd voor dezelfde
+-- reden — de Live-synchronisatie-toggle voor Labels in het extensiepaneel.
 CREATE OR REPLACE VIEW user_sync_status AS
-  SELECT user_id, vault_sync_requested, vault_sync_progress, auto_sync_sales, auto_sync_purchases FROM user_settings;
+  SELECT user_id, vault_sync_requested, vault_sync_progress, auto_sync_sales, auto_sync_purchases, auto_sync_labels FROM user_settings;
 
 GRANT SELECT, UPDATE ON user_sync_status TO anon;
 

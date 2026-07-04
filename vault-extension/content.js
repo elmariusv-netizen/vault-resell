@@ -901,9 +901,14 @@
     // Header
     const hdr = el('div', `background:${D.card};padding:0 28px;height:58px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;box-shadow:0 1px 0 #f3f4f6`);
     hdr.innerHTML = `<span style="font-size:18px;font-weight:700;letter-spacing:0.15em;color:${D.text}">VAULT</span>`;
+    const hdrRight = el('div', 'display:flex;align-items:center;gap:2px');
+    const settingsBtn = btn('⚙', `background:none;color:${D.sub};font-size:17px;padding:6px 8px;border-radius:8px`);
+    settingsBtn.title = 'Instellingen';
+    settingsBtn.addEventListener('click', () => showSettingsScreen());
     const closeBtn = btn('✕', `background:none;color:${D.sub};font-size:20px;padding:6px 8px;border-radius:8px`);
     closeBtn.addEventListener('click', () => toggleOverlay(false));
-    hdr.appendChild(closeBtn);
+    hdrRight.append(settingsBtn, closeBtn);
+    hdr.appendChild(hdrRight);
 
     // Tab bar
     const tabBar = el('div', `background:${D.card};padding:10px 20px;display:flex;gap:6px;flex-shrink:0;border-bottom:1px solid #f3f4f6`);
@@ -974,6 +979,70 @@
       ov.style.opacity = '0';
       setTimeout(() => { ov.style.display = 'none'; }, 200);
     }
+  }
+
+  // ── Instellingen (⚙) — Live synchronisatie ─────────────────────────────────
+  // Aan/uit-schakelaar per databron. AAN: background.js's chrome.alarms-timer
+  // (runLiveSync(), elke ~4 min) ververst deze bron automatisch zolang Chrome
+  // open is, ook als deze Vinted-tab niet actief is. UIT: enkel handmatig via
+  // de bestaande paneel-checkboxes of de webapp-synchroniseer-knop.
+  function toggleSwitch(checked, onChange) {
+    const wrap = el('label', 'position:relative;display:inline-block;width:40px;height:22px;flex-shrink:0;cursor:pointer');
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = checked;
+    input.style.cssText = 'opacity:0;width:0;height:0';
+    const slider = el('span', `position:absolute;inset:0;background:${checked ? D.accent : '#d1d5db'};border-radius:22px;transition:background 0.15s`);
+    const knob = el('span', `position:absolute;top:2px;left:${checked ? '20px' : '2px'};width:18px;height:18px;background:#fff;border-radius:50%;box-shadow:0 1px 3px rgba(0,0,0,0.3);transition:left 0.15s`);
+    slider.appendChild(knob);
+    input.addEventListener('change', () => {
+      slider.style.background = input.checked ? D.accent : '#d1d5db';
+      knob.style.left = input.checked ? '20px' : '2px';
+      onChange(input.checked);
+    });
+    wrap.append(input, slider);
+    return wrap;
+  }
+
+  function settingsRow(title, sub, checked, onChange, borderBottom = true) {
+    const row = el('div', `display:flex;align-items:center;gap:14px;padding:14px 0;${borderBottom ? 'border-bottom:1px solid #f3f4f6' : ''}`);
+    row.appendChild(textStack(title, sub));
+    row.appendChild(toggleSwitch(checked, onChange));
+    return row;
+  }
+
+  async function showSettingsScreen() {
+    const content = document.getElementById('vlt-content');
+    const footer  = document.getElementById('vlt-footer');
+    if (!content || !footer) return;
+    setTabStyle(null);
+    footer.innerHTML = '';
+    content.innerHTML = '';
+
+    const backBtn = btn('← Terug', `background:none;color:${D.sub};padding:6px 4px;margin-bottom:6px`);
+    backBtn.addEventListener('click', () => switchTab(activeTab));
+    content.appendChild(backBtn);
+    content.appendChild(sectionHead('Live synchronisatie', null));
+    content.appendChild(el('div', `font-size:12px;color:${D.sub};line-height:1.6;margin:-8px 0 16px`,
+      'Synct automatisch elke ~4 minuten op de achtergrond, zolang Chrome open is — ook als je niet op deze tab zit. Staat een schakelaar uit, dan synct die bron enkel handmatig (paneel-checkboxes of de webapp-synchroniseer-knop).'));
+
+    const { liveSyncSettings = {} } = await chrome.storage.local.get(['liveSyncSettings']);
+    const card = el('div', `background:${D.card};border-radius:16px;padding:0 16px;box-shadow:0 1px 4px rgba(0,0,0,0.07)`);
+
+    const write = async (field, value) => {
+      const vintedUserId = await getVintedUserId();
+      const res = await sendMsg({ type: 'SET_LIVE_SYNC_SETTING', vintedUserId, field, value });
+      if (!res?.success) toast(`Instelling opslaan mislukt: ${res?.error || 'onbekende fout'}`, false);
+    };
+
+    card.appendChild(settingsRow('Verkopen', 'Commandes vendues, montants, acheteurs',
+      liveSyncSettings.sales ?? true, v => write('auto_sync_sales', v)));
+    card.appendChild(settingsRow('Aankopen', 'Commandes achetées sur Vinted',
+      liveSyncSettings.purchases ?? false, v => write('auto_sync_purchases', v)));
+    card.appendChild(settingsRow('Labels', 'Verzendlabels automatisch verifiëren en klaarzetten',
+      liveSyncSettings.labels ?? false, v => write('auto_sync_labels', v), false));
+
+    content.appendChild(card);
   }
 
   // ── Tab: Listings ──────────────────────────────────────────────────────────
@@ -1298,7 +1367,12 @@
       || (!hasTxStatus && /verzendlabel/i.test(o.status || ''));
   }
 
-  async function tabLabels(content, footer) {
+  // Kernlogica van de Labels-tab, losgetrokken van de UI zodat zowel de
+  // handmatige tab (tabLabels hieronder) als LIVE_SYNC (achtergrond-alarm,
+  // toggle "Labels" in het ⚙-instellingenscherm) hem kunnen aanroepen zonder
+  // duplicatie. Haalt sold-orders op, filtert kandidaten, en verifieert elke
+  // nog-niet-eerder-verstuurde kandidaat via een echte test-fetch.
+  async function refreshLabels() {
     await loadDlIds();
     const orders = await getSold();
 
@@ -1311,18 +1385,6 @@
     const candidateOrders = orders.filter(o => o.transactionId && orderNeedsLabelAction(o));
     console.log('[Vault] label kandidaten:', candidateOrders.length, 'of', orders.length,
       '— statussen:', [...new Set(orders.map(o => `${o.status}|${o.transactionUserStatus}`))].join(' · '));
-
-    content.innerHTML = '';
-    footer.innerHTML  = '';
-
-    if (!candidateOrders.length) {
-      content.appendChild(emptyState('📭', 'Geen labels beschikbaar',
-        'Geen orders met "Verzendlabel is naar de verkoper gestuurd." gevonden.'));
-      return;
-    }
-
-    content.appendChild(emptyState('⏳', 'Labels verifiëren…',
-      'Even geduld — we controleren welke labels écht ophaalbaar zijn.'));
 
     const alreadySent = await getAutoSentSet();
     // Kandidaten die al eerder succesvol geverifieerd + verstuurd zijn hoeven
@@ -1348,6 +1410,24 @@
         skipped++;
         console.log(`[Vault] label NIET beschikbaar (overgeslagen) — txn ${o.transactionId} "${o.title}": ${e.message}`);
       }
+    }
+
+    return { verified, skipped, candidateCount: candidateOrders.length };
+  }
+
+  async function tabLabels(content, footer) {
+    content.innerHTML = '';
+    footer.innerHTML  = '';
+    content.appendChild(emptyState('⏳', 'Labels verifiëren…',
+      'Even geduld — we controleren welke labels écht ophaalbaar zijn.'));
+
+    const { verified, skipped, candidateCount } = await refreshLabels();
+
+    if (!candidateCount) {
+      content.innerHTML = '';
+      content.appendChild(emptyState('📭', 'Geen labels beschikbaar',
+        'Geen orders met "Verzendlabel is naar de verkoper gestuurd." gevonden.'));
+      return;
     }
 
     renderLabelsList(content, footer, verified, skipped);
@@ -1604,6 +1684,43 @@
         sendResponse({ success: true, count: active.length, ...result })
       } catch (e) {
         console.warn('[Vault] FORCE_SYNC error:', e.message)
+        sendResponse({ success: false, error: e.message })
+      } finally {
+        syncInProgress = false
+      }
+    })()
+    return true
+  })
+
+  // ── Live synchronisatie — periodieke achtergrond-trigger vanuit
+  // background.js (chrome.alarms, elke ~4 min, zie runLiveSync()) i.p.v. een
+  // handmatige "Alles synchroniseren"-klik. Hergebruikt exact dezelfde
+  // refreshKnownOrders()/getSold()-logica als FORCE_SYNC hierboven, en deelt
+  // dezelfde syncInProgress-guard zodat een live-sync-ronde en een
+  // handmatige FORCE_SYNC nooit overlappend tegen Vinted's API in lopen.
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg.type !== 'LIVE_SYNC') return
+    if (syncInProgress) {
+      console.log('[Vault] LIVE_SYNC genegeerd — er loopt al een synchronisatie-ronde')
+      sendResponse({ success: false, error: 'already_running' })
+      return
+    }
+    syncInProgress = true
+    ;(async () => {
+      const result = {}
+      try {
+        if (msg.sales || msg.purchases) {
+          const orders = await getSold(true)
+          const active = orders.filter(o => !isCancelled(o))
+          await enrichOrders(active)
+          result.orders = await refreshKnownOrders(active, msg.userId, msg.sales, msg.purchases)
+        }
+        if (msg.labels) {
+          result.labels = await refreshLabels()
+        }
+        sendResponse({ success: true, ...result })
+      } catch (e) {
+        console.warn('[Vault] LIVE_SYNC error:', e.message)
         sendResponse({ success: false, error: e.message })
       } finally {
         syncInProgress = false

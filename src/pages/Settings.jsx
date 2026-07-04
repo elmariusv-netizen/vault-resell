@@ -580,16 +580,18 @@ function PlatformsSection() {
 // hier achteraf aanpasbaar. Lokale state initialiseert 1x uit de props; de
 // pagina remount (key={page} in App.jsx) telkens je hierheen navigeert, dus
 // dat blijft altijd de actuele waarde.
-function PurchaseSettingsSection({ activeUserId, purchaseMethod, autoSyncSales, autoSyncPurchases, onUserSettingsChange }) {
+function PurchaseSettingsSection({ activeUserId, purchaseMethod, autoSyncSales, autoSyncPurchases, autoSyncLabels, onUserSettingsChange }) {
   const [method, setMethod] = useState(purchaseMethod || 'both')
   const [syncSales, setSyncSales] = useState(autoSyncSales ?? true)
   const [syncPurchases, setSyncPurchases] = useState(autoSyncPurchases ?? false)
+  const [syncLabels, setSyncLabels] = useState(autoSyncLabels ?? false)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
 
   const dirty = method !== (purchaseMethod || 'both')
     || syncSales !== (autoSyncSales ?? true)
     || syncPurchases !== (autoSyncPurchases ?? false)
+    || syncLabels !== (autoSyncLabels ?? false)
 
   const handleSave = async () => {
     if (!dirty || saving) return
@@ -600,9 +602,10 @@ function PurchaseSettingsSection({ activeUserId, purchaseMethod, autoSyncSales, 
         purchase_method: method,
         auto_sync_sales: syncSales,
         auto_sync_purchases: syncPurchases,
+        auto_sync_labels: syncLabels,
       }, { onConflict: 'user_id' })
       if (error) throw error
-      onUserSettingsChange?.({ purchaseMethod: method, autoSyncSales: syncSales, autoSyncPurchases: syncPurchases })
+      onUserSettingsChange?.({ purchaseMethod: method, autoSyncSales: syncSales, autoSyncPurchases: syncPurchases, autoSyncLabels: syncLabels })
       setSaved(true)
       setTimeout(() => setSaved(false), 2500)
     } catch (e) {
@@ -646,6 +649,12 @@ function PurchaseSettingsSection({ activeUserId, purchaseMethod, autoSyncSales, 
             desc="Nieuwe aankopen komen alleen binnen als je ze zelf handmatig selecteert via de extensie. Zet dit aan als je wil dat ook nieuwe aankopen automatisch worden opgehaald."
           />
         )}
+        <AutoSyncToggleRow
+          label="Labels automatisch synchroniseren"
+          checked={syncLabels}
+          onChange={setSyncLabels}
+          desc="Verzendlabels worden automatisch geverifieerd en klaargezet, zonder dat je zelf het Labels-tabblad in de extensie hoeft te openen."
+        />
       </div>
 
       <button
@@ -660,7 +669,7 @@ function PurchaseSettingsSection({ activeUserId, purchaseMethod, autoSyncSales, 
   )
 }
 
-export default function Settings({ data, updateData, onExport, onClearData, activeUserId, vintedCookie, onVintedCookieChange, supabaseUser, onSignOut, purchaseMethod, autoSyncSales, autoSyncPurchases, onUserSettingsChange }) {
+export default function Settings({ data, updateData, onExport, onClearData, activeUserId, vintedCookie, onVintedCookieChange, supabaseUser, onSignOut, purchaseMethod, autoSyncSales, autoSyncPurchases, autoSyncLabels, onUserSettingsChange }) {
   const { suppliers, batches, sales } = data
   const documents = data.documents || []
 
@@ -919,6 +928,7 @@ export default function Settings({ data, updateData, onExport, onClearData, acti
           purchaseMethod={purchaseMethod}
           autoSyncSales={autoSyncSales}
           autoSyncPurchases={autoSyncPurchases}
+          autoSyncLabels={autoSyncLabels}
           onUserSettingsChange={onUserSettingsChange}
         />
 

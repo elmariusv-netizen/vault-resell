@@ -414,7 +414,42 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     reportSyncProgress(message.userId, message.progress).then(() => sendResponse({ success: true }));
     return true;
   }
+  // Toggle in het extensiepaneel (⚙ Live synchronisatie) — schrijft direct
+  // naar user_settings (via dezelfde anon-toegankelijke user_sync_status-VIEW
+  // als hierboven) zodat de webapp-Instellingen-pagina dezelfde waarde ziet,
+  // en ververst meteen de lokale cache zodat runLiveSync() niet op de
+  // eerstvolgende 5s-tick van checkAndSync() hoeft te wachten.
+  if (message.type === 'SET_LIVE_SYNC_SETTING') {
+    setLiveSyncSetting(message.vintedUserId, message.field, message.value).then(sendResponse);
+    return true;
+  }
 });
+
+async function setLiveSyncSetting(vintedUserId, field, value) {
+  try {
+    const ownerId = await lookupOwnerId(vintedUserId);
+    if (!ownerId) return { success: false, error: 'owner_not_found' };
+    const res = await fetch(`${SYNC_STATUS_URL}?user_id=eq.${encodeURIComponent(ownerId)}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+      },
+      body: JSON.stringify({ [field]: value }),
+    });
+    if (!res.ok) return { success: false, error: `PATCH ${res.status}` };
+
+    const { liveSyncSettings = {} } = await chrome.storage.local.get(['liveSyncSettings']);
+    const key = field === 'auto_sync_sales' ? 'sales' : field === 'auto_sync_purchases' ? 'purchases' : 'labels';
+    await chrome.storage.local.set({
+      liveSyncSettings: { ...liveSyncSettings, userId: ownerId, [key]: value },
+    });
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+}
 
 // ── Order sync ────────────────────────────────────────────────────────────
 async function syncOrder(order) {
@@ -460,8 +495,13 @@ async function checkAndSync() {
   if (checkAndSyncRunning) return;
   checkAndSyncRunning = true;
   try {
+    // Geen vault_sync_requested-filter meer op deze fetch: we lezen nu élke
+    // tick de volledige rij, zodat we meteen ook de 3 live-sync-toggles
+    // (auto_sync_sales/purchases/labels) kunnen cachen in chrome.storage.local
+    // voor runLiveSync() (chrome.alarms) hieronder — dat scheelt een tweede,
+    // losse poll-loop tegen Supabase (zie rapportage vóór deze uitbreiding).
     const checkRes = await fetch(
-      `${SYNC_STATUS_URL}?vault_sync_requested=eq.true&select=user_id,auto_sync_sales,auto_sync_purchases&limit=1`,
+      `${SYNC_STATUS_URL}?select=user_id,vault_sync_requested,auto_sync_sales,auto_sync_purchases,auto_sync_labels&limit=1`,
       { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
     )
     if (!checkRes.ok) return
@@ -470,10 +510,16 @@ async function checkAndSync() {
 
     const userId = rows[0].user_id
     // Defaults matchen de kolom-DEFAULTs in supabase-setup.sql (sales aan,
-    // aankopen uit) — relevant voor rijen van vóór deze onboarding-migratie,
-    // waar deze kolommen nog niet bestaan/null zijn.
+    // aankopen/labels uit) — relevant voor rijen van vóór deze onboarding-
+    // migratie, waar deze kolommen nog niet bestaan/null zijn.
     const autoSyncSales = rows[0].auto_sync_sales ?? true
     const autoSyncPurchases = rows[0].auto_sync_purchases ?? false
+    const autoSyncLabels = rows[0].auto_sync_labels ?? false
+    await chrome.storage.local.set({
+      liveSyncSettings: { userId, sales: autoSyncSales, purchases: autoSyncPurchases, labels: autoSyncLabels }
+    })
+
+    if (!rows[0].vault_sync_requested) return
     console.log('[Vault] vault-sync-requested gevonden, user:', userId, 'autoSyncSales:', autoSyncSales, 'autoSyncPurchases:', autoSyncPurchases)
 
     // Stuur FORCE_SYNC naar elke open Vinted tab
@@ -540,6 +586,53 @@ async function reportSyncProgress(userId, progress) {
 // (een NIEUWE tab triggert bovendien meteen CHECK_SYNC_NOW bij het laden,
 // zie content.js boot()).
 setInterval(checkAndSync, 5000)
+
+// ── Live synchronisatie — periodieke achtergrond-sync via het extensiepaneel
+// (⚙-instellingen: Verkopen/Aankopen/Labels) ───────────────────────────────
+// Losstaand van checkAndSync() hierboven (die blijft de handmatige
+// "Alles synchroniseren"-trigger afhandelen): dit is een chrome.alarms-timer
+// i.p.v. setInterval, want een MV3 service worker kan na ~30s inactiviteit
+// stilgelegd worden — een setInterval van enkele minuten zou dan gewoon
+// stoppen. chrome.alarms overleeft dat (en browser-herstarts) wél.
+//
+// Leest UITSLUITEND chrome.storage.local (geen eigen Supabase-poll — die
+// cache wordt al elke 5s ververst door checkAndSync() hierboven, zie
+// liveSyncSettings daar) en zoekt een reeds open Vinted-tab, exact zoals
+// checkAndSync() dat ook doet. Geen tab open → deze ronde wordt overgeslagen
+// (bewuste keuze: geen tabs automatisch openen, zie projectnotities).
+const LIVE_SYNC_ALARM = 'vault-live-sync'
+chrome.alarms.create(LIVE_SYNC_ALARM, { periodInMinutes: 4 })
+chrome.alarms.onAlarm.addListener(alarm => {
+  if (alarm.name === LIVE_SYNC_ALARM) runLiveSync()
+})
+
+async function runLiveSync() {
+  try {
+    const { liveSyncSettings } = await chrome.storage.local.get(['liveSyncSettings'])
+    if (!liveSyncSettings?.userId) return
+    const { userId, sales, purchases, labels } = liveSyncSettings
+    if (!sales && !purchases && !labels) return
+
+    const tabs = await new Promise(resolve =>
+      chrome.tabs.query({ url: '*://*.vinted.be/*' }, resolve)
+    )
+    if (!tabs.length) {
+      console.log('[Vault] live-sync: geen Vinted-tab open — ronde overgeslagen')
+      return
+    }
+
+    await Promise.all(tabs.map(tab =>
+      new Promise(resolve =>
+        chrome.tabs.sendMessage(tab.id, { type: 'LIVE_SYNC', userId, sales, purchases, labels }, r => {
+          if (chrome.runtime.lastError) resolve(null)
+          else { console.log('[Vault] live-sync result tab', tab.id, ':', r); resolve(r) }
+        })
+      )
+    ))
+  } catch (e) {
+    console.warn('[Vault] runLiveSync error:', e.message)
+  }
+}
 
 async function updateDailyStats(order) {
   const today = new Date().toISOString().slice(0, 10);
