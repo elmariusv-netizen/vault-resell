@@ -1,0 +1,41 @@
+name: Regenerate extension zip
+
+# public/vault-extension.zip is de bron voor de "⬇ Download extensie"-knop in
+# Instellingen.jsx — een statisch bestand, niet dynamisch gebouwd. Zonder deze
+# workflow moet iedere vault-extension/-wijziging handmatig opnieuw gezipt
+# worden via `npm run zip-extension`, en dat werd hier maandenlang vergeten
+# (het zip-bestand bleef op manifest-versie 1.2.0 staan terwijl content.js/
+# background.js allang tientallen commits verder waren). Trigger is bewust
+# beperkt tot vault-extension/** — de auto-commit hieronder raakt enkel
+# public/vault-extension.zip, dus dat kan deze workflow nooit opnieuw
+# aftrappen (geen oneindige lus).
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'vault-extension/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  zip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build public/vault-extension.zip
+        run: |
+          rm -f public/vault-extension.zip
+          cd vault-extension
+          zip -j ../public/vault-extension.zip \
+            background.js bridge.js content.js manifest.json pdf-lib.min.js popup.html popup.js
+
+      - name: Commit indien gewijzigd
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add public/vault-extension.zip
+          git diff --staged --quiet && echo "geen wijziging" || git commit -m "chore: regenereer vault-extension.zip [skip ci]"
+          git push
