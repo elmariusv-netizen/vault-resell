@@ -321,16 +321,14 @@ function ExtensionInstall({ onConfirm }) {
         </div>
 
         <div style={{ display: 'flex', gap: 8 }}>
-          {!confirmed && (
-            <a
-              href="/vault-extension.zip"
-              download
-              className="btn btn-primary btn-sm"
-              style={{ textDecoration: 'none' }}
-            >
-              ⬇ Download
-            </a>
-          )}
+          <a
+            href="/vault-extension.zip"
+            download
+            className="btn btn-primary btn-sm"
+            style={{ textDecoration: 'none' }}
+          >
+            ⬇ Download
+          </a>
           <button
             className="btn btn-secondary btn-sm"
             onClick={() => setExpanded(v => !v)}
