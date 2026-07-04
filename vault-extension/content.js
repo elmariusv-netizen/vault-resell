@@ -18,6 +18,7 @@
 
   // ── Runtime state ──────────────────────────────────────────────────────────
   let overlayOpen = false;
+  let overlayCloseTimer = null;
   let activeTab   = 'zoekertjes';
   let syncedIds = new Set();
   let dlIds     = new Set();
@@ -895,7 +896,11 @@
     if (document.getElementById(OV_ID)) return;
     injectCSS();
 
-    const ov = el('div', `position:fixed;inset:0;z-index:2147483646;background:${D.bg};display:flex;flex-direction:column;font-family:${D.font};opacity:0;transition:opacity 0.2s ease`);
+    // display:none vanaf de start — anders blokkeert deze position:fixed;inset:0
+    // laag (ondanks opacity:0) alle clicks op de onderliggende Vinted-pagina
+    // zodra hij gebouwd is, ook vóórdat het paneel ooit geopend is. Enkel
+    // toggleOverlay(true) hieronder zet hem op display:flex.
+    const ov = el('div', `position:fixed;inset:0;z-index:2147483646;background:${D.bg};display:none;flex-direction:column;font-family:${D.font};opacity:0;transition:opacity 0.2s ease;pointer-events:none`);
     ov.id = OV_ID;
 
     // Header
@@ -971,13 +976,19 @@
     overlayOpen = force !== undefined ? force : !overlayOpen;
     const ov = document.getElementById(OV_ID);
     if (!ov) return;
+    // Voorkomt een race: als er nog een hide-timeout van een vorige sluit-actie
+    // hangt (bv. snel dicht → weer open binnen de 200ms fade-out), zou die
+    // straks alsnog display:none zetten op het net heropende paneel.
+    if (overlayCloseTimer) { clearTimeout(overlayCloseTimer); overlayCloseTimer = null; }
     if (overlayOpen) {
       ov.style.display = 'flex';
+      ov.style.pointerEvents = 'auto';
       requestAnimationFrame(() => { ov.style.opacity = '1'; });
       switchTab(activeTab);
     } else {
       ov.style.opacity = '0';
-      setTimeout(() => { ov.style.display = 'none'; }, 200);
+      ov.style.pointerEvents = 'none';
+      overlayCloseTimer = setTimeout(() => { ov.style.display = 'none'; overlayCloseTimer = null; }, 200);
     }
   }
 
