@@ -217,7 +217,11 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave, 
 
   const photoUrls = (() => { try { return JSON.parse(order.photo_urls || '[]') } catch { return [] } })()
   const allPhotos = photoUrls.length ? photoUrls : (order.photo_url ? [order.photo_url] : [])
-  const mainPhoto = allPhotos[0] || null
+  const [photoIdx, setPhotoIdx] = useState(0)
+  useEffect(() => { setPhotoIdx(0) }, [order.id])
+  const mainPhoto = allPhotos[photoIdx] || null
+  const prevPhoto = () => setPhotoIdx(i => (i - 1 + allPhotos.length) % allPhotos.length)
+  const nextPhoto = () => setPhotoIdx(i => (i + 1) % allPhotos.length)
 
   const downloadLabel = async () => {
     if (!vintedCookie) { alert('Geen Vinted cookie — koppel je account in Instellingen.'); return }
@@ -274,14 +278,24 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave, 
         <div style={{ position: 'relative', flexShrink: 0 }}>
           {mainPhoto ? (
             <div
-              onClick={() => onPhotoClick(allPhotos)}
+              onClick={() => onPhotoClick([...allPhotos.slice(photoIdx), ...allPhotos.slice(0, photoIdx)])}
               style={{ width: '100%', height: 300, cursor: 'zoom-in', background: 'var(--bg-2)', overflow: 'hidden' }}
             >
               <img src={mainPhoto} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
               {allPhotos.length > 1 && (
-                <span style={{ position: 'absolute', top: 12, left: 12, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: 11, padding: '3px 10px', borderRadius: 20 }}>
-                  {allPhotos.length} foto's
-                </span>
+                <>
+                  <button
+                    onClick={e => { e.stopPropagation(); prevPhoto() }}
+                    style={{ position: 'absolute', top: '50%', left: 12, transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.5)', border: 'none', color: '#fff', borderRadius: '50%', width: 32, height: 32, fontSize: 18, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}
+                  >‹</button>
+                  <button
+                    onClick={e => { e.stopPropagation(); nextPhoto() }}
+                    style={{ position: 'absolute', top: '50%', right: 12, transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.5)', border: 'none', color: '#fff', borderRadius: '50%', width: 32, height: 32, fontSize: 18, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}
+                  >›</button>
+                  <span style={{ position: 'absolute', top: 12, left: 12, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: 11, padding: '3px 10px', borderRadius: 20 }}>
+                    {photoIdx + 1}/{allPhotos.length}
+                  </span>
+                </>
               )}
               <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to bottom, transparent 55%, rgba(0,0,0,0.55))', pointerEvents: 'none' }} />
             </div>
@@ -302,11 +316,11 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave, 
                 key={i}
                 src={url}
                 alt=""
-                onClick={() => onPhotoClick([...allPhotos.slice(i), ...allPhotos.slice(0, i)])}
+                onClick={() => setPhotoIdx(i)}
                 style={{
                   width: 56, height: 56, borderRadius: 8, objectFit: 'cover',
-                  cursor: 'zoom-in', flexShrink: 0,
-                  border: i === 0 ? '2px solid var(--green)' : '1px solid var(--border)',
+                  cursor: 'pointer', flexShrink: 0,
+                  border: i === photoIdx ? '2px solid var(--green)' : '1px solid var(--border)',
                 }}
               />
             ))}
@@ -495,7 +509,7 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave, 
                 💬 Open gesprek op Vinted
               </a>
             )}
-            {(order.label_url || order.transaction_id) && (
+            {isLabelReady(order) && (
               <button
                 className={`btn ${downloaded ? 'btn-secondary' : 'btn-primary'}`}
                 onClick={downloadLabel}

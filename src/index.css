@@ -972,46 +972,6 @@ hr.divider { border: none; border-top: 1px solid var(--border); margin: 18px 0; 
 .color-dot:hover { transform: scale(1.12); }
 .color-dot.selected { border-color: var(--text); box-shadow: 0 0 0 2px rgba(0,0,0,0.2); }
 
-/* ── Backup banner ──────────────────────────── */
-.backup-banner {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  background: rgba(217, 119, 6, 0.07);
-  border-bottom: 1px solid rgba(217, 119, 6, 0.18);
-  padding: 9px 32px;
-  font-size: 13px;
-  color: var(--yellow);
-  flex-wrap: wrap;
-}
-
-.backup-banner-text { flex: 1; min-width: 0; }
-
-.backup-banner-btn {
-  background: rgba(217, 119, 6, 0.1) !important;
-  color: var(--yellow) !important;
-  border: 1px solid rgba(217, 119, 6, 0.3) !important;
-  white-space: nowrap;
-}
-
-.backup-banner-btn:hover { background: rgba(217, 119, 6, 0.18) !important; }
-
-.backup-banner-close {
-  background: none;
-  border: none;
-  color: var(--yellow);
-  cursor: pointer;
-  font-size: 17px;
-  padding: 2px 6px;
-  opacity: 0.6;
-  line-height: 1;
-  border-radius: var(--r-sm);
-  transition: opacity 0.13s;
-  font-family: inherit;
-}
-
-.backup-banner-close:hover { opacity: 1; }
-
 /* ── Section header ─────────────────────────── */
 .section-header {
   display: flex;
@@ -1119,8 +1079,6 @@ hr.divider { border: none; border-top: 1px solid var(--border); margin: 18px 0; 
   .content-area {
     padding-bottom: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom));
   }
-
-  .backup-banner { padding: 9px 16px; }
 }
 
 @media (max-width: 768px) {

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import Nav from './components/Nav'
 import Home from './pages/Home'
 import Inventory from './pages/Inventory'
@@ -11,7 +11,6 @@ import Aankopen from './pages/Aankopen'
 import Kosten from './pages/Kosten'
 import Auth from './pages/Auth'
 import Onboarding from './pages/Onboarding'
-import { getBackupMeta, saveBackupMeta } from './utils/storage'
 import { loadCloudData, saveCloudData } from './utils/cloudStorage'
 import { SEED_DATA } from './data/seedData'
 import { getRemainingQty } from './utils/skuUtils'
@@ -36,8 +35,6 @@ export default function App() {
   const [data, setData] = useState(null)
   const [activeUserId, setActiveUserIdState] = useState(null)
   const [theme, setTheme] = useState('light')
-  const [backupMeta, setBackupMeta] = useState(null)
-  const [bannerDismissed, setBannerDismissed] = useState(false)
   const [ready, setReady] = useState(false)
   const [vintedCookie, setVintedCookie] = useState(() => localStorage.getItem('vault-vinted-cookie') || null)
   const [supabaseUser, setSupabaseUser] = useState(null)
@@ -109,12 +106,11 @@ export default function App() {
 
   useEffect(() => { localStorage.setItem('vault-page', page) }, [page])
 
-  // Theme + backup meta (no localStorage user system anymore)
+  // Theme (no localStorage user system anymore)
   useEffect(() => {
     const savedTheme = localStorage.getItem('vault-theme') || 'light'
     setTheme(savedTheme)
     document.documentElement.setAttribute('data-theme', savedTheme)
-    setBackupMeta(getBackupMeta())
   }, [])
 
   // Load cloud data when authenticated user is known
@@ -214,10 +210,6 @@ export default function App() {
     a.download = `vault-resell-${new Date().toISOString().split('T')[0]}.json`
     a.click()
     URL.revokeObjectURL(url)
-    const meta = { lastExportDate: new Date().toISOString(), salesCountAtExport: data.sales.length }
-    saveBackupMeta(meta)
-    setBackupMeta(meta)
-    setBannerDismissed(true)
   }, [data])
 
   const handleClearData = useCallback(async () => {
@@ -225,21 +217,6 @@ export default function App() {
     await saveCloudData(activeUserId, fresh)
     setData(fresh)
   }, [activeUserId])
-
-  const showBackupBanner = useMemo(() => {
-    if (!data || !backupMeta || bannerDismissed) return false
-    const { lastExportDate, salesCountAtExport } = backupMeta
-    const newSales = data.sales.length - (salesCountAtExport || 0)
-    if (newSales >= 10) return true
-    if (!lastExportDate) return data.sales.length > 0
-    const daysSince = (Date.now() - new Date(lastExportDate)) / (1000 * 60 * 60 * 24)
-    return daysSince > 7
-  }, [data, backupMeta, bannerDismissed])
-
-  const backupDaysAgo = useMemo(() => {
-    if (!backupMeta?.lastExportDate) return null
-    return Math.floor((Date.now() - new Date(backupMeta.lastExportDate)) / (1000 * 60 * 60 * 24))
-  }, [backupMeta])
 
   if (!authChecked) {
     return (
@@ -287,20 +264,6 @@ export default function App() {
       />
 
       <div className="content-area">
-        {showBackupBanner && (
-          <div className="backup-banner">
-            <span className="backup-banner-text">
-              {backupDaysAgo !== null
-                ? `Laatste backup ${backupDaysAgo} dag${backupDaysAgo !== 1 ? 'en' : ''} geleden`
-                : 'Nog geen backup gemaakt'}
-            </span>
-            <button className="btn btn-sm backup-banner-btn" onClick={handleExport}>
-              Exporteer nu
-            </button>
-            <button className="backup-banner-close" onClick={() => setBannerDismissed(true)}>×</button>
-          </div>
-        )}
-
         <main className="main-content" key={page}>
           {page === 'home'      && <Home {...props} theme={theme} activeUserId={activeUserId} />}
           {page === 'inventory' && <Inventory {...props} />}

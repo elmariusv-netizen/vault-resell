@@ -3,7 +3,6 @@ import { SEED_DATA } from '../data/seedData'
 const USERS_KEY = 'vault-users'
 const ACTIVE_USER_KEY = 'vault-active-user'
 const LEGACY_KEY = 'vault-resell-v1'
-const BACKUP_KEY = 'vault-backup-meta'
 
 function dataKey(userId) {
   return `vault-resell-v1-${userId}`
@@ -64,17 +63,4 @@ export function saveData(data, userId) {
 
 export function clearData(userId) {
   localStorage.removeItem(dataKey(userId))
-}
-
-export function getBackupMeta() {
-  try {
-    const raw = localStorage.getItem(BACKUP_KEY)
-    return raw ? JSON.parse(raw) : { lastExportDate: null, salesCountAtExport: 0 }
-  } catch {
-    return { lastExportDate: null, salesCountAtExport: 0 }
-  }
-}
-
-export function saveBackupMeta(meta) {
-  try { localStorage.setItem(BACKUP_KEY, JSON.stringify(meta)) } catch {}
 }
