@@ -1,7 +1,8 @@
 import { useMemo, useState, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import {
   formatCurrency, formatDateLong, formatDateTimeLong, formatSkuRange, calcSaleProfit, normalizePlatform,
-  genId, formatSku, isLabelReady, COUNTRY_FLAGS, getStatusBadge, getUsedSkus, getFreeSkusForBatch,
+  genId, formatSku, isLabelReady, getStatusBadge, getUsedSkus, getFreeSkusForBatch,
   getBatchUnitCost, assignSlotSkus, skuOptionsForSlot, MANUAL_STATUSES, getManualStatus, getEffectiveStatusBadge,
 } from '../utils/skuUtils'
 import SaleModal from '../components/SaleModal'
@@ -206,7 +207,6 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave, 
   useEffect(() => { setSkuVal(order.sku_ref || '') },       [order.sku_ref])
   useEffect(() => { setCogsVal(String(order.cost_price ?? '')) }, [order.cost_price])
 
-  const flag    = COUNTRY_FLAGS[order.country] || ''
   const date    = order.sale_date || order.synced_at?.split('T')[0] || ''
   const price   = Number(order.price || 0)
   const cogs    = Number(order.cost_price || 0)
@@ -367,7 +367,7 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave, 
                 )}
                 {order.country && (
                   <span style={{ fontSize: 11, background: 'var(--bg-2)', border: '1px solid var(--border)', color: 'var(--text-2)', padding: '2px 8px', borderRadius: 5, fontWeight: 700, letterSpacing: '0.3px' }}>
-                    {flag} {order.country}
+                    {order.country}
                   </span>
                 )}
               </>
@@ -804,13 +804,29 @@ function BulkSkuModal({ batches, allOrders, orders, onClose, onConfirm }) {
 // order.status draaien) blijven ongemoeid.
 function ManualStatusBadge({ order, onSave }) {
   const [open, setOpen] = useState(false)
-  const ref = useRef(null)
+  const [menuPos, setMenuPos] = useState(null)
+  const btnRef = useRef(null)
+  const menuRef = useRef(null)
 
+  // Menu rendert via een portal in document.body met position:fixed (i.p.v.
+  // relatief binnen de kaart) — anders knipt de eigen kaart (overflow:hidden)
+  // of de volgende kaart in de lijst het menu af zodra het lager op de
+  // pagina staat. Positie wordt bij het openen berekend uit de knop zelf,
+  // en het menu sluit bij scrollen zodat de positie nooit stale kan raken.
   useEffect(() => {
     if (!open) return
-    const onDocClick = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    const onDocClick = e => {
+      if (btnRef.current?.contains(e.target)) return
+      if (menuRef.current?.contains(e.target)) return
+      setOpen(false)
+    }
+    const onScroll = () => setOpen(false)
     document.addEventListener('mousedown', onDocClick)
-    return () => document.removeEventListener('mousedown', onDocClick)
+    window.addEventListener('scroll', onScroll, true)
+    return () => {
+      document.removeEventListener('mousedown', onDocClick)
+      window.removeEventListener('scroll', onScroll, true)
+    }
   }, [open])
 
   const manual = getManualStatus(order.manual_status)
@@ -820,12 +836,23 @@ function ManualStatusBadge({ order, onSave }) {
 
   const choose = (value) => { onSave(order.id, 'manual_status', value); setOpen(false) }
 
+  const toggle = () => {
+    if (!open && btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect()
+      const menuWidth = 180
+      const left = Math.min(r.left, window.innerWidth - menuWidth - 8)
+      setMenuPos({ top: r.bottom + 4, left: Math.max(8, left) })
+    }
+    setOpen(o => !o)
+  }
+
   return (
-    <div ref={ref} style={{ position: 'relative', display: 'inline-block' }}>
+    <>
       <button
-        onClick={() => setOpen(o => !o)}
+        ref={btnRef}
+        onClick={toggle}
         style={{
-          display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: 700,
+          display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: 700, flexShrink: 0,
           color: current?.color || 'var(--text-3)', background: current?.bg || 'var(--bg-2)',
           padding: '2px 8px', borderRadius: 999, border: `1px solid ${current ? current.color + '30' : 'var(--border)'}`,
           cursor: 'pointer', fontFamily: 'inherit', lineHeight: 1.5,
@@ -835,12 +862,13 @@ function ManualStatusBadge({ order, onSave }) {
         <span style={{ fontSize: 8, opacity: 0.7 }}>▾</span>
       </button>
 
-      {open && (
+      {open && menuPos && createPortal(
         <div
+          ref={menuRef}
           style={{
-            position: 'absolute', top: '100%', left: 0, marginTop: 4, zIndex: 20,
+            position: 'fixed', top: menuPos.top, left: menuPos.left, zIndex: 1000,
             background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 10,
-            boxShadow: '0 12px 32px rgba(0,0,0,0.18)', overflow: 'hidden', minWidth: 160,
+            boxShadow: '0 12px 32px rgba(0,0,0,0.18)', overflow: 'hidden', minWidth: 180,
           }}
         >
           {MANUAL_STATUSES.map(s => (
@@ -872,9 +900,10 @@ function ManualStatusBadge({ order, onSave }) {
               <span>↺</span>Automatisch (Vinted-status)
             </div>
           )}
-        </div>
+        </div>,
+        document.body
       )}
-    </div>
+    </>
   )
 }
 
@@ -888,7 +917,6 @@ function VintedOrderRow({ order, onSave, onSaveFields, onBulkConfirm, onDismiss,
 
   useEffect(() => setCogsVal(String(order.cost_price ?? '')), [order.cost_price])
 
-  const flag     = COUNTRY_FLAGS[order.country] || ''
   const date     = order.sale_date || order.synced_at?.split('T')[0] || ''
   const price    = parseFloat(order.price || 0)
   const cogs     = parseFloat(order.cost_price || 0)
@@ -1026,6 +1054,7 @@ function VintedOrderRow({ order, onSave, onSaveFields, onBulkConfirm, onDismiss,
               >
                 {order.title}
               </span>
+              <ManualStatusBadge order={order} onSave={onSave} />
               <button
                 onClick={onDismiss}
                 title="Verwijder"
@@ -1056,7 +1085,7 @@ function VintedOrderRow({ order, onSave, onSaveFields, onBulkConfirm, onDismiss,
                 {buyer && <span style={{ fontSize: 12, color: 'var(--text-2)' }}>{buyer}</span>}
                 {order.country && (
                   <span style={{ fontSize: 10, background: 'var(--bg-2)', color: 'var(--text-3)', padding: '1px 7px', borderRadius: 4, fontWeight: 600, letterSpacing: '0.2px' }}>
-                    {flag} {order.country}
+                    {order.country}
                   </span>
                 )}
               </div>
@@ -1064,7 +1093,6 @@ function VintedOrderRow({ order, onSave, onSaveFields, onBulkConfirm, onDismiss,
 
             {/* Rij 4: datum + acties */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-              <ManualStatusBadge order={order} onSave={onSave} />
               {date && (
                 <span style={{ fontSize: 11, color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 3 }}>
                   🗓 {order.sold_at ? formatDateTimeLong(order.sold_at) : formatDateLong(date)}
