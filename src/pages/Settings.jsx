@@ -577,7 +577,15 @@ function PlatformsSection() {
 // (Onboarding.jsx STAP 1+2, PurchaseMethodPicker/AutoSyncToggleRow gedeeld),
 // hier achteraf aanpasbaar. Lokale state initialiseert 1x uit de props; de
 // pagina remount (key={page} in App.jsx) telkens je hierheen navigeert, dus
-// dat blijft altijd de actuele waarde.
+// dat blijft altijd de actuele waarde — TENZIJ de 3 sync-toggles hierna
+// gewijzigd worden zonder dat deze pagina remount, bv. door het extensiepaneel
+// (⚙ Live synchronisatie in content.js), dat rechtstreeks naar Supabase
+// schrijft buiten React om. handleSave() stuurt daarom ENKEL de velden mee
+// die in DEZE sessie daadwerkelijk aangepast zijn (per-veld dirty-check),
+// i.p.v. altijd alle 4 velden — anders zou op te slaan bv. een niet-
+// aangeraakte auto_sync_purchases teruggezet worden naar de verouderde
+// waarde van bij het mounten, en een toggle die net via de extensie aanstond
+// leek dan na een handmatige save in de webapp "spontaan" weer uit te vallen.
 function PurchaseSettingsSection({ activeUserId, purchaseMethod, autoSyncSales, autoSyncPurchases, autoSyncLabels, onUserSettingsChange }) {
   const [method, setMethod] = useState(purchaseMethod || 'both')
   const [syncSales, setSyncSales] = useState(autoSyncSales ?? true)
@@ -586,24 +594,25 @@ function PurchaseSettingsSection({ activeUserId, purchaseMethod, autoSyncSales, 
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
 
-  const dirty = method !== (purchaseMethod || 'both')
-    || syncSales !== (autoSyncSales ?? true)
-    || syncPurchases !== (autoSyncPurchases ?? false)
-    || syncLabels !== (autoSyncLabels ?? false)
+  const methodDirty = method !== (purchaseMethod || 'both')
+  const syncSalesDirty = syncSales !== (autoSyncSales ?? true)
+  const syncPurchasesDirty = syncPurchases !== (autoSyncPurchases ?? false)
+  const syncLabelsDirty = syncLabels !== (autoSyncLabels ?? false)
+  const dirty = methodDirty || syncSalesDirty || syncPurchasesDirty || syncLabelsDirty
 
   const handleSave = async () => {
     if (!dirty || saving) return
     setSaving(true)
     try {
-      const { error } = await supabase.from('user_settings').upsert({
-        user_id: activeUserId,
-        purchase_method: method,
-        auto_sync_sales: syncSales,
-        auto_sync_purchases: syncPurchases,
-        auto_sync_labels: syncLabels,
-      }, { onConflict: 'user_id' })
+      const payload = { user_id: activeUserId }
+      const changed = {}
+      if (methodDirty)         { payload.purchase_method     = method;        changed.purchaseMethod     = method }
+      if (syncSalesDirty)      { payload.auto_sync_sales      = syncSales;     changed.autoSyncSales      = syncSales }
+      if (syncPurchasesDirty)  { payload.auto_sync_purchases  = syncPurchases; changed.autoSyncPurchases  = syncPurchases }
+      if (syncLabelsDirty)     { payload.auto_sync_labels     = syncLabels;    changed.autoSyncLabels     = syncLabels }
+      const { error } = await supabase.from('user_settings').upsert(payload, { onConflict: 'user_id' })
       if (error) throw error
-      onUserSettingsChange?.({ purchaseMethod: method, autoSyncSales: syncSales, autoSyncPurchases: syncPurchases, autoSyncLabels: syncLabels })
+      onUserSettingsChange?.(changed)
       setSaved(true)
       setTimeout(() => setSaved(false), 2500)
     } catch (e) {
