@@ -178,6 +178,15 @@ async function syncToSupabase(order) {
     // conversation.messages (zie fetchConvDetail() in content.js), niet elke
     // (oudere) order heeft dit bericht, dan blijft dit null.
     payout_date:        order.payoutDate        ?? null,
+    // sku_ref ALLEEN meesturen als content.js 'm daadwerkelijk detecteerde
+    // (enkel bij kind==='nieuw' sale-orders, zie detectSkuForOrder). Bij elke
+    // andere sync (bestaande order, aankoop, periodieke refresh) blijft dit
+    // veld uit de payload — de upsert hieronder gebruikt Prefer:
+    // resolution=merge-duplicates, dat raakt enkel kolommen aan die in de
+    // payload zitten, dus een weggelaten sku_ref laat een reeds opgeslagen
+    // (of handmatig gecorrigeerde) waarde met rust i.p.v. 'm te overschrijven
+    // met null.
+    ...(order.skuRef ? { sku_ref: order.skuRef } : {}),
   };
 
   console.log('[Vault] price:', order.price);

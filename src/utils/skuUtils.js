@@ -254,6 +254,25 @@ export function getFreeSkusForBatch(batch, usedSkus) {
   return all.filter(s => !usedSkus.has(s))
 }
 
+// ── Tekst → batch matching — enige bron van waarheid om een RUWE, ergens
+// gedetecteerde SKU-tekst (bv. uit een Vinted-advertentietitel/-beschrijving,
+// zie de auto-registratie in Verkopen.jsx) te herleiden naar de bestaande
+// aankoop-batch waartoe hij hoort. Herbruikt dezelfde velden als
+// getFreeSkusForBatch/formatSku (supplierPrefix + startNum/endNum) i.p.v. een
+// aparte matching-implementatie — zodat er nooit 2 losse "wat is dit
+// SKU-nummer"-interpretaties kunnen ontstaan.
+// Accepteert notatie-varianten: hoofdletters/kleine letters, met of zonder
+// spatie/koppelteken tussen prefix en nummer ("RIA056" / "RIA 056" /
+// "ria-056"), en nummers zonder voorloop-nullen ("RIA56").
+export function findBatchForSku(batches, skuText) {
+  if (!skuText) return null
+  const m = String(skuText).trim().match(/^([A-Za-z]{2,4})[\s-]?(\d{1,6})$/)
+  if (!m) return null
+  const prefix = m[1].toUpperCase()
+  const num = parseInt(m[2], 10)
+  return (batches || []).find(b => b.supplierPrefix === prefix && num >= b.startNum && num <= b.endNum) || null
+}
+
 // Eenheidskostprijs (COGS) van 1 artikel uit een batch — enige bron van
 // waarheid bij het koppelen van een BESTAANDE batch aan een order, gedeeld
 // tussen SkuPickerModal se aanroepers (Verkopen.jsx "SKU koppelen",

@@ -500,6 +500,61 @@
     }
   }
 
+  // ── SKU-detectie ────────────────────────────────────────────────────────
+  // De titel is altijd beschikbaar (ook na verkoop, via /api/v2/my_orders).
+  // De beschrijving is dat NIET: /api/v2/items/{id} (waar description
+  // vandaan komt) geeft na verkoop een "niet gevonden"-pagina terug (zie
+  // fetchOrderItemPhotos hierboven) — best-effort dus, met stille fallback
+  // i.p.v. een crash als de beschrijving niet (meer) opgehaald kan worden.
+  async function fetchItemDescription(itemId) {
+    if (!itemId) return null;
+    try {
+      const d = await vGet(`/api/v2/items/${itemId}`);
+      return d.item?.description || d.description || null;
+    } catch (e) {
+      console.log(`[Vault] fetchItemDescription ${itemId}: niet beschikbaar (${e.message}) — waarschijnlijk al verkocht/verwijderd`);
+      return null;
+    }
+  }
+
+  // Bekende SKU-prefixen (zie de leveranciers in seedData.js/webapp-
+  // Instellingen) — hardcoded omdat dit content-script geen toegang heeft tot
+  // de leveranciers-tabel. Nieuwe leverancier met een ander prefix? Hier
+  // toevoegen.
+  const SKU_PREFIXES = ['IND', 'RIA', 'IMV', 'MAU'];
+
+  // Kandidaat-SKU uit vrije tekst: één van de bekende prefixen gevolgd door
+  // 1-4 cijfers, met optioneel een spatie/koppelteken ertussen —
+  // hoofdletterongevoelig, dekt "RIA056", "RIA 056", "ria-056" en "RIA56"
+  // (zonder voorloop-nullen). Zoekt gericht op de 4 bekende prefixen i.p.v.
+  // een generiek "2-4 letters + cijfers"-patroon — anders zou een eerder
+  // toevallig treffer in de tekst (bv. "Air Max 90" → "Max90") de match
+  // winnen vóór de echte SKU later in dezelfde titel/beschrijving.
+  const SKU_CANDIDATE_RE = new RegExp(`\\b(${SKU_PREFIXES.join('|')})[\\s-]?(\\d{1,4})\\b`, 'i');
+  function extractSkuCandidate(text) {
+    if (!text) return null;
+    const m = String(text).match(SKU_CANDIDATE_RE);
+    if (!m) return null;
+    return `${m[1].toUpperCase()}${m[2].padStart(3, '0')}`;
+  }
+
+  // Detecteert een kandidaat-SKU voor een order, op basis van de
+  // SKU-detectie-instelling (zie getSkuDetectionMode hierboven). Haalt de
+  // beschrijving enkel op als de instelling dat vereist (en enkel als de
+  // titel bij "titel dan beschrijving" niets opleverde) — geen onnodige
+  // extra netwerkaanvraag als de titel al volstaat.
+  async function detectSkuForOrder(order) {
+    const mode = await getSkuDetectionMode();
+    if (mode === 'title') return extractSkuCandidate(order.title);
+
+    if (mode === 'title_then_description') {
+      const fromTitle = extractSkuCandidate(order.title);
+      if (fromTitle) return fromTitle;
+    }
+    const description = await fetchItemDescription(order.itemId);
+    return extractSkuCandidate(description);
+  }
+
   // Haal foto + buyer info op via conversation detail
   async function fetchConvDetail(convId, debug = false) {
     try {
@@ -769,7 +824,16 @@
       // koppeling wel degelijk.
       const vId = await getVintedUserId();
       if (kind === 'nieuw') {
-        const res = await sendMsg({ type: 'SYNC_ORDER', order: { ...o, orderDirection, labelUrl: labelUrl(o.transactionId), vintedUserId: vId } });
+        // SKU-detectie enkel bij een écht nieuwe verkoop (kind === 'nieuw') —
+        // dit is de enige plek waar de order gegarandeerd nog geen sku_ref
+        // heeft, dus geen risico dat een eerder handmatig gecorrigeerde
+        // koppeling hier overschreven wordt (background.js's syncToSupabase
+        // laat sku_ref bovendien alsnog met rust als de rij al bestaat).
+        let skuRef = null;
+        if (orderDirection === 'sale') {
+          try { skuRef = await detectSkuForOrder(o); } catch (e) { console.warn(`[Vault] SKU-detectie mislukt voor txn ${o.transactionId}:`, e.message); }
+        }
+        const res = await sendMsg({ type: 'SYNC_ORDER', order: { ...o, orderDirection, labelUrl: labelUrl(o.transactionId), vintedUserId: vId, skuRef } });
         if (res?.success && !res.duplicate) {
           syncedIds.add(o.transactionId);
           newCount++;
@@ -1122,6 +1186,25 @@
     return row;
   }
 
+  // Radiogroep voor een instelling met >2 opties (bv. SKU-detectiebron) —
+  // settingsRow hierboven is aan/uit-only, dat past niet op een 3-wegkeuze.
+  function radioGroup(name, options, current, onChange) {
+    const wrap = el('div', 'display:flex;flex-direction:column');
+    options.forEach((opt, i) => {
+      const row = el('label', `display:flex;align-items:center;gap:12px;padding:12px 0;cursor:pointer;${i < options.length - 1 ? 'border-bottom:1px solid #f3f4f6' : ''}`);
+      const input = document.createElement('input');
+      input.type = 'radio';
+      input.name = name;
+      input.value = opt.value;
+      input.checked = current === opt.value;
+      input.style.cssText = `width:17px;height:17px;accent-color:${D.accent};flex-shrink:0;cursor:pointer`;
+      input.addEventListener('change', () => { if (input.checked) onChange(opt.value); });
+      row.append(input, textStack(opt.label, opt.sub));
+      wrap.appendChild(row);
+    });
+    return wrap;
+  }
+
   // Supabase-veldnaam → cache-sleutel, gedeeld tussen showSettingsScreen()'s
   // write() en background.js's setLiveSyncSetting() (die exact dezelfde
   // mapping heeft — hou ze in sync als er ooit een 5e toggle bijkomt).
@@ -1137,6 +1220,25 @@
       labels: raw?.labels ?? false,
       createLabels: raw?.createLabels ?? false,
     };
+  }
+
+  // ── SKU-detectie — instelbaar waar de extensie naar een SKU (bv. RIA056)
+  // zoekt bij het synchroniseren van een verkoop: enkel de titel van de
+  // advertentie (standaard, altijd beschikbaar), enkel de beschrijving, of
+  // titel-eerst-dan-beschrijving. Puur extensie-lokaal (geen webapp-
+  // tegenhanger zoals liveSyncSettings), dus geen synchrone cross-writer-
+  // cache nodig — een simpele chrome.storage.local-lezing per gebruik volstaat.
+  const SKU_DETECTION_MODES = [
+    { value: 'title',                  label: 'Titel',               sub: 'Zoek de SKU enkel in de titel van de advertentie (standaard)' },
+    { value: 'description',            label: 'Beschrijving',        sub: 'Zoek enkel in de beschrijving' },
+    { value: 'title_then_description', label: 'Titel dan beschrijving', sub: 'Zoek eerst in de titel, val terug op de beschrijving als niets gevonden wordt' },
+  ];
+  async function getSkuDetectionMode() {
+    const { skuDetectionMode } = await chrome.storage.local.get(['skuDetectionMode']);
+    return SKU_DETECTION_MODES.some(m => m.value === skuDetectionMode) ? skuDetectionMode : 'title';
+  }
+  async function setSkuDetectionMode(value) {
+    await chrome.storage.local.set({ skuDetectionMode: value });
   }
 
   // ── ENIGE canonieke leesplek voor de 4 live-sync/auto-create-toggles —
@@ -1248,6 +1350,17 @@
     actionCard.appendChild(settingsRow('Labels automatisch aanmaken', 'Klikt "Verzendlabel aanmaken" in de chat als een label needs_action staat maar nog niet ophaalbaar is',
       liveSyncSettings.createLabels, v => write('auto_create_labels', v), false));
     content.appendChild(actionCard);
+
+    // ── SKU-detectie — waar de extensie naar een SKU (bv. RIA056) zoekt bij
+    // het automatisch registreren van een verkoop tijdens sync (zie
+    // detectSkuForOrder/SKU_DETECTION_MODES hierboven).
+    content.appendChild(el('div', `font-size:11px;font-weight:700;color:${D.sub};text-transform:uppercase;letter-spacing:0.05em;margin:20px 0 8px`, 'SKU-detectie'));
+    content.appendChild(el('div', `font-size:12px;color:${D.sub};line-height:1.6;margin:-4px 0 14px`,
+      'Waar de extensie naar een SKU (bv. RIA056) zoekt bij het automatisch registreren van een nieuwe verkoop.'));
+    const skuCard = el('div', `background:${D.card};border-radius:16px;padding:0 16px;box-shadow:0 1px 4px rgba(0,0,0,0.07)`);
+    const currentSkuMode = await getSkuDetectionMode();
+    skuCard.appendChild(radioGroup('sku-detection-mode', SKU_DETECTION_MODES, currentSkuMode, (value) => setSkuDetectionMode(value)));
+    content.appendChild(skuCard);
   }
 
   // ── Tab: Listings ──────────────────────────────────────────────────────────

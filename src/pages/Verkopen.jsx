@@ -5,6 +5,7 @@ import {
   genId, formatSku, isLabelReady, getStatusBadge, getUsedSkus, getFreeSkusForBatch,
   getBatchUnitCost, assignSlotSkus, skuOptionsForSlot, MANUAL_STATUSES, getManualStatus, getEffectiveStatusBadge,
   classifyOrderStage,
+  findBatchForSku,
 } from '../utils/skuUtils'
 import SaleModal from '../components/SaleModal'
 import EditSaleModal from '../components/EditSaleModal'
@@ -973,6 +974,12 @@ function VintedOrderRow({ order, onSave, onSaveFields, onBulkConfirm, onDismiss,
     : order.item_url || null
   const suggested = !order.sku_ref ? suggestSku(order.title, order.description) : ''
   const hasSkuLink = !!(order.sku_ref || order.cost_price != null || order.batch_id)
+  // sku_ref staat er (bv. automatisch gedetecteerd door de extensie bij
+  // sync), maar kon niet herleid worden naar een bestaande batch (typo, of de
+  // batch bestaat niet) — duidelijk zichtbaar maken i.p.v. dit stil te laten
+  // verdwijnen, zodat de gebruiker het via dezelfde "SKU koppelen"-knop kan
+  // corrigeren.
+  const skuUnresolved = !!(order.sku_ref && !order.sku_ref.includes(',') && !order.batch_id)
 
   const photoUrls = (() => { try { return JSON.parse(order.photo_urls || '[]') } catch { return [] } })()
   const allPhotos = photoUrls.length ? photoUrls : (order.photo_url ? [order.photo_url] : [])
@@ -1155,11 +1162,17 @@ function VintedOrderRow({ order, onSave, onSaveFields, onBulkConfirm, onDismiss,
                   💶 Uitbetaald op {formatDateLong(order.payout_date)}
                 </span>
               )}
-              {miniBtn(
-                () => setSkuPickerOpen(true),
-                order.sku_ref ? `🏷 ${order.sku_ref}` : 'SKU koppelen',
-                '#818cf8', 'rgba(129,140,248,0.08)', 'rgba(129,140,248,0.2)'
-              )}
+              {skuUnresolved
+                ? miniBtn(
+                    () => setSkuPickerOpen(true),
+                    `⚠ ${order.sku_ref} niet gevonden`,
+                    '#f59e0b', 'rgba(245,158,11,0.1)', 'rgba(245,158,11,0.25)'
+                  )
+                : miniBtn(
+                    () => setSkuPickerOpen(true),
+                    order.sku_ref ? `🏷 ${order.sku_ref}` : 'SKU koppelen',
+                    '#818cf8', 'rgba(129,140,248,0.08)', 'rgba(129,140,248,0.2)'
+                  )}
               {hasSkuLink && onUnlinkSku && (
                 <button
                   onClick={() => onUnlinkSku(order.id)}
@@ -1509,13 +1522,36 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
     toRegister.forEach(o => autoRegisterSeenRef.current.add(o.id))
     toReconcile.forEach(o => autoRegisterSeenRef.current.add(o.id))
 
+    // Als de order al een batch_id heeft (handmatig gekoppeld, of al eerder
+    // gedetecteerd) gebruiken we die. Anders proberen we sku_ref (bv. door de
+    // extensie gedetecteerd bij sync, zie content.js) te herleiden naar een
+    // bestaande batch via findBatchForSku — dezelfde matching-logica als
+    // elders in de app, geen aparte implementatie. Bundel-sku_ref's (met een
+    // komma) slaan we hier over: die lopen via BulkSkuModal/handleBulkSkuConfirm.
+    const vtOrderPatches = {}
+    const resolveBatch = (order) => {
+      if (order.batch_id && !order.batch_id.includes(',')) {
+        return { batchId: order.batch_id, costPrice: order.cost_price ?? null }
+      }
+      if (order.sku_ref && !order.sku_ref.includes(',')) {
+        const batch = findBatchForSku(batches, order.sku_ref)
+        if (batch) {
+          const costPrice = getBatchUnitCost(batch)
+          vtOrderPatches[order.id] = { batch_id: batch.id, cost_price: costPrice }
+          return { batchId: batch.id, costPrice }
+        }
+      }
+      return { batchId: null, costPrice: null }
+    }
+
     const newSales = toRegister.map(order => {
       let photo = order.photo_url || null
       try { photo = JSON.parse(order.photo_urls || '[]')[0] || photo } catch {}
+      const { batchId } = resolveBatch(order)
       return {
         id: genId(),
         vintedOrderId: order.id,
-        batchId: order.batch_id && !order.batch_id.includes(',') ? order.batch_id : null,
+        batchId,
         type: 'individual',
         quantity: 1,
         salePrice: parseFloat(order.price || 0),
@@ -1534,12 +1570,33 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
         saleTime: order.sold_at ? order.sold_at.split('T')[1]?.slice(0, 5) : null,
       }
     })
+    // toReconcile-orders hebben al een data.sales-entry maar kunnen ook nog
+    // een niet-herleide sku_ref hebben (bv. handmatig "+ Empl." geklikt vóór
+    // de batch gekoppeld was) — ook daarvoor proberen we de batch te vinden,
+    // en de bestaande sales-entry bijwerken zodat COGS/profit meteen kloppen.
+    toReconcile.forEach(resolveBatch)
 
     const idsToFlag = [...toRegister, ...toReconcile].map(o => o.id)
-    if (newSales.length) updateData({ sales: [...sales, ...newSales] })
+    const updates = {}
+    if (newSales.length || Object.keys(vtOrderPatches).length) {
+      const patchedSales = sales.map(s =>
+        s.vintedOrderId && vtOrderPatches[s.vintedOrderId] && !s.batchId
+          ? { ...s, batchId: vtOrderPatches[s.vintedOrderId].batch_id }
+          : s
+      )
+      updates.sales = newSales.length ? [...patchedSales, ...newSales] : patchedSales
+    }
+    if (Object.keys(updates).length) updateData(updates)
+
     supabase.from('vinted_orders').update({ registered_in_vault: true }).in('id', idsToFlag)
-    setVtOrders(prev => prev.map(o => idsToFlag.includes(o.id) ? { ...o, registered_in_vault: true } : o))
-  }, [vtOrders, sales, updateData])
+    Object.entries(vtOrderPatches).forEach(([orderId, patch]) => {
+      supabase.from('vinted_orders').update(patch).eq('id', orderId)
+    })
+    setVtOrders(prev => prev.map(o => {
+      if (!idsToFlag.includes(o.id) && !vtOrderPatches[o.id]) return o
+      return { ...o, ...(idsToFlag.includes(o.id) ? { registered_in_vault: true } : {}), ...(vtOrderPatches[o.id] || {}) }
+    }))
+  }, [vtOrders, sales, batches, updateData])
 
   const saveVtField = async (id, field, value) => {
     await supabase.from('vinted_orders').update({ [field]: value }).eq('id', id)
