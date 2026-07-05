@@ -720,6 +720,18 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
           )}
         </div>
 
+        {/* Periode — zelfde DateRangeFilter + range-state als desktop (zie
+            hierboven), incl. "Aangepast" van-tot. Enige plek op mobiel om de
+            periode voor de statkaarten/grafieken hieronder te wijzigen — was
+            hier voordien niet beschikbaar (enkel op desktop). */}
+        <div style={{ padding: '0 20px 14px' }}>
+          <DateRangeFilter
+            value={range} onChange={setRange}
+            customFrom={customFrom} customTo={customTo}
+            onCustom={(k, v) => k === 'from' ? setCustomFrom(v) : setCustomTo(v)}
+          />
+        </div>
+
         {/* Stat pills */}
         <div style={{ padding: '14px 20px', display: 'flex', gap: 8, overflowX: 'auto', scrollbarWidth: 'none' }}>
           {[
