@@ -2112,6 +2112,32 @@
     return true
   })
 
+  // ── Vinted-sessiecookie automatisch verversen ─────────────────────────────
+  // Vroeger moest de gebruiker de cookie handmatig via F12 → console →
+  // copy(document.cookie) plakken in Instellingen — te technisch voor de
+  // niet-technische doelgroep, en een verlopen cookie faalde stil tot iemand
+  // 'm handmatig verving. background.js heeft via chrome.cookies al toegang
+  // tot de vinted.be-cookies (zie fetchLabelViaProxy) — deze functie stuurt
+  // enkel het Vinted-userId mee zodat background.js de cookies zelf kan
+  // uitlezen en uploaden; de cookie-waarde komt hier nooit in content.js
+  // terecht en wordt dus ook nooit vanuit dit bestand gelogd.
+  async function uploadVintedCookie() {
+    const vintedUserId = await getVintedUserId();
+    if (!vintedUserId) return;
+    try {
+      const res = await sendMsg({ type: 'UPLOAD_VINTED_COOKIE', vintedUserId });
+      if (!res?.success) console.warn('[Vault] cookie-upload mislukt:', res?.error);
+    } catch (e) {
+      console.warn('[Vault] cookie-upload exception:', e.message);
+    }
+  }
+
+  // Elke ~4 min zolang deze tab open blijft (zelfde cadans als background.js's
+  // LIVE_SYNC_ALARM) — dekt het geval dat de gebruiker lang op één
+  // Vinted-pagina blijft zonder te navigeren, waardoor boot() (die dit ook
+  // aanroept, zie hieronder) niet opnieuw draait via de SPA-navigatiewatcher.
+  setInterval(uploadVintedCookie, 4 * 60 * 1000);
+
   // ── Auto-koppeling via vault_link query param ─────────────────────────────
   async function tryAutoLink() {
     const linkId = new URLSearchParams(window.location.search).get('vault_link');
@@ -2140,6 +2166,9 @@
     injectFab();
     console.log('[Vault] booted on', location.href);
     tryAutoLink();
+    // Vers gekoppelde/verlopen sessiecookie meteen bij elk Vinted-bezoek
+    // (elke boot(), ook na SPA-navigatie) automatisch oppikken.
+    uploadVintedCookie();
     // Als deze tab net geopend is voor een "Alles synchroniseren"-klik vanuit
     // de webapp, hoeft niet gewacht te worden op de eerstvolgende 5s-poll in
     // background.js — meteen checken of er een vlag klaarstaat.

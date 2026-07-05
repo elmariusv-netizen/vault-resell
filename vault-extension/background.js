@@ -553,7 +553,47 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     createLabelViaTab(message.conversationId, message.transactionId).then(sendResponse);
     return true;
   }
+  // Automatische sessiecookie-refresh (zie content.js's uploadVintedCookie(),
+  // aangeroepen bij elke boot() + elke 4 min) — vervangt het handmatige
+  // "F12 → copy(document.cookie) → plakken in Instellingen"-pad, te
+  // technisch voor niet-technische gebruikers en stil falend zodra de sessie
+  // verloopt. De cookie zelf wordt hier ENKEL geteld, nooit gelogd.
+  if (message.type === 'UPLOAD_VINTED_COOKIE') {
+    uploadVintedCookie(message.vintedUserId).then(sendResponse);
+    return true;
+  }
 });
+
+async function uploadVintedCookie(vintedUserId) {
+  if (!vintedUserId) return { success: false, error: 'no_vinted_user_id' };
+  try {
+    // Zelfde chrome.cookies.getAll-aanpak als fetchLabelViaProxy() hierboven —
+    // de service worker heeft hier al toegang toe via de "cookies"-permission
+    // + host_permissions voor vinted.be, geen handmatige stap nodig.
+    const cookies = await new Promise(resolve =>
+      chrome.cookies.getAll({ domain: 'vinted.be' }, resolve)
+    );
+    if (!cookies.length) return { success: false, error: 'no_cookies' };
+    const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+
+    const res = await fetch('https://vault-resell.vercel.app/api/save-vinted-cookie', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vinted_user_id: vintedUserId, cookie: cookieStr }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      console.warn('[Vault] cookie-upload mislukt:', res.status, body.error || '');
+      return { success: false, error: body.error || `HTTP ${res.status}` };
+    }
+    // Enkel het AANTAL cookies loggen, nooit de waarden (login-sessie).
+    console.log('[Vault] cookie-upload OK —', cookies.length, 'cookies');
+    return { success: true };
+  } catch (e) {
+    console.warn('[Vault] cookie-upload exception:', e.message);
+    return { success: false, error: e.message };
+  }
+}
 
 async function setLiveSyncSetting(vintedUserId, field, value) {
   try {

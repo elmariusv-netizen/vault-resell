@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { genId, getNextSkuLabel, formatSku, formatDate } from '../utils/skuUtils'
+import { genId, getNextSkuLabel, formatSku, formatDate, formatDateTimeLong } from '../utils/skuUtils'
 import { supabase } from '../utils/supabase'
 import { PurchaseMethodPicker, AutoSyncToggleRow } from './Onboarding'
 
@@ -24,32 +24,62 @@ function Mono({ children }) {
   )
 }
 
-function VintedKoppeling({ vintedCookie, onSave, activeUserId }) {
-  const [open, setOpen]           = useState(false)
+// ── Vinted-sessiecookie — sinds de automatische extensie-refresh (zie
+// uploadVintedCookie() in content.js/background.js + api/save-vinted-
+// cookie.js) is handmatig plakken niet langer de normale flow: de extensie
+// leest de cookie zelf uit op vinted.be (cookies-permission + host_permission
+// staan al in manifest.json) en stuurt 'm buiten React om rechtstreeks naar
+// Supabase. Deze component toont enkel nog een STATUS (✓ automatisch
+// gekoppeld met tijdstip, of ⚠ extensie niet actief) — het oude "F12 →
+// console → plakken"-pad blijft enkel als verborgen fallback, voor het geval
+// iemand de extensie niet kan/wil installeren.
+function VintedKoppeling({ vintedCookie, onSave, activeUserId, vintedCookieUpdatedAt, vintedCookieStale, onRefresh }) {
+  const [advancedOpen, setAdvancedOpen] = useState(false)
   const [cookieInput, setCookieInput] = useState('')
   const [saving, setSaving]       = useState(false)
   const [error, setError]         = useState('')
+  const [refreshing, setRefreshing] = useState(false)
 
   const isConnected = !!vintedCookie
-  const masked = vintedCookie
-    ? vintedCookie.slice(0, 8) + '••••••••••••' + vintedCookie.slice(-4)
-    : ''
+  // "Actief" betekent hier: een cookie aanwezig ÉN recent genoeg ververst
+  // door de extensie (vintedCookieStale, berekend in App.jsx) — een
+  // aanwezige maar oude cookie (bv. van vóór deze migratie, handmatig
+  // geplakt) telt bewust niet mee als "extensie actief".
+  const extensionActive = isConnected && vintedCookieUpdatedAt && !vintedCookieStale
 
-  const close = () => { setOpen(false); setCookieInput(''); setError('') }
+  const handleRefreshNow = async () => {
+    if (!onRefresh || refreshing) return
+    setRefreshing(true)
+    try { await onRefresh() } finally { setRefreshing(false) }
+  }
 
-  const handleSave = async () => {
+  const handleManualSave = async () => {
     const val = cookieInput.trim()
     if (!val) return
     setSaving(true)
     setError('')
+    // De cookie wordt later als HTTP-header (x-vinted-cookie) meegestuurd naar
+    // /api/label — headers mogen enkel Latin-1-tekens (code point ≤ 255)
+    // bevatten. Een per ongeluk meegeplakt teken (bv. "…" uit een afgekapte
+    // console-regel, code point 8230) laat fetch() daar pas GEBRUIKT verderop
+    // stuk op lopen, met een cryptische foutmelding — vang dit meteen hier op
+    // zodat de gebruiker meteen weet wat er mis is met wat ze net plakten.
+    const invalidChar = [...val].find((ch) => ch.charCodeAt(0) > 255)
+    if (invalidChar) {
+      setError(`Ongeldig teken gevonden ("${invalidChar}") — waarschijnlijk is er per ongeluk extra tekst (bv. uit de console) mee gekopieerd naast de cookie. Kopieer enkel het resultaat van het commando opnieuw.`)
+      setSaving(false)
+      return
+    }
     try {
       const { error: e } = await supabase
         .from('user_settings')
-        .upsert({ user_id: activeUserId, vinted_cookie: val }, { onConflict: 'user_id' })
+        .upsert({ user_id: activeUserId, vinted_cookie: val, vinted_cookie_updated_at: new Date().toISOString() }, { onConflict: 'user_id' })
       if (e) throw e
       localStorage.setItem('vault-vinted-cookie', val)
       onSave(val)
-      close()
+      setCookieInput('')
+      setAdvancedOpen(false)
+      onRefresh?.()
     } catch (e) {
       setError(e.message || 'Opslaan mislukt. Bestaat de user_settings tabel al in Supabase?')
     }
@@ -60,11 +90,13 @@ function VintedKoppeling({ vintedCookie, onSave, activeUserId }) {
     try {
       await supabase
         .from('user_settings')
-        .upsert({ user_id: activeUserId, vinted_cookie: null }, { onConflict: 'user_id' })
-    } catch {}
+        .upsert({ user_id: activeUserId, vinted_cookie: null, vinted_cookie_updated_at: null }, { onConflict: 'user_id' })
+    } catch (e) {
+      console.warn('[Vault] ontkoppelen mislukt:', e.message)
+    }
     localStorage.removeItem('vault-vinted-cookie')
     onSave(null)
-    close()
+    onRefresh?.()
   }
 
   const STEPS = [
@@ -90,8 +122,8 @@ function VintedKoppeling({ vintedCookie, onSave, activeUserId }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
         <div style={{
           width: 42, height: 42, borderRadius: 12, flexShrink: 0,
-          background: isConnected ? 'rgba(0,255,136,0.1)' : 'var(--bg-2)',
-          border: `1px solid ${isConnected ? 'rgba(0,255,136,0.3)' : 'var(--border)'}`,
+          background: extensionActive ? 'rgba(0,255,136,0.1)' : 'rgba(245,158,11,0.1)',
+          border: `1px solid ${extensionActive ? 'rgba(0,255,136,0.3)' : 'rgba(245,158,11,0.3)'}`,
           display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22,
         }}>
           🛒
@@ -99,45 +131,50 @@ function VintedKoppeling({ vintedCookie, onSave, activeUserId }) {
 
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 700, fontSize: 15 }}>Verzendlabels (Vinted-sessie)</div>
-          <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2, fontFamily: isConnected ? 'monospace' : 'inherit' }}>
-            {isConnected ? masked : 'Niet gekoppeld — voeg je sessie-cookie toe om listings en labels te activeren'}
+          {extensionActive ? (
+            <div style={{ fontSize: 12, color: 'var(--green)', marginTop: 2 }}>
+              ✓ Automatisch gekoppeld via extensie
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: 'var(--yellow)', marginTop: 2 }}>
+              ⚠ Extensie niet actief — open Vinted in Chrome met de Vault-extensie
+            </div>
+          )}
+          <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4 }}>
+            {vintedCookieUpdatedAt
+              ? `Laatst vernieuwd: ${formatDateTimeLong(vintedCookieUpdatedAt)}`
+              : 'Nodig om verzendlabels op te halen — verschijnt automatisch zodra de extensie actief is.'}
           </div>
-          <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4 }}>Nodig om verzendlabels op te halen.</div>
         </div>
 
         <div style={{ display: 'flex', gap: 8, flexShrink: 0, alignItems: 'center' }}>
-          {isConnected && !open && (
-            <span style={{
-              fontSize: 11, fontWeight: 700, color: 'var(--green)',
-              background: 'rgba(0,255,136,0.1)', border: '1px solid rgba(0,255,136,0.25)',
-              padding: '3px 10px', borderRadius: 100,
-            }}>✓ Actief</span>
-          )}
-          {isConnected ? (
-            <>
-              <button className="btn btn-ghost btn-sm" onClick={() => open ? close() : setOpen(true)}>
-                {open ? 'Sluiten' : 'Vervang'}
-              </button>
-              <button className="btn btn-danger btn-sm" onClick={handleDisconnect}>Ontkoppel</button>
-            </>
-          ) : (
-            <button className="btn btn-primary btn-sm" onClick={() => setOpen(true)} disabled={open}>
-              Koppel Vinted account
-            </button>
-          )}
+          <button className="btn btn-ghost btn-sm" onClick={handleRefreshNow} disabled={refreshing || !onRefresh}>
+            {refreshing ? 'Checken…' : '↻ Check nu'}
+          </button>
         </div>
       </div>
 
-      {/* Expandable form */}
-      {open && (
-        <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* Geavanceerd — handmatige fallback, enkel nodig als de extensie niet
+          gebruikt kan/wil worden */}
+      <div style={{ marginTop: 14 }}>
+        <button
+          className="btn btn-ghost btn-sm"
+          onClick={() => setAdvancedOpen(v => !v)}
+          style={{ color: 'var(--text-3)', fontSize: 11 }}
+        >
+          {advancedOpen ? '▾' : '▸'} Geavanceerd: handmatig koppelen (zonder extensie)
+        </button>
+      </div>
+
+      {advancedOpen && (
+        <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 14 }}>
           {/* Step-by-step instructions */}
           <div style={{
             background: 'var(--bg-2)', border: '1px solid var(--border)',
             borderRadius: 'var(--r-lg)', padding: '14px 16px',
           }}>
             <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 10, color: 'var(--text)' }}>
-              Hoe je de sessie-cookie kopieert:
+              Hoe je de sessie-cookie handmatig kopieert:
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
               {STEPS.map((step, i) => (
@@ -181,15 +218,20 @@ function VintedKoppeling({ vintedCookie, onSave, activeUserId }) {
             }}>{error}</div>
           )}
 
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-            <button className="btn btn-secondary btn-sm" onClick={close}>Annuleer</button>
-            <button
-              className="btn btn-primary btn-sm"
-              onClick={handleSave}
-              disabled={!cookieInput.trim() || saving}
-            >
-              {saving ? 'Opslaan…' : 'Opslaan'}
-            </button>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center' }}>
+            {isConnected
+              ? <button className="btn btn-danger btn-sm" onClick={handleDisconnect}>Ontkoppel</button>
+              : <span />}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-secondary btn-sm" onClick={() => { setAdvancedOpen(false); setCookieInput(''); setError('') }}>Annuleer</button>
+              <button
+                className="btn btn-primary btn-sm"
+                onClick={handleManualSave}
+                disabled={!cookieInput.trim() || saving}
+              >
+                {saving ? 'Opslaan…' : 'Opslaan'}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -676,7 +718,7 @@ function PurchaseSettingsSection({ activeUserId, purchaseMethod, autoSyncSales, 
   )
 }
 
-export default function Settings({ data, updateData, onExport, onClearData, activeUserId, vintedCookie, onVintedCookieChange, supabaseUser, onSignOut, purchaseMethod, autoSyncSales, autoSyncPurchases, autoSyncLabels, onUserSettingsChange, onNavigate }) {
+export default function Settings({ data, updateData, onExport, onClearData, activeUserId, vintedCookie, onVintedCookieChange, vintedCookieUpdatedAt, vintedCookieStale, onRefreshVintedCookieStatus, supabaseUser, onSignOut, purchaseMethod, autoSyncSales, autoSyncPurchases, autoSyncLabels, onUserSettingsChange, onNavigate }) {
   const { suppliers, batches, sales } = data
   const documents = data.documents || []
 
@@ -970,6 +1012,9 @@ export default function Settings({ data, updateData, onExport, onClearData, acti
           vintedCookie={vintedCookie}
           onSave={onVintedCookieChange}
           activeUserId={activeUserId}
+          vintedCookieUpdatedAt={vintedCookieUpdatedAt}
+          vintedCookieStale={vintedCookieStale}
+          onRefresh={onRefreshVintedCookieStatus}
         />
 
         {/* Synchronisatie met de extensie — Stap 1 (installatie) + Stap 2

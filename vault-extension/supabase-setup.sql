@@ -102,6 +102,13 @@ ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS auto_sync_labels BOOLEAN DEFA
 ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS auto_create_labels BOOLEAN DEFAULT FALSE;
 ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS onboarding_completed BOOLEAN DEFAULT FALSE;
 
+-- Wanneer de extensie de sessiecookie voor het laatst automatisch heeft
+-- ververst (zie api/save-vinted-cookie.js) — de webapp-Instellingen-pagina
+-- toont hiermee "✓ Automatisch gekoppeld" met tijdstip i.p.v. het vroegere
+-- handmatige plak-veld (te technisch voor niet-technische gebruikers, en een
+-- verlopen cookie faalde stil zonder dit tijdstip om op te vertrouwen).
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS vinted_cookie_updated_at TIMESTAMPTZ;
+
 -- user_settings heeft (verderop in dit bestand) enkel een "authenticated"
 -- RLS-policy — de Chrome-extensie gebruikt de anon-key (geen auth-sessie) en
 -- kon dus vault_sync_requested/vault_sync_progress nooit lezen of resetten.
