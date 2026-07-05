@@ -679,7 +679,17 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'label_url of (transaction_id + x-vinted-cookie) vereist' });
   }
 
-  const response = await fetch(pdfFetchUrl, fetchOptions);
+  let response;
+  try {
+    response = await fetch(pdfFetchUrl, fetchOptions);
+  } catch (e) {
+    // fetch() zelf kan synchroon/async gooien (bv. ongeldige header-waarde,
+    // netwerkfout) — zonder deze try/catch crasht de hele function ongevangen
+    // (Vercel toont dan enkel het nietszeggende "FUNCTION_INVOCATION_FAILED",
+    // zonder de échte foutmelding).
+    console.error('[label] fetch exception:', e.message, 'url:', pdfFetchUrl.slice(0, 80));
+    return res.status(502).json({ error: `Label fetch exception: ${e.message}` });
+  }
   if (!response.ok) {
     // Vinted's eigen foutmelding loggen (niet enkel de status-code) — een 403
     // kan zowel een auth-probleem (verlopen/foutieve cookie) als een normaal
