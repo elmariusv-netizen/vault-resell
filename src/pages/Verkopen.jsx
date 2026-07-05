@@ -197,13 +197,20 @@ function PhotoPopup({ urls, onClose }) {
 }
 
 // ── Order detail popup ─────────────────────────────────────────────────────
-function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave, onUnlinkSku }) {
+function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave, onSaveFields, onUnlinkSku }) {
   const [downloading, setDownloading] = useState(false)
   const [downloaded, setDownloaded]   = useState(false)
   const [skuEditing,  setSkuEditing]  = useState(false)
   const [skuVal,      setSkuVal]      = useState(order.sku_ref || '')
   const [cogsEditing, setCogsEditing] = useState(false)
   const [cogsVal,     setCogsVal]     = useState(String(order.cost_price ?? ''))
+  const [photoUploading, setPhotoUploading] = useState(false)
+  // order (prop) is een snapshot uit vtOrders op het moment dat de modal
+  // openging — een upload via onSaveFields werkt dat vtOrders-record wél bij,
+  // maar ververst deze snapshot niet automatisch. Lokale optimistic state
+  // (zelfde patroon als skuVal/cogsVal hierboven) geeft meteen visuele
+  // feedback na uploaden, zonder op een parent-refresh te moeten wachten.
+  const [uploadedPhotos, setUploadedPhotos] = useState(null)
 
   useEffect(() => { setSkuVal(order.sku_ref || '') },       [order.sku_ref])
   useEffect(() => { setCogsVal(String(order.cost_price ?? '')) }, [order.cost_price])
@@ -217,12 +224,33 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave, 
   const hasSkuLink = !!(order.sku_ref || order.cost_price != null || order.batch_id)
 
   const photoUrls = (() => { try { return JSON.parse(order.photo_urls || '[]') } catch { return [] } })()
-  const allPhotos = photoUrls.length ? photoUrls : (order.photo_url ? [order.photo_url] : [])
+  const allPhotos = uploadedPhotos || (photoUrls.length ? photoUrls : (order.photo_url ? [order.photo_url] : []))
   const [photoIdx, setPhotoIdx] = useState(0)
   useEffect(() => { setPhotoIdx(0) }, [order.id])
   const mainPhoto = allPhotos[photoIdx] || null
   const prevPhoto = () => setPhotoIdx(i => (i - 1 + allPhotos.length) % allPhotos.length)
   const nextPhoto = () => setPhotoIdx(i => (i + 1) % allPhotos.length)
+  const [photoHover, setPhotoHover] = useState(false)
+
+  const uploadPhotos = async (files) => {
+    if (!files.length) return
+    setPhotoUploading(true)
+    const urls = []
+    for (const file of files) {
+      const ext  = file.name.split('.').pop()
+      const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+      const { error } = await supabase.storage.from('order-photos').upload(path, file)
+      if (!error) {
+        const { data } = supabase.storage.from('order-photos').getPublicUrl(path)
+        urls.push(data.publicUrl)
+      }
+    }
+    if (urls.length) {
+      setUploadedPhotos(urls)
+      onSaveFields?.(order.id, { photo_url: urls[0], photo_urls: JSON.stringify(urls) })
+    }
+    setPhotoUploading(false)
+  }
 
   const downloadLabel = async () => {
     if (!vintedCookie) { alert('Geen Vinted cookie — koppel je account in Instellingen.'); return }
@@ -280,6 +308,8 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave, 
           {mainPhoto ? (
             <div
               onClick={() => onPhotoClick([...allPhotos.slice(photoIdx), ...allPhotos.slice(0, photoIdx)])}
+              onMouseEnter={() => setPhotoHover(true)}
+              onMouseLeave={() => setPhotoHover(false)}
               style={{ width: '100%', height: 300, cursor: 'zoom-in', background: 'var(--bg-2)', overflow: 'hidden' }}
             >
               <img src={mainPhoto} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -287,11 +317,11 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave, 
                 <>
                   <button
                     onClick={e => { e.stopPropagation(); prevPhoto() }}
-                    style={{ position: 'absolute', top: '50%', left: 12, transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.5)', border: 'none', color: '#fff', borderRadius: '50%', width: 32, height: 32, fontSize: 18, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}
+                    style={{ position: 'absolute', top: '50%', left: 12, transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.5)', border: 'none', color: '#fff', borderRadius: '50%', width: 32, height: 32, fontSize: 18, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1, opacity: photoHover ? 1 : 0, transition: 'opacity 0.15s' }}
                   >‹</button>
                   <button
                     onClick={e => { e.stopPropagation(); nextPhoto() }}
-                    style={{ position: 'absolute', top: '50%', right: 12, transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.5)', border: 'none', color: '#fff', borderRadius: '50%', width: 32, height: 32, fontSize: 18, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}
+                    style={{ position: 'absolute', top: '50%', right: 12, transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.5)', border: 'none', color: '#fff', borderRadius: '50%', width: 32, height: 32, fontSize: 18, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1, opacity: photoHover ? 1 : 0, transition: 'opacity 0.15s' }}
                   >›</button>
                   <span style={{ position: 'absolute', top: 12, left: 12, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: 11, padding: '3px 10px', borderRadius: 20 }}>
                     {photoIdx + 1}/{allPhotos.length}
@@ -301,7 +331,21 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave, 
               <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to bottom, transparent 55%, rgba(0,0,0,0.55))', pointerEvents: 'none' }} />
             </div>
           ) : (
-            <div style={{ height: 80, background: 'var(--bg-2)' }} />
+            <div style={{ height: 120, background: 'var(--bg-2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, cursor: photoUploading ? 'default' : 'pointer', color: 'var(--text-3)' }}>
+                <span style={{ fontSize: 24 }}>{photoUploading ? '⏳' : '📷'}</span>
+                <span style={{ fontSize: 12, fontWeight: 600 }}>{photoUploading ? 'Uploaden…' : "Foto's toevoegen"}</span>
+                {!photoUploading && (
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    style={{ display: 'none' }}
+                    onChange={e => uploadPhotos(Array.from(e.target.files || []))}
+                  />
+                )}
+              </label>
+            </div>
           )}
           <button
             onClick={onClose}
@@ -1017,22 +1061,29 @@ function VintedOrderRow({ order, onSave, onSaveFields, onBulkConfirm, onDismiss,
                   {photoUploading ? '⏳' : '📦'}
                 </div>
                 {!photoUploading && (
-                  <label style={{ position: 'absolute', bottom: 6, right: 6, background: 'var(--bg-2)', border: '1px solid var(--border-strong)', color: 'var(--text-2)', borderRadius: '50%', width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 16, lineHeight: 1, userSelect: 'none' }} title="Foto toevoegen">
+                  <label style={{ position: 'absolute', bottom: 6, right: 6, background: 'var(--bg-2)', border: '1px solid var(--border-strong)', color: 'var(--text-2)', borderRadius: '50%', width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 16, lineHeight: 1, userSelect: 'none' }} title="Foto's toevoegen">
                     +
                     <input
                       type="file"
                       accept="image/*"
+                      multiple
                       style={{ display: 'none' }}
                       onChange={async e => {
-                        const file = e.target.files?.[0]
-                        if (!file) return
+                        const files = Array.from(e.target.files || [])
+                        if (!files.length) return
                         setPhotoUploading(true)
-                        const ext  = file.name.split('.').pop()
-                        const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
-                        const { error } = await supabase.storage.from('order-photos').upload(path, file)
-                        if (!error) {
-                          const { data } = supabase.storage.from('order-photos').getPublicUrl(path)
-                          onSave(order.id, 'photo_url', data.publicUrl)
+                        const urls = []
+                        for (const file of files) {
+                          const ext  = file.name.split('.').pop()
+                          const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+                          const { error } = await supabase.storage.from('order-photos').upload(path, file)
+                          if (!error) {
+                            const { data } = supabase.storage.from('order-photos').getPublicUrl(path)
+                            urls.push(data.publicUrl)
+                          }
+                        }
+                        if (urls.length) {
+                          onSaveFields(order.id, { photo_url: urls[0], photo_urls: JSON.stringify(urls) })
                         }
                         setPhotoUploading(false)
                       }}
@@ -2139,6 +2190,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
           vintedCookie={vintedCookie}
           onPhotoClick={(urls) => { setOrderDetail(null); setPhotoPopup(urls) }}
           onSave={saveVtField}
+          onSaveFields={saveVtFields}
           onUnlinkSku={id => { unlinkSku(id); setOrderDetail(null) }}
         />
       )}
