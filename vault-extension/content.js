@@ -168,6 +168,20 @@
     }).filter(o => o.itemId);
   }
 
+  // Vinted's wardrobe-item `status` veld is bij dit endpoint altijd een lege
+  // string ("") — geen bruikbaar signaal. De échte online/actief-staat zit in
+  // de losse boolean-velden hieronder (bevestigd via live wardrobe-response):
+  // is_draft (nog niet gepubliceerd), is_closed (verkocht/afgesloten, met
+  // item_closing_action zoals "sold" erbij) en is_hidden (door de gebruiker
+  // verborgen). Enkel wanneer geen van deze drie true is, staat een listing
+  // écht online op Vinted.
+  function wardrobeItemStatus(o) {
+    if (o.is_draft)  return 'draft';
+    if (o.is_closed) return o.item_closing_action || 'closed';
+    if (o.is_hidden) return 'hidden';
+    return 'active';
+  }
+
   function mapWardrobeItem(o) {
     return {
       itemId: String(o.id || ''),
@@ -175,7 +189,7 @@
       photo:  hiPhoto(o.photos?.[0]?.url || o.photo?.url || null),
       price:  parseFloat(o.price?.amount || o.price || 0),
       views:  o.view_count || 0,
-      status: o.status || 'active',
+      status: wardrobeItemStatus(o),
       date:   (o.created_at || '').slice(0, 10),
       url:    o.url || `https://www.vinted.be/items/${o.id}`,
     };
@@ -203,6 +217,13 @@
           page++;
         }
         console.log('[Vault] wardrobe total:', items.length, 'items');
+        // Enkel écht online listings tonen in de Listings-tab — draft/
+        // verkocht/verborgen items horen daar niet in (zie wardrobeItemStatus
+        // hierboven), anders staan bv. verkochte artikelen nog als "Actief"
+        // tussen de rest.
+        const beforeFilter = items.length;
+        items = items.filter(it => it.status === 'active');
+        console.log('[Vault] wardrobe na actief-filter:', items.length, '/', beforeFilter);
       }
     } catch (e) { console.warn('[Vault] wardrobe API mislukt:', e.message); }
 
