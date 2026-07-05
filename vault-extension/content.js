@@ -1364,6 +1364,19 @@
   }
 
   // ── Tab: Listings ──────────────────────────────────────────────────────────
+  // "Heruploaden" gebruikt bewust Vinted's EIGEN "Vergelijkbaar artikel
+  // plaatsen"-functie i.p.v. een zelfgebouwde item-creatie via de
+  // (ongedocumenteerde) POST /api/v2/items — dat zou gokken naar verplichte
+  // velden (catalog/brand/size-ids) en een foto-herupload-flow vereisen die
+  // niet te verifiëren is zonder een echte advertentie te publiceren. Vinted
+  // staat zelf ook geen automatische foto-duplicatie toe in die flow (bewuste
+  // fraude-preventie) — de gebruiker moet de foto's zelf opnieuw intikken/
+  // slepen, wat met de originele foto's bij de hand een kwestie van seconden is.
+  function openRelist(o) {
+    window.open(o.url, '_blank');
+    toast(`Advertentie geopend — gebruik Vinted's "···"-menu → "Vergelijkbaar artikel plaatsen" om titel/prijs/categorie voor te vullen en de foto's opnieuw toe te voegen.`);
+  }
+
   async function tabZoekertjes(content, footer) {
     const items = await getListings();
     content.innerHTML = '';
@@ -1375,7 +1388,12 @@
         ? pill('Actief', '#15803d', '#dcfce7')
         : pill(o.status, '#6b7280', '#f3f4f6');
       const views = el('div', `font-size:11px;color:${D.sub};flex-shrink:0`, o.views ? `👁 ${o.views}` : '');
-      const r = rowDiv([photoThumb(o.photo), textStack(o.title, fmtD(o.date)), views, priceTag(o.price), statusBadge], i < items.length - 1);
+      const relistBtn = el('button',
+        'flex-shrink:0;border:none;background:none;font-size:16px;padding:4px 6px;cursor:pointer;line-height:1;border-radius:8px',
+        '🔁');
+      relistBtn.title = 'Heruploaden — dezelfde titel/prijs/foto’s opnieuw plaatsen via Vinted';
+      relistBtn.addEventListener('click', (e) => { e.stopPropagation(); openRelist(o); });
+      const r = rowDiv([photoThumb(o.photo), textStack(o.title, fmtD(o.date)), views, priceTag(o.price), statusBadge, relistBtn], i < items.length - 1);
       r.style.cursor = 'pointer';
       r.addEventListener('click', () => window.open(o.url, '_blank'));
       return r;
