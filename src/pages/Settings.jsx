@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { genId, getNextSkuLabel, formatSku, formatDate, formatDateTimeLong } from '../utils/skuUtils'
+import { genId, getNextSkuLabel, formatSku, formatDate } from '../utils/skuUtils'
 import { supabase } from '../utils/supabase'
 import { PurchaseMethodPicker, AutoSyncToggleRow } from './Onboarding'
 
@@ -24,21 +24,21 @@ function Mono({ children }) {
   )
 }
 
-// ── Vinted-sessiecookie — sinds de automatische extensie-refresh (zie
-// uploadVintedCookie() in content.js/background.js + api/save-vinted-
-// cookie.js) is handmatig plakken niet langer de normale flow: de extensie
-// leest de cookie zelf uit op vinted.be (cookies-permission + host_permission
-// staan al in manifest.json) en stuurt 'm buiten React om rechtstreeks naar
-// Supabase. Deze component toont enkel nog een STATUS (✓ automatisch
-// gekoppeld met tijdstip, of ⚠ extensie niet actief) — het oude "F12 →
-// console → plakken"-pad blijft enkel als verborgen fallback, voor het geval
-// iemand de extensie niet kan/wil installeren.
-function VintedKoppeling({ vintedCookie, onSave, activeUserId, vintedCookieUpdatedAt, vintedCookieStale, onRefresh }) {
+// ── Vinted-sessiecookie — de extensie leest 'm zelf uit op vinted.be en
+// uploadt 'm automatisch (zie uploadVintedCookie() in content.js/
+// background.js + api/save-vinted-cookie.js), bevestigd werkend. Dit is dus
+// bewust GEEN prominente kaart meer — enkel een compacte statusregel onderin
+// de extensie-sectie hieronder. Niet-technische gebruikers zien in het
+// normale geval vrijwel niets; enkel wanneer er écht een probleem is (geen
+// verse cookie ontvangen, zie extensionActive hieronder) wordt het een
+// opvallende waarschuwing met duidelijke instructie. Het oude "F12 →
+// console → plakken"-pad blijft enkel als klein inklapbaar linkje, voor het
+// geval iemand de extensie niet kan/wil installeren.
+function VintedCookieStatus({ vintedCookie, onSave, activeUserId, vintedCookieUpdatedAt, vintedCookieStale, onRefresh }) {
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [cookieInput, setCookieInput] = useState('')
   const [saving, setSaving]       = useState(false)
   const [error, setError]         = useState('')
-  const [refreshing, setRefreshing] = useState(false)
 
   const isConnected = !!vintedCookie
   // "Actief" betekent hier: een cookie aanwezig ÉN recent genoeg ververst
@@ -46,12 +46,9 @@ function VintedKoppeling({ vintedCookie, onSave, activeUserId, vintedCookieUpdat
   // aanwezige maar oude cookie (bv. van vóór deze migratie, handmatig
   // geplakt) telt bewust niet mee als "extensie actief".
   const extensionActive = isConnected && vintedCookieUpdatedAt && !vintedCookieStale
-
-  const handleRefreshNow = async () => {
-    if (!onRefresh || refreshing) return
-    setRefreshing(true)
-    try { await onRefresh() } finally { setRefreshing(false) }
-  }
+  const timeShort = vintedCookieUpdatedAt
+    ? new Date(vintedCookieUpdatedAt).toLocaleTimeString('nl-BE', { hour: '2-digit', minute: '2-digit' })
+    : null
 
   const handleManualSave = async () => {
     const val = cookieInput.trim()
@@ -117,54 +114,43 @@ function VintedKoppeling({ vintedCookie, onSave, activeUserId, vintedCookieUpdat
   ]
 
   return (
-    <div className="glass-card">
-      {/* Header row */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-        <div style={{
-          width: 42, height: 42, borderRadius: 12, flexShrink: 0,
-          background: extensionActive ? 'rgba(0,255,136,0.1)' : 'rgba(245,158,11,0.1)',
-          border: `1px solid ${extensionActive ? 'rgba(0,255,136,0.3)' : 'rgba(245,158,11,0.3)'}`,
-          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22,
-        }}>
-          🛒
-        </div>
-
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 700, fontSize: 15 }}>Verzendlabels (Vinted-sessie)</div>
-          {extensionActive ? (
-            <div style={{ fontSize: 12, color: 'var(--green)', marginTop: 2 }}>
-              ✓ Automatisch gekoppeld via extensie
-            </div>
-          ) : (
-            <div style={{ fontSize: 12, color: 'var(--yellow)', marginTop: 2 }}>
-              ⚠ Extensie niet actief — open Vinted in Chrome met de Vault-extensie
-            </div>
-          )}
-          <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4 }}>
-            {vintedCookieUpdatedAt
-              ? `Laatst vernieuwd: ${formatDateTimeLong(vintedCookieUpdatedAt)}`
-              : 'Nodig om verzendlabels op te halen — verschijnt automatisch zodra de extensie actief is.'}
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', gap: 8, flexShrink: 0, alignItems: 'center' }}>
-          <button className="btn btn-ghost btn-sm" onClick={handleRefreshNow} disabled={refreshing || !onRefresh}>
-            {refreshing ? 'Checken…' : '↻ Check nu'}
+    <div style={{ marginTop: 10 }}>
+      {extensionActive ? (
+        /* Normale toestand — vrijwel onzichtbaar: één grijze regel + een
+           klein linkje, geen kaart, geen actieknoppen. */
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
+            Verzendlabels: <span style={{ color: 'var(--green)', fontWeight: 600 }}>✓ actief</span>
+            {timeShort ? ` (laatst vernieuwd ${timeShort})` : ''}
+          </span>
+          <button
+            onClick={() => setAdvancedOpen(v => !v)}
+            style={{ background: 'none', border: 'none', padding: 0, fontSize: 11, color: 'var(--text-3)', textDecoration: 'underline', cursor: 'pointer', fontFamily: 'inherit' }}
+          >
+            Geavanceerd
           </button>
         </div>
-      </div>
-
-      {/* Geavanceerd — handmatige fallback, enkel nodig als de extensie niet
-          gebruikt kan/wil worden */}
-      <div style={{ marginTop: 14 }}>
-        <button
-          className="btn btn-ghost btn-sm"
-          onClick={() => setAdvancedOpen(v => !v)}
-          style={{ color: 'var(--text-3)', fontSize: 11 }}
-        >
-          {advancedOpen ? '▾' : '▸'} Geavanceerd: handmatig koppelen (zonder extensie)
-        </button>
-      </div>
+      ) : (
+        /* Probleem — enkel dan opvallend, met duidelijke instructie. */
+        <div style={{
+          display: 'flex', alignItems: 'flex-start', gap: 10, padding: '12px 14px',
+          background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 10,
+        }}>
+          <span style={{ fontSize: 16, lineHeight: 1.4 }}>⚠</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--yellow)' }}>Verzendlabels niet gekoppeld</div>
+            <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 3, lineHeight: 1.6 }}>
+              Open <strong>vinted.be</strong> in Chrome met de Vault-extensie actief — de sessie wordt dan automatisch opgepikt, geen verdere actie nodig.
+            </div>
+            <button
+              onClick={() => setAdvancedOpen(v => !v)}
+              style={{ background: 'none', border: 'none', padding: 0, marginTop: 6, fontSize: 11, color: 'var(--text-3)', textDecoration: 'underline', cursor: 'pointer', fontFamily: 'inherit' }}
+            >
+              {advancedOpen ? '▾' : '▸'} Geavanceerd: handmatig koppelen (zonder extensie)
+            </button>
+          </div>
+        </div>
+      )}
 
       {advancedOpen && (
         <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -1002,21 +988,6 @@ export default function Settings({ data, updateData, onExport, onClearData, acti
           onUserSettingsChange={onUserSettingsChange}
         />
 
-        {/* Verzendlabels — onafhankelijk van de extensie-koppeling hieronder:
-            deze sessie-cookie wordt enkel gebruikt om labels rechtstreeks bij
-            Vinted op te halen (Labels.jsx/Verkopen.jsx/api/label.js). */}
-        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-2)', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '8px 2px' }}>
-          Verzendlabels
-        </div>
-        <VintedKoppeling
-          vintedCookie={vintedCookie}
-          onSave={onVintedCookieChange}
-          activeUserId={activeUserId}
-          vintedCookieUpdatedAt={vintedCookieUpdatedAt}
-          vintedCookieStale={vintedCookieStale}
-          onRefresh={onRefreshVintedCookieStatus}
-        />
-
         {/* Synchronisatie met de extensie — Stap 1 (installatie) + Stap 2
             (account koppelen) horen samen: de account-koppeling bepaalt aan
             welk Vault-account de extensie gesyncte orders toewijst. */}
@@ -1028,6 +999,18 @@ export default function Settings({ data, updateData, onExport, onClearData, acti
         {extInstalled && (
           <VintedAccountLink supabaseUser={supabaseUser} />
         )}
+
+        {/* Verzendlabels-cookie — compacte statusregel, geen kaart (zie
+            VintedCookieStatus hierboven): de extensie doet dit al volledig
+            automatisch, dus normaal is er niets om naar te kijken. */}
+        <VintedCookieStatus
+          vintedCookie={vintedCookie}
+          onSave={onVintedCookieChange}
+          activeUserId={activeUserId}
+          vintedCookieUpdatedAt={vintedCookieUpdatedAt}
+          vintedCookieStale={vintedCookieStale}
+          onRefresh={onRefreshVintedCookieStatus}
+        />
 
         {/* Platforms */}
         <PlatformsSection />
