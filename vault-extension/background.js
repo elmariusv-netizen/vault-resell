@@ -50,7 +50,7 @@ async function getVintedHeaders() {
 const SUPABASE_URL = 'https://dusffpxcheojvjwuqgwo.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR1c2ZmcHhjaGVvanZqd3VxZ3dvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIxMjE0MjIsImV4cCI6MjA5NzY5NzQyMn0.C3pG5eqOBzusDzkCMA-oI4IGPdbaIpfX-fkycGv5ud8';
 
-async function handleVaultLink(linkId, vintedUserId) {
+async function handleVaultLink(linkId, vintedUserId, vintedLogin, vintedPhoto) {
   try {
     const hdrs = { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` };
 
@@ -65,11 +65,18 @@ async function handleVaultLink(linkId, vintedUserId) {
     const { owner_id, linked } = rows[0];
     if (linked) { console.log('[Vault] VAULT_LINK: al eerder gekoppeld'); return { success: true, already: true }; }
 
-    // 2. Upsert vinted_account_links
+    // 2. Upsert vinted_account_links — login/photo enkel meesturen als
+    // content.js ze kon ophalen, zodat Instellingen.jsx's VintedAccountLink
+    // het echte profiel (avatar + gebruikersnaam) kan tonen i.p.v. de
+    // generieke "Gekoppeld"-tekst.
     const linkOk = await fetch(`${SUPABASE_URL}/rest/v1/vinted_account_links`, {
       method: 'POST',
       headers: { ...hdrs, 'Content-Type': 'application/json', 'Prefer': 'return=minimal,resolution=merge-duplicates' },
-      body: JSON.stringify({ vinted_user_id: vintedUserId, owner_id }),
+      body: JSON.stringify({
+        vinted_user_id: vintedUserId, owner_id,
+        ...(vintedLogin ? { vinted_login: vintedLogin } : {}),
+        ...(vintedPhoto ? { vinted_photo: vintedPhoto } : {}),
+      }),
     });
     if (!linkOk.ok) {
       const err = await linkOk.text();
@@ -481,7 +488,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message.type === 'VAULT_LINK') {
-    handleVaultLink(message.linkId, message.vintedUserId).then(sendResponse);
+    handleVaultLink(message.linkId, message.vintedUserId, message.vintedLogin, message.vintedPhoto).then(sendResponse);
     return true;
   }
   if (message.type === 'SYNC_ORDER') {
@@ -559,12 +566,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // technisch voor niet-technische gebruikers en stil falend zodra de sessie
   // verloopt. De cookie zelf wordt hier ENKEL geteld, nooit gelogd.
   if (message.type === 'UPLOAD_VINTED_COOKIE') {
-    uploadVintedCookie(message.vintedUserId).then(sendResponse);
+    uploadVintedCookie(message.vintedUserId, message.vintedLogin, message.vintedPhoto).then(sendResponse);
     return true;
   }
 });
 
-async function uploadVintedCookie(vintedUserId) {
+async function uploadVintedCookie(vintedUserId, vintedLogin, vintedPhoto) {
   if (!vintedUserId) return { success: false, error: 'no_vinted_user_id' };
   try {
     // Zelfde chrome.cookies.getAll-aanpak als fetchLabelViaProxy() hierboven —
@@ -576,10 +583,17 @@ async function uploadVintedCookie(vintedUserId) {
     if (!cookies.length) return { success: false, error: 'no_cookies' };
     const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ');
 
+    // login/photo meesturen zodat api/save-vinted-cookie.js het profiel op
+    // vinted_account_links kan backfillen — ook voor accounts die al vóór
+    // deze feature gekoppeld waren (zie handleVaultLink hierboven, dat dit
+    // enkel bij een NIEUWE koppeling zet).
     const res = await fetch('https://vault-resell.vercel.app/api/save-vinted-cookie', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ vinted_user_id: vintedUserId, cookie: cookieStr }),
+      body: JSON.stringify({
+        vinted_user_id: vintedUserId, cookie: cookieStr,
+        vinted_login: vintedLogin || undefined, vinted_photo: vintedPhoto || undefined,
+      }),
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) {

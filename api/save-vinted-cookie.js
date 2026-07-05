@@ -19,7 +19,7 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end()
   if (req.method !== 'POST') return res.status(405).json({ error: 'method not allowed' })
 
-  const { vinted_user_id, cookie } = req.body || {}
+  const { vinted_user_id, cookie, vinted_login, vinted_photo } = req.body || {}
   if (!vinted_user_id || !cookie) {
     return res.status(400).json({ error: 'vinted_user_id en cookie vereist' })
   }
@@ -71,6 +71,25 @@ export default async function handler(req, res) {
       const err = await upsertRes.text()
       console.error('[save-vinted-cookie] upsert fout:', upsertRes.status, err.slice(0, 200))
       return res.status(500).json({ error: 'opslaan mislukt' })
+    }
+
+    // Best-effort profiel-backfill (login + avatar) op vinted_account_links —
+    // vooral relevant voor accounts die al vóór deze feature gekoppeld
+    // waren (handleVaultLink in background.js zet dit enkel bij een NIEUWE
+    // koppeling). Nooit de cookie-save laten falen op een probleem hier.
+    if (vinted_login || vinted_photo) {
+      try {
+        await fetch(`${SUPABASE_URL}/rest/v1/vinted_account_links?vinted_user_id=eq.${encodeURIComponent(vinted_user_id)}`, {
+          method: 'PATCH',
+          headers: { ...hdrs, 'Prefer': 'return=minimal' },
+          body: JSON.stringify({
+            ...(vinted_login ? { vinted_login } : {}),
+            ...(vinted_photo ? { vinted_photo } : {}),
+          }),
+        })
+      } catch (e) {
+        console.warn('[save-vinted-cookie] profiel-backfill mislukt:', e.message)
+      }
     }
 
     return res.status(200).json({ success: true, updated_at: updatedAt })

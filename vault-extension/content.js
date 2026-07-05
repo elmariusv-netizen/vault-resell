@@ -80,17 +80,31 @@
     return r.json();
   }
 
-  // ── Vinted userId (dynamisch, gecached) ───────────────────────────────────
-  let _cachedVintedUserId = null;
-  async function getVintedUserId() {
-    if (_cachedVintedUserId) return _cachedVintedUserId;
+  // ── Vinted-profiel (dynamisch, gecached) — id/login/avatar in 1 fetch. De
+  // webapp toont login+avatar bij het gekoppelde account (VintedAccountLink
+  // in Settings.jsx) i.p.v. enkel "Gekoppeld" — VAULT_LINK en
+  // uploadVintedCookie() sturen dit mee zodat ook al-gekoppelde accounts het
+  // bij hun volgende Vinted-bezoek automatisch backfillen.
+  let _cachedVintedProfile = null;
+  async function getVintedProfile() {
+    if (_cachedVintedProfile) return _cachedVintedProfile;
     try {
       const d = await vGet('/api/v2/users/current');
-      _cachedVintedUserId = d.user?.id ? String(d.user.id) : null;
+      if (d.user?.id) {
+        _cachedVintedProfile = {
+          id:    String(d.user.id),
+          login: d.user.login || null,
+          photo: hiPhoto(d.user.photo?.url || d.user.photo?.full_size_url || null),
+        };
+      }
     } catch (e) {
-      console.warn('[Vault] getVintedUserId mislukt:', e.message);
+      console.warn('[Vault] getVintedProfile mislukt:', e.message);
     }
-    return _cachedVintedUserId;
+    return _cachedVintedProfile;
+  }
+  async function getVintedUserId() {
+    const p = await getVintedProfile();
+    return p?.id || null;
   }
 
   // Parse items from a document — tries __NEXT_DATA__ JSON first, then DOM cards
@@ -2122,10 +2136,18 @@
   // uitlezen en uploaden; de cookie-waarde komt hier nooit in content.js
   // terecht en wordt dus ook nooit vanuit dit bestand gelogd.
   async function uploadVintedCookie() {
-    const vintedUserId = await getVintedUserId();
-    if (!vintedUserId) return;
+    const profile = await getVintedProfile();
+    if (!profile?.id) return;
     try {
-      const res = await sendMsg({ type: 'UPLOAD_VINTED_COOKIE', vintedUserId });
+      // login/photo meesturen zodat ook een account dat vóór deze feature al
+      // gekoppeld was, het profiel bij het eerstvolgende bezoek backfillt —
+      // zie api/save-vinted-cookie.js.
+      const res = await sendMsg({
+        type: 'UPLOAD_VINTED_COOKIE',
+        vintedUserId: profile.id,
+        vintedLogin: profile.login,
+        vintedPhoto: profile.photo,
+      });
       if (!res?.success) console.warn('[Vault] cookie-upload mislukt:', res?.error);
     } catch (e) {
       console.warn('[Vault] cookie-upload exception:', e.message);
@@ -2144,12 +2166,15 @@
     if (!linkId) return;
     console.log('[Vault] vault_link gevonden:', linkId);
 
-    const userId = await getVintedUserId();
-    if (!userId) { console.warn('[Vault] vault_link: kon Vinted userId niet ophalen'); return; }
+    const profile = await getVintedProfile();
+    if (!profile?.id) { console.warn('[Vault] vault_link: kon Vinted userId niet ophalen'); return; }
 
-    const result = await sendMsg({ type: 'VAULT_LINK', linkId, vintedUserId: userId }, 10000);
+    const result = await sendMsg({
+      type: 'VAULT_LINK', linkId,
+      vintedUserId: profile.id, vintedLogin: profile.login, vintedPhoto: profile.photo,
+    }, 10000);
     if (result?.success) {
-      console.log('[Vault] vault_link: koppeling voltooid voor userId', userId);
+      console.log('[Vault] vault_link: koppeling voltooid voor userId', profile.id);
       toast('✓ Vinted account gekoppeld aan Vault');
     } else {
       console.error('[Vault] vault_link mislukt:', result?.error);

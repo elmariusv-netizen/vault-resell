@@ -46,9 +46,6 @@ function VintedCookieStatus({ vintedCookie, onSave, activeUserId, vintedCookieUp
   // aanwezige maar oude cookie (bv. van vóór deze migratie, handmatig
   // geplakt) telt bewust niet mee als "extensie actief".
   const extensionActive = isConnected && vintedCookieUpdatedAt && !vintedCookieStale
-  const timeShort = vintedCookieUpdatedAt
-    ? new Date(vintedCookieUpdatedAt).toLocaleTimeString('nl-BE', { hour: '2-digit', minute: '2-digit' })
-    : null
 
   const handleManualSave = async () => {
     const val = cookieInput.trim()
@@ -113,44 +110,32 @@ function VintedCookieStatus({ vintedCookie, onSave, activeUserId, vintedCookieUp
     <span>Plak het resultaat hieronder — dit bevat automatisch de XSRF-TOKEN en alle andere vereiste cookies</span>,
   ]
 
+  // Alles werkt → helemaal niets tonen (geen kaart, geen statusregel, geen
+  // "Check nu"). Enkel bij een écht probleem (nooit een cookie ontvangen, of
+  // de laatste verversing >24u oud, zie vintedCookieStale in App.jsx)
+  // verschijnt hier een waarschuwing — verdwijnt weer vanzelf zodra er een
+  // verse cookie binnenkomt.
+  if (extensionActive) return null
+
   return (
     <div style={{ marginTop: 10 }}>
-      {extensionActive ? (
-        /* Normale toestand — vrijwel onzichtbaar: één grijze regel + een
-           klein linkje, geen kaart, geen actieknoppen. */
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
-            Verzendlabels: <span style={{ color: 'var(--green)', fontWeight: 600 }}>✓ actief</span>
-            {timeShort ? ` (laatst vernieuwd ${timeShort})` : ''}
-          </span>
+      <div style={{
+        display: 'flex', alignItems: 'flex-start', gap: 10, padding: '12px 14px',
+        background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 10,
+      }}>
+        <span style={{ fontSize: 16, lineHeight: 1.4 }}>⚠</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--yellow)' }}>
+            Verzendlabels werken momenteel niet — open vinted.be in Chrome met de Vault-extensie
+          </div>
           <button
             onClick={() => setAdvancedOpen(v => !v)}
-            style={{ background: 'none', border: 'none', padding: 0, fontSize: 11, color: 'var(--text-3)', textDecoration: 'underline', cursor: 'pointer', fontFamily: 'inherit' }}
+            style={{ background: 'none', border: 'none', padding: 0, marginTop: 6, fontSize: 11, color: 'var(--text-3)', textDecoration: 'underline', cursor: 'pointer', fontFamily: 'inherit' }}
           >
-            Geavanceerd
+            {advancedOpen ? '▾' : '▸'} Geavanceerd: handmatig koppelen (zonder extensie)
           </button>
         </div>
-      ) : (
-        /* Probleem — enkel dan opvallend, met duidelijke instructie. */
-        <div style={{
-          display: 'flex', alignItems: 'flex-start', gap: 10, padding: '12px 14px',
-          background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 10,
-        }}>
-          <span style={{ fontSize: 16, lineHeight: 1.4 }}>⚠</span>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--yellow)' }}>Verzendlabels niet gekoppeld</div>
-            <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 3, lineHeight: 1.6 }}>
-              Open <strong>vinted.be</strong> in Chrome met de Vault-extensie actief — de sessie wordt dan automatisch opgepikt, geen verdere actie nodig.
-            </div>
-            <button
-              onClick={() => setAdvancedOpen(v => !v)}
-              style={{ background: 'none', border: 'none', padding: 0, marginTop: 6, fontSize: 11, color: 'var(--text-3)', textDecoration: 'underline', cursor: 'pointer', fontFamily: 'inherit' }}
-            >
-              {advancedOpen ? '▾' : '▸'} Geavanceerd: handmatig koppelen (zonder extensie)
-            </button>
-          </div>
-        </div>
-      )}
+      </div>
 
       {advancedOpen && (
         <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -412,6 +397,7 @@ function VintedAccountLink({ supabaseUser }) {
   const [waiting, setWaiting]     = useState(false)
   const [pendingId, setPendingId] = useState(null)
   const [error, setError]         = useState('')
+  const [profile, setProfile]     = useState(null)    // { login, photo } | null — zie effect hieronder
 
   // Controleer of er al een koppeling is
   useEffect(() => {
@@ -423,6 +409,27 @@ function VintedAccountLink({ supabaseUser }) {
       .maybeSingle()
       .then(({ data }) => setLinked(!!data?.vinted_user_id))
   }, [supabaseUser?.id])
+
+  // Profiel (login/avatar) — losse fetch i.p.v. mee in de query hierboven:
+  // vinted_login/vinted_photo zijn nieuwe kolommen (zie supabase-setup.sql)
+  // die pas bestaan ná een handmatige migratie. Eén query die een onbekende
+  // kolom opvraagt faalt in zijn geheel (PostgREST 400) — dat mag de
+  // "linked"-detectie hierboven nooit meesleuren, dus enkel het profiel
+  // blijft dan leeg (val terug op de generieke tekst).
+  useEffect(() => {
+    if (!supabaseUser || !linked) return
+    supabase
+      .from('vinted_account_links')
+      .select('vinted_login, vinted_photo')
+      .eq('owner_id', supabaseUser.id)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (error) { console.warn('[Vault] Vinted-profiel ophalen mislukt:', error.message); return }
+        if (data?.vinted_login || data?.vinted_photo) {
+          setProfile({ login: data.vinted_login || null, photo: data.vinted_photo || null })
+        }
+      })
+  }, [supabaseUser?.id, linked])
 
   // Poll pending_links elke 2s zolang we wachten
   useEffect(() => {
@@ -459,24 +466,37 @@ function VintedAccountLink({ supabaseUser }) {
     setLinked(false)
     setWaiting(false)
     setPendingId(null)
+    setProfile(null)
   }
 
   const iconColor = linked ? 'rgba(0,255,136,0.1)' : waiting ? 'rgba(99,102,241,0.1)' : 'var(--bg-2)'
   const iconBorder = linked ? 'rgba(0,255,136,0.3)' : waiting ? 'rgba(99,102,241,0.3)' : 'var(--border)'
+  // Val terug op het generieke 🔗-icoon/tekst zodra profiel(login/avatar)
+  // (nog) niet beschikbaar is — bv. vóór de migratie, of vóór het eerste
+  // Vinted-bezoek na het koppelen.
+  const hasProfile = linked && (profile?.login || profile?.photo)
 
   return (
     <div className="glass-card">
       <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-        <div style={{
-          width: 42, height: 42, borderRadius: 12, flexShrink: 0,
-          background: iconColor, border: `1px solid ${iconBorder}`,
-          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22,
-        }}>🔗</div>
+        {hasProfile && profile.photo ? (
+          <img
+            src={profile.photo} alt=""
+            style={{ width: 42, height: 42, borderRadius: 12, flexShrink: 0, objectFit: 'cover', border: '1px solid rgba(0,255,136,0.3)' }}
+          />
+        ) : (
+          <div style={{
+            width: 42, height: 42, borderRadius: 12, flexShrink: 0,
+            background: iconColor, border: `1px solid ${iconBorder}`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22,
+          }}>🔗</div>
+        )}
 
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 700, fontSize: 15 }}>Vinted-account (voor automatische synchronisatie)</div>
           <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2 }}>
             {linked === null ? 'Laden…'
+              : hasProfile    ? `✓ Gekoppeld — ${profile.login || 'extensie sync werkt'}`
               : linked        ? 'Gekoppeld — extensie sync werkt'
               : waiting       ? 'Wachten op koppeling…'
               :                 'Niet gekoppeld — sync werkt pas na koppeling'}

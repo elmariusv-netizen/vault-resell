@@ -223,6 +223,14 @@ CREATE POLICY "user beheert eigen link"
 CREATE POLICY "anon kan lezen voor sync"
   ON vinted_account_links FOR SELECT TO anon USING (true);
 
+-- Vinted-profiel (login/avatar) — laat Instellingen.jsx's VintedAccountLink
+-- het echte gekoppelde account tonen i.p.v. enkel "Gekoppeld". Gezet door
+-- handleVaultLink (nieuwe koppeling) en best-effort backfilled door
+-- api/save-vinted-cookie.js (elk Vinted-bezoek), zodat ook al vóór deze
+-- feature gekoppelde accounts het automatisch krijgen.
+ALTER TABLE vinted_account_links ADD COLUMN IF NOT EXISTS vinted_login TEXT;
+ALTER TABLE vinted_account_links ADD COLUMN IF NOT EXISTS vinted_photo TEXT;
+
 -- ══════════════════════════════════════════════════════════════════
 -- PENDING LINKS (tijdelijke koppelsessie webapp ↔ extensie)
 -- ══════════════════════════════════════════════════════════════════
