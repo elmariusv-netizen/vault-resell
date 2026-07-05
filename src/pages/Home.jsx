@@ -127,7 +127,7 @@ const DashTooltip = ({ active, payload, label }) => {
   )
 }
 
-function DashCard({ label, value, sub, accent, small }) {
+function DashCard({ label, value, sub, accent, small, tooltip }) {
   return (
     <div style={{
       background: D.card, border: `1px solid ${D.border}`,
@@ -135,8 +135,11 @@ function DashCard({ label, value, sub, accent, small }) {
       position: 'relative', overflow: 'hidden',
     }}>
       {accent && <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: accent }} />}
-      <div style={{ fontSize: 10, color: D.text3, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', marginBottom: 9 }}>
+      <div style={{ fontSize: 10, color: D.text3, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', marginBottom: 9, display: 'flex', alignItems: 'center', gap: 5 }}>
         {label}
+        {tooltip && (
+          <span title={tooltip} style={{ cursor: 'help', fontSize: 11, fontWeight: 700, color: D.text3, textTransform: 'none', letterSpacing: 0 }}>ⓘ</span>
+        )}
       </div>
       <div style={{ fontSize: small ? '1.5rem' : '1.7rem', fontWeight: 800, color: D.text, letterSpacing: '-0.03em', lineHeight: 1 }}>
         {value}
@@ -486,6 +489,7 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
             value={stats.totalOrders}
             sub={`Gem. ${formatCurrency(stats.avgOrder)}/bestelling`}
             accent={D.blue}
+            tooltip="Aantal unieke bestellingen in de gekozen periode. Koopt iemand meerdere artikelen in 1 keer (bundel), dan telt dat als 1 bestelling — niet als 1 per artikel."
           />
           <DashCard
             label="Gemiddelde bestelling"
