@@ -276,6 +276,7 @@ export default function App() {
           {page === 'settings'  && (
             <Settings
               {...props}
+              onNavigate={setPage}
               onExport={handleExport}
               onClearData={handleClearData}
               activeUserId={activeUserId}

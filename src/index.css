@@ -1143,3 +1143,13 @@ hr.divider { border: none; border-top: 1px solid var(--border); margin: 18px 0; 
   .dash-desktop { display: none; }
   .dash-mobile  { display: block; }
 }
+
+/* Enkel zichtbaar op mobiel — voor pagina's die niet in de mobiele
+   bottom-nav passen (bv. Voorraad/Aankopen/Kosten/Stats, zie Nav.jsx) en
+   daarom via een link binnenin Instellingen bereikbaar zijn. Op desktop
+   staan die pagina's al gewoon in de sidebar, dus daar blijft dit verborgen. */
+.mobile-only-link { display: none; }
+
+@media (max-width: 768px) {
+  .mobile-only-link { display: flex; }
+}

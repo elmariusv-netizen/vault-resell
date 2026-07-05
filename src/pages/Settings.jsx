@@ -667,7 +667,7 @@ function PurchaseSettingsSection({ activeUserId, purchaseMethod, autoSyncSales, 
   )
 }
 
-export default function Settings({ data, updateData, onExport, onClearData, activeUserId, vintedCookie, onVintedCookieChange, supabaseUser, onSignOut, purchaseMethod, autoSyncSales, autoSyncPurchases, autoSyncLabels, onUserSettingsChange }) {
+export default function Settings({ data, updateData, onExport, onClearData, activeUserId, vintedCookie, onVintedCookieChange, supabaseUser, onSignOut, purchaseMethod, autoSyncSales, autoSyncPurchases, autoSyncLabels, onUserSettingsChange, onNavigate }) {
   const { suppliers, batches, sales } = data
   const documents = data.documents || []
 
@@ -786,6 +786,27 @@ export default function Settings({ data, updateData, onExport, onClearData, acti
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 760 }}>
+        {/* Op mobiel zit Stats niet in de bottom-nav (zie BOTTOM_TABS in
+            Nav.jsx) — enkel via deze link binnenin Instellingen bereikbaar.
+            Op desktop staat Stats al in de sidebar, dus deze kaart blijft
+            daar verborgen (.mobile-only-link, zie index.css). */}
+        {onNavigate && (
+          <button
+            className="glass-card mobile-only-link"
+            onClick={() => onNavigate('stats')}
+            style={{ alignItems: 'center', justifyContent: 'space-between', width: '100%', border: 'none', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <span style={{ fontSize: 20 }}>📊</span>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text)' }}>Stats</div>
+                <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2 }}>Winst over tijd, omzet per merk/kleur en meer</div>
+              </div>
+            </div>
+            <span style={{ color: 'var(--text-3)', fontSize: 18 }}>›</span>
+          </button>
+        )}
+
         {/* Suppliers */}
         <div className="glass-card">
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
