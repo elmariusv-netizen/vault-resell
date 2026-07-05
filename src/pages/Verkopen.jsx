@@ -1595,6 +1595,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
             id: genId(),
             vintedOrderId: order.id,
             batchId: it.batch.id,
+            sku: it.sku,
             type: 'individual',
             quantity: 1,
             salePrice: perItemPrice,
@@ -1692,12 +1693,23 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
         const batch = batches.find((b) => b.id === sale.batchId)
         const sup = suppliers.find((s) => batch && s.prefix === batch.supplierPrefix)
         const profit = batch ? calcSaleProfit(sale, batch) : null
-        const sku = batch ? formatSkuRange(batch.supplierPrefix, batch.startNum, batch.endNum) : '?'
+        // Concrete SKU van deze verkoop tonen (bv. "RIA049"), niet de volledige
+        // batch-range ("RIA049-149") — die range is puur de nummering van de
+        // hele inkoop-batch en komt toevallig overeen voor élke verkoop uit
+        // diezelfde batch, wat een bundel (5 items, 5 losse sales-regels) laat
+        // lijken op 5x dezelfde SKU. sale.sku (nieuwe verkopen, zie
+        // handleBulkSkuConfirm) is de precieze bron; voor oudere sales zonder
+        // dat veld valt dit terug op de sku_ref van de gekoppelde Vinted-order
+        // (die wél de echte, specifieke SKU('s) bevat), en pas als laatste
+        // terugval op de batch-range (bv. volledig handmatige verkopen).
+        const vtOrder = sale.vintedOrderId ? vtOrders.find(o => o.id === sale.vintedOrderId) : null
+        const sku = sale.sku || vtOrder?.sku_ref
+          || (batch ? formatSkuRange(batch.supplierPrefix, batch.startNum, batch.endNum) : '?')
         const photo = sale.photo || batch?.photos?.[0] || batch?.photo || null
         const platformDisplay = normalizePlatform(sale.platform)
         return { ...sale, batch, sup, profit, sku, photo, platformDisplay }
       })
-  }, [sales, batches, suppliers])
+  }, [sales, batches, suppliers, vtOrders])
 
   const filtered = useMemo(() => {
     return enriched.filter((s) => {
