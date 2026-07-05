@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect } from 'react'
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis,
-  Tooltip, CartesianGrid, Cell,
+  Tooltip, CartesianGrid, Cell, LineChart, Line,
 } from 'recharts'
 import DateRangeFilter, { getDateBounds, filterByRange } from '../components/DateRangeFilter'
 import {
@@ -119,9 +119,44 @@ export default function Stats({ data, theme }) {
     color: s.color,
   }))
 
+  // Winst over tijd — per maand, gebaseerd op dezelfde calcSaleProfit() als
+  // de rest van deze pagina, geen aparte winstdefinitie.
+  const profitOverTime = useMemo(() => {
+    const byMonth = {}
+    filteredSales.forEach((s) => {
+      if (!s.date) return
+      const b = batches.find((x) => x.id === s.batchId)
+      const profit = b ? calcSaleProfit(s, b).profit : 0
+      const m = s.date.substring(0, 7)
+      byMonth[m] = (byMonth[m] || 0) + profit
+    })
+    return Object.entries(byMonth).sort().map(([m, profit]) => ({
+      label: new Date(m + '-01').toLocaleString('nl-BE', { month: 'short', year: '2-digit' }),
+      profit: Math.round(profit * 100) / 100,
+    }))
+  }, [filteredSales, batches])
+
+  // Omzet/winst per merk (batch.brand) — merkloze batches vallen onder
+  // "Onbekend" i.p.v. stilzwijgend weg te vallen.
+  const perBrand = useMemo(() => {
+    const map = {}
+    filteredSales.forEach((s) => {
+      const b = batches.find((x) => x.id === s.batchId)
+      const brand = b?.brand?.trim() || 'Onbekend'
+      if (!map[brand]) map[brand] = { revenue: 0, profit: 0, sold: 0 }
+      map[brand].revenue += (s.salePrice || 0) * (s.quantity || 1)
+      map[brand].profit += b ? calcSaleProfit(s, b).profit : 0
+      map[brand].sold += s.quantity || 1
+    })
+    return Object.entries(map)
+      .map(([brand, v]) => ({ brand, ...v, margin: v.revenue > 0 ? (v.profit / v.revenue) * 100 : 0 }))
+      .sort((a, b) => b.revenue - a.revenue)
+  }, [filteredSales, batches])
+
   const TABS = [
     { id: 'overview', label: 'Overzicht' },
     { id: 'supplier', label: 'Leveranciers' },
+    { id: 'brand', label: 'Merk' },
     { id: 'sku', label: 'Best verkopende SKU\'s' },
     { id: 'platform', label: 'Platform' },
   ]
@@ -169,6 +204,30 @@ export default function Stats({ data, theme }) {
           </button>
         ))}
       </div>
+
+      {/* ── Overview: profit over time ── */}
+      {tab === 'overview' && (
+        <div className="glass-card" style={{ marginBottom: 20 }}>
+          <div className="chart-section-label">Winst over tijd</div>
+          {profitOverTime.length === 0 ? (
+            <div className="empty-state" style={{ padding: '40px 0' }}>
+              <div className="empty-icon">📈</div>
+              <h3>Nog geen verkopen</h3>
+              <p>Start met verkopen om deze grafiek te vullen.</p>
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={200}>
+              <LineChart data={profitOverTime} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} vertical={false} />
+                <XAxis dataKey="label" stroke="transparent" tick={{ fill: tickColor, fontSize: 12, fontFamily: 'inherit' }} axisLine={false} tickLine={false} />
+                <YAxis stroke="transparent" tick={{ fill: tickColor, fontSize: 11, fontFamily: 'inherit' }} tickFormatter={(v) => `€${v}`} axisLine={false} tickLine={false} width={52} />
+                <Tooltip content={<ChartTooltip />} cursor={{ fill: cursorFill }} />
+                <Line type="monotone" dataKey="profit" stroke="#22c55e" strokeWidth={2.5} dot={{ r: 3 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      )}
 
       {/* ── Overview: revenue per supplier chart ── */}
       {tab === 'overview' && (
@@ -319,6 +378,46 @@ export default function Stats({ data, theme }) {
                       </span>
                     </td>
                     <td style={{ color: 'var(--text-2)' }}>{s.stock}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* ── Omzet/winst per merk ── */}
+      {tab === 'brand' && (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Merk</th>
+                <th>Verkocht</th>
+                <th>Omzet</th>
+                <th>Winst</th>
+                <th>Marge</th>
+              </tr>
+            </thead>
+            <tbody>
+              {perBrand.length === 0 ? (
+                <tr><td colSpan={5} style={{ textAlign: 'center', padding: 40, color: 'var(--text-3)' }}>Nog geen verkopen</td></tr>
+              ) : (
+                perBrand.map((b) => (
+                  <tr key={b.brand}>
+                    <td style={{ fontWeight: 600 }}>{b.brand}</td>
+                    <td style={{ color: 'var(--text-2)' }}>{b.sold}</td>
+                    <td style={{ fontWeight: 600 }}>{formatCurrency(b.revenue)}</td>
+                    <td>
+                      <span style={{ color: b.profit >= 0 ? 'var(--green)' : 'var(--red)', fontWeight: 700 }}>
+                        {formatCurrency(b.profit)}
+                      </span>
+                    </td>
+                    <td>
+                      <span style={{ fontSize: 12, color: b.margin >= 20 ? 'var(--green)' : b.margin >= 0 ? 'var(--text-2)' : 'var(--red)', fontWeight: 600 }}>
+                        {b.sold > 0 ? `${b.margin.toFixed(1)}%` : '—'}
+                      </span>
+                    </td>
                   </tr>
                 ))
               )}
