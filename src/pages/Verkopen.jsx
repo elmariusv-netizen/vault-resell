@@ -4,6 +4,7 @@ import {
   formatCurrency, formatDateLong, formatDateTimeLong, formatSkuRange, calcSaleProfit, normalizePlatform,
   genId, formatSku, isLabelReady, getStatusBadge, getUsedSkus, getFreeSkusForBatch,
   getBatchUnitCost, assignSlotSkus, skuOptionsForSlot, MANUAL_STATUSES, getManualStatus, getEffectiveStatusBadge,
+  classifyOrderStage,
 } from '../utils/skuUtils'
 import SaleModal from '../components/SaleModal'
 import EditSaleModal from '../components/EditSaleModal'
@@ -1374,6 +1375,7 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
   const [search, setSearch] = useState('')
   const [filterPlatform, setFilterPlatform] = useState('all')
   const [filterMonth, setFilterMonth] = useState('all')
+  const [stageFilter, setStageFilter] = useState('all')
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
   const [editSale, setEditSale] = useState(null)
   // Dag-filter vanuit Home.jsx's "Aantal verkopen per dag"-grafiek (klik op
@@ -1778,10 +1780,29 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
 
       {/* ── Vinted Orders ── */}
       {(() => {
-        const visibleVtOrders = vtOrders.filter(o =>
+        const allVisibleVtOrders = vtOrders.filter(o =>
           !/geannuleerd|cancel/i.test(o.status || '') &&
           (o.order_direction === 'sale' || !o.order_direction)
         )
+        // Statustabs: laten in 1 oogopslag zien welke actie nog nodig is per
+        // order. Gebruikt dezelfde classifyOrderStage() als de Home-dashboard-
+        // statuskaarten (Te verzenden/Onderweg/Bij afhaalpunt), zodat de
+        // tellingen hier nooit kunnen afwijken van die kaarten.
+        const STAGE_TABS = [
+          { value: 'all',            label: 'Alle' },
+          { value: 'to_ship',        label: 'Te verzenden' },
+          { value: 'in_transit',     label: 'Onderweg' },
+          { value: 'at_pickup_point',label: 'Bij afhaalpunt' },
+          { value: 'finished',       label: 'Geleverd' },
+        ]
+        const stageCounts = allVisibleVtOrders.reduce((acc, o) => {
+          const stage = classifyOrderStage(o)
+          acc[stage] = (acc[stage] || 0) + 1
+          return acc
+        }, {})
+        const visibleVtOrders = stageFilter === 'all'
+          ? allVisibleVtOrders
+          : allVisibleVtOrders.filter(o => classifyOrderStage(o) === stageFilter)
         const toggleId = (id, on) => setSelectedIds(prev => {
           const next = new Set(prev)
           on ? next.add(id) : next.delete(id)
@@ -1809,6 +1830,27 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
                 >+ Toevoegen</button>
               </div>
             </div>
+
+            {!vtLoading && (
+              <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
+                {STAGE_TABS.map(tab => {
+                  const count = tab.value === 'all' ? allVisibleVtOrders.length : (stageCounts[tab.value] || 0)
+                  const active = stageFilter === tab.value
+                  return (
+                    <button
+                      key={tab.value}
+                      onClick={() => setStageFilter(tab.value)}
+                      style={{
+                        fontSize: 12, padding: '5px 12px', borderRadius: 20, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600,
+                        border: `1px solid ${active ? 'var(--green)' : 'var(--border)'}`,
+                        background: active ? 'rgba(0,230,118,0.12)' : 'var(--bg-2)',
+                        color: active ? 'var(--green)' : 'var(--text-2)',
+                      }}
+                    >{tab.label} ({count})</button>
+                  )
+                })}
+              </div>
+            )}
 
             {/* Bulk controls */}
             {!vtLoading && !vtError && visibleVtOrders.length > 0 && (
@@ -1857,7 +1899,9 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
               </div>
             ) : visibleVtOrders.length === 0 ? (
               <div style={{ padding: 24, background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
-                Nog geen orders gesynchroniseerd via de Chrome extensie.
+                {allVisibleVtOrders.length === 0
+                  ? 'Nog geen orders gesynchroniseerd via de Chrome extensie.'
+                  : 'Geen orders in deze status.'}
               </div>
             ) : (
               <div>
