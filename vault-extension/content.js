@@ -212,6 +212,13 @@
           console.log('[Vault] wardrobe page', page, '/', totalPages, '—', raw.length, 'items');
           if (!raw.length) break;
           items.push(...raw.map(mapWardrobeItem));
+          // Volledige fotogalerij van elke listing vastleggen zolang die nog
+          // ophaalbaar is (zie fotocache hierboven) — ongeacht status, want
+          // ook een concept/verborgen item kan later alsnog verkocht worden.
+          raw.forEach(o => {
+            const photos = (o.photos || []).map(p => hiPhoto(p.url)).filter(Boolean);
+            if (photos.length > 1) cacheItemPhotos(String(o.id), photos);
+          });
           totalPages = d.pagination?.total_pages || 1;
           if (page >= totalPages) break;
           page++;
@@ -411,6 +418,57 @@
     return found;
   }
 
+  // ── Fotocache voor (nog) actieve listings ───────────────────────────────
+  // Vinted's item-detail endpoint (/api/v2/items/{id}) geeft een "niet
+  // gevonden"-pagina terug zodra een item verkocht is (bevestigd: al 404 op
+  // de dag zelf van verkoop) — na verkoop is er dus geen enkele Vinted-API
+  // meer die de VOLLEDIGE fotogalerij van dat item teruggeeft, enkel nog de
+  // ene foto die ook in /api/v2/my_orders zit. De enige betrouwbare manier
+  // om toch alle foto's te kunnen tonen in de Verkopen-detailmodal is ze
+  // VOORAF vastleggen, terwijl het item nog gewoon te koop staat: elke keer
+  // de Listings-tab ververst wordt (getListings hieronder), slaan we de
+  // volledige fotolijst van elke listing op in chrome.storage.local (dus
+  // persistent tussen sessies — een verkoop kan dagen na het laatst bekijken
+  // van de Listings-tab gebeuren). Zodra zo'n item nadien verkocht wordt,
+  // wordt deze cache opgezocht via het item_id uit
+  // /api/v2/transactions/{id} — die blijft, in tegenstelling tot
+  // /items/{id}, wél gewoon bereikbaar na verkoop (bevestigd).
+  const ITEM_PHOTO_CACHE_MAX = 300;
+
+  async function cacheItemPhotos(itemId, photos) {
+    if (!itemId || !photos?.length) return;
+    try {
+      const { itemPhotoCache = {} } = await chrome.storage.local.get(['itemPhotoCache']);
+      itemPhotoCache[itemId] = photos;
+      const keys = Object.keys(itemPhotoCache);
+      if (keys.length > ITEM_PHOTO_CACHE_MAX) {
+        keys.slice(0, keys.length - ITEM_PHOTO_CACHE_MAX).forEach(k => delete itemPhotoCache[k]);
+      }
+      await chrome.storage.local.set({ itemPhotoCache });
+    } catch (e) { console.warn('[Vault] cacheItemPhotos mislukt:', e.message); }
+  }
+
+  async function getCachedItemPhotos(itemId) {
+    if (!itemId) return null;
+    try {
+      const { itemPhotoCache = {} } = await chrome.storage.local.get(['itemPhotoCache']);
+      return itemPhotoCache[itemId] || null;
+    } catch { return null; }
+  }
+
+  // item_id opzoeken via de transactie — blijft (bevestigd) bereikbaar nadat
+  // /api/v2/items/{id} al 404 geeft.
+  async function fetchTransactionItemId(transactionId) {
+    if (!transactionId) return null;
+    try {
+      const d = await vGet(`/api/v2/transactions/${transactionId}`);
+      return d.transaction?.item_id ? String(d.transaction.item_id) : null;
+    } catch (e) {
+      console.warn(`[Vault] fetchTransactionItemId ${transactionId} mislukt:`, e.message);
+      return null;
+    }
+  }
+
   // Bundle-orders: probeer alle items + foto's van een bundel-verkoop op te halen
   // via /api/v2/orders/{orderId}. Het per-item endpoint (/api/v2/items/{id})
   // bestaat niet meer zodra een item verkocht/verwijderd is (bevestigd: geeft een
@@ -524,7 +582,8 @@
     // hierna nooit meer aangeraakt worden), zodat bestaande orders alsnog
     // met transactionStatus/shipmentStatus/isCompleted worden aangevuld.
     const needsDetail = orders.filter(o =>
-      (!o.photo || !o.buyer || !o.currentUserSide || o.transactionStatus === undefined || o.payoutDate === undefined) && (o.conversationId || o.convId)
+      ((!o.photo || !o.buyer || !o.currentUserSide || o.transactionStatus === undefined || o.payoutDate === undefined) && (o.conversationId || o.convId))
+      || (o.photo_urls === undefined && o.transactionId)
     );
 
     // Log VOOR de needsDetail-filter of deze 2 orders er überhaupt inzitten,
@@ -549,35 +608,55 @@
       await Promise.all(batch.map(async o => {
         const id = o.conversationId || o.convId;
         const isDebugTxn = DEBUG_TXN_IDS.has(o.transactionId);
-        if (isDebugTxn) console.log(`[Vault] DEBUG txn ${o.transactionId}: fetchConvDetail(${id}) start`);
-        const { photo, buyer, buyerName, country, currentUserSide, itemIds, transactionStatus, shipmentStatus, isCompleted, payoutDate } = await fetchConvDetail(id, isDebugTxn);
-        console.log(`[Vault] conv detail txn ${o.transactionId}: opp="${buyer}" country="${country}" side="${currentUserSide}"`);
-        if (isDebugTxn) console.log(`[Vault] DEBUG txn ${o.transactionId}: fetchConvDetail resultaat →`, JSON.stringify({ photo, buyer, buyerName, country, currentUserSide, itemIds, transactionStatus, shipmentStatus, isCompleted, payoutDate }));
-        o.transactionStatus = transactionStatus;
-        o.shipmentStatus    = shipmentStatus;
-        o.isCompleted       = isCompleted;
-        o.payoutDate        = payoutDate;
-        changed = true;
-        if (photo)           { o.photo           = photo;           changed = true; }
-        if (country)         { o.country         = country;         changed = true; }
-        if (currentUserSide) { o.currentUserSide = currentUserSide; changed = true; }
-        if (buyer)           { o.buyer           = buyer;           changed = true; }
-        if (buyerName)       { o.buyerName       = buyerName;       changed = true; }
+        if (id) {
+          if (isDebugTxn) console.log(`[Vault] DEBUG txn ${o.transactionId}: fetchConvDetail(${id}) start`);
+          const { photo, buyer, buyerName, country, currentUserSide, itemIds, transactionStatus, shipmentStatus, isCompleted, payoutDate } = await fetchConvDetail(id, isDebugTxn);
+          console.log(`[Vault] conv detail txn ${o.transactionId}: opp="${buyer}" country="${country}" side="${currentUserSide}"`);
+          if (isDebugTxn) console.log(`[Vault] DEBUG txn ${o.transactionId}: fetchConvDetail resultaat →`, JSON.stringify({ photo, buyer, buyerName, country, currentUserSide, itemIds, transactionStatus, shipmentStatus, isCompleted, payoutDate }));
+          o.transactionStatus = transactionStatus;
+          o.shipmentStatus    = shipmentStatus;
+          o.isCompleted       = isCompleted;
+          o.payoutDate        = payoutDate;
+          changed = true;
+          if (photo)           { o.photo           = photo;           changed = true; }
+          if (country)         { o.country         = country;         changed = true; }
+          if (currentUserSide) { o.currentUserSide = currentUserSide; changed = true; }
+          if (buyer)           { o.buyer           = buyer;           changed = true; }
+          if (buyerName)       { o.buyerName       = buyerName;       changed = true; }
 
-        // Bundle-order (meerdere item_ids): probeer alle foto's/titels te
-        // verzamelen. Lukt dat niet (items al verwijderd na verkoop), val terug
-        // op de ene bestaande foto — de UI toont dan een "Bundel van N
-        // artikelen"-label op basis van de titel i.p.v. losse thumbnails.
-        if (itemIds.length > 1) {
-          const { photos, titles } = await fetchOrderItemPhotos(o.orderId);
-          if (photos.length > 1) {
-            o.photo_urls  = JSON.stringify(photos);
-            o.item_titles = titles.length ? JSON.stringify(titles) : null;
-            changed = true;
-            console.log(`[Vault] bundle txn ${o.transactionId}: ${photos.length} foto's verzameld`);
-          } else {
-            console.log(`[Vault] bundle txn ${o.transactionId}: geen losse foto's beschikbaar — fallback op 1 foto (${itemIds.length} items)`);
+          // Bundle-order (meerdere item_ids): probeer alle foto's/titels te
+          // verzamelen. Lukt dat niet (items al verwijderd na verkoop), val terug
+          // op de ene bestaande foto — de UI toont dan een "Bundel van N
+          // artikelen"-label op basis van de titel i.p.v. losse thumbnails.
+          if (itemIds.length > 1) {
+            const { photos, titles } = await fetchOrderItemPhotos(o.orderId);
+            if (photos.length > 1) {
+              o.photo_urls  = JSON.stringify(photos);
+              o.item_titles = titles.length ? JSON.stringify(titles) : null;
+              changed = true;
+              console.log(`[Vault] bundle txn ${o.transactionId}: ${photos.length} foto's verzameld`);
+            } else {
+              console.log(`[Vault] bundle txn ${o.transactionId}: geen losse foto's beschikbaar — fallback op 1 foto (${itemIds.length} items)`);
+            }
           }
+        }
+
+        // Volledige fotogalerij backfillen uit de listing-fotocache (zie
+        // hierboven) — onafhankelijk van conversationId, dus dit loopt ook
+        // voor orders waar de rest van deze ronde niets te doen had. Eenmalig
+        // per sessie geprobeerd (photo_urls wordt hierna altijd op zijn minst
+        // `null` gezet, nooit meer `undefined`), zodat een item zonder cache-
+        // hit niet elke enrichment-ronde opnieuw de transactie-lookup doet.
+        if (o.photo_urls === undefined && o.transactionId) {
+          const itemId = await fetchTransactionItemId(o.transactionId);
+          const cached = itemId ? await getCachedItemPhotos(itemId) : null;
+          if (cached && cached.length > 1) {
+            o.photo_urls = JSON.stringify(cached);
+            console.log(`[Vault] txn ${o.transactionId}: ${cached.length} foto's uit listing-cache gehaald (item ${itemId})`);
+          } else {
+            o.photo_urls = null;
+          }
+          changed = true;
         }
       }));
       done += batch.length;
@@ -1878,6 +1957,11 @@
       const result = {}
       try {
         if (msg.sales || msg.purchases) {
+          // Fotocache vullen/verversen vóórdat we verkopen verrijken — zie
+          // getListings()/cacheItemPhotos hierboven. Best-effort: als dit
+          // faalt (bv. geen wardrobe-toegang), mag de rest van de sync
+          // gewoon doorgaan met wat al in de cache zit.
+          try { await getListings() } catch (e) { console.warn('[Vault] LIVE_SYNC getListings skip:', e.message) }
           const orders = await getSold(true)
           const active = orders.filter(o => !isCancelled(o))
           await enrichOrders(active)
