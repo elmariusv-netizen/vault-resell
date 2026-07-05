@@ -9,6 +9,21 @@ export const config = {
   },
 };
 
+// Een kaal "Mozilla/5.0" (geen OS/engine/versie) is een klassiek bot-signaal
+// voor Vinted's fraude-detectie — een echte browser stuurt altijd een volle
+// UA-string mee. Vast gehouden op één recente, geloofwaardige desktop-Chrome-
+// versie i.p.v. dynamisch afgeleid (dit draait server-side, geen eigen UA).
+const BROWSER_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
+// Haalt één cookie-waarde uit de samengestelde "naam=waarde; naam2=waarde2"
+// Cookie-header-string (zowel de automatisch geüploade als de handmatig
+// geplakte cookie hebben dit formaat, zie background.js/Settings.jsx).
+function extractCookieValue(cookieStr, name) {
+  const m = String(cookieStr || '').match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`));
+  return m ? m[1] : '';
+}
+
 const LABEL_W = 288;  // 4 inch × 72 pt/inch
 const LABEL_H = 432;  // 6 inch × 72 pt/inch
 
@@ -637,11 +652,28 @@ export default async function handler(req, res) {
 
   if (label_url) {
     pdfFetchUrl  = label_url;
-    fetchOptions = { headers: { 'User-Agent': 'Mozilla/5.0' } };
+    fetchOptions = { headers: { 'User-Agent': BROWSER_USER_AGENT } };
     console.log('[label] presigned URL path:', label_url.slice(0, 80));
   } else if (transaction_id && cookie) {
     pdfFetchUrl  = `https://www.vinted.be/api/v2/transactions/${transaction_id}/shipment/pdf_label`;
-    fetchOptions = { headers: { 'Cookie': cookie, 'User-Agent': 'Mozilla/5.0' } };
+    // Enkel 'Cookie' + een kaal 'Mozilla/5.0' meesturen volstond niet meer:
+    // Vinted's eigen /api/v2/*-endpoints verwachten dezelfde headers als een
+    // echte in-browser aanroep (zie getVintedHeaders() in content.js/
+    // background.js, die dit al succesvol doet) — x-csrf-token/x-anon-id uit
+    // specifieke cookies, plus een geloofwaardige User-Agent/Accept/Referer.
+    // Zonder die headers wijst Vinted (bot-detectie of een CSRF-check) het
+    // verzoek af met 403, ook met een verse/geldige cookie.
+    fetchOptions = {
+      headers: {
+        'Cookie':        cookie,
+        'User-Agent':    BROWSER_USER_AGENT,
+        'Accept':        'application/json,text/plain,*/*,image/webp',
+        'Accept-Language': 'nl-BE,nl;q=0.9,en;q=0.8',
+        'x-csrf-token':  extractCookieValue(cookie, '_vinted_csrf_token'),
+        'x-anon-id':     extractCookieValue(cookie, '_vinted_anon_id'),
+        'Referer':       'https://www.vinted.be/',
+      },
+    };
     console.log('[label] cookie path, txn:', transaction_id);
   } else {
     return res.status(400).json({ error: 'label_url of (transaction_id + x-vinted-cookie) vereist' });

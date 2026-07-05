@@ -7,12 +7,20 @@ const OUT_W = 288
 const OUT_H = 432
 
 // ── Ondersteunde carriers ─────────────────────────────────────────────────────
+// Echte logo-SVG's (public/carriers/) i.p.v. zelfgetekende tekst-pills — via
+// Wikimedia Commons opgehaald (PD-textlogo/geometrisch, dus copyright-vrij;
+// het merkrecht zelf blijft uiteraard bij elke vervoerder — dit is enkel een
+// "wij ondersteunen dit label" interoperabiliteitsvermelding, geen eigen
+// gebruik van het merk). Mondial Relay's enige beschikbare bestand staat
+// lokaal bij de Franse Wikipedia (fair-use, geen vrije licentie zoals de
+// andere 4) — vervang dit bestand gerust door het officiële perskit-logo als
+// je dat liever gebruikt.
 const CARRIERS = [
-  { name: 'PostNL',        label: 'PostNL',        color: '#FF6200', width: 76 },
-  { name: 'Mondial Relay', label: 'Mondial Relay', color: '#002D62', width: 120 },
-  { name: 'Vinted Go',     label: 'Vinted Go',     color: '#007782', width: 90 },
-  { name: 'Bpost',         label: 'bpost',         color: '#E30613', width: 68 },
-  { name: 'DPD',           label: 'DPD',           color: '#DC0032', width: 58 },
+  { name: 'PostNL',        src: '/carriers/postnl.svg',        width: 90, height: 28 },
+  { name: 'Mondial Relay', src: '/carriers/mondial-relay.svg', width: 90, height: 28 },
+  { name: 'Vinted Go',     src: '/carriers/vinted.svg',        width: 90, height: 28 },
+  { name: 'bpost',         src: '/carriers/bpost.svg',         width: 90, height: 28 },
+  { name: 'DPD',           src: '/carriers/dpd.svg',           width: 90, height: 28 },
 ]
 
 function CarrierBadges() {
@@ -23,15 +31,26 @@ function CarrierBadges() {
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
         {CARRIERS.map((c) => (
-          <svg key={c.name} width={c.width} height={28} viewBox={`0 0 ${c.width} 28`} role="img" aria-label={c.name}>
-            <rect width={c.width} height={28} rx={14} fill={c.color} />
-            <text
-              x="50%" y="52%" textAnchor="middle" dominantBaseline="middle"
-              fill="#fff" fontSize={12} fontWeight={700}
-            >
-              {c.label}
-            </text>
-          </svg>
+          // Vaste witte ondergrond (i.p.v. de kaartkleur van het thema): deze
+          // logo's zijn getekend voor een lichte achtergrond — donkere
+          // wordmarks (PostNL-navy, bpost/DPD-grijs) zouden anders
+          // onleesbaar wegvallen in dark mode. Vaste maat, gecentreerd, geen
+          // per-logo kleurcorrectie nodig.
+          <div
+            key={c.name}
+            title={c.name}
+            style={{
+              width: c.width, height: 36, borderRadius: 8, background: '#fff',
+              border: '1px solid rgba(0,0,0,0.08)', display: 'flex',
+              alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+              padding: '0 8px', boxSizing: 'border-box',
+            }}
+          >
+            <img
+              src={c.src} alt={c.name}
+              style={{ maxWidth: '100%', maxHeight: c.height, objectFit: 'contain' }}
+            />
+          </div>
         ))}
       </div>
     </div>
