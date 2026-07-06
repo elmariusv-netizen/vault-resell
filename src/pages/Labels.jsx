@@ -100,7 +100,7 @@ function SkeletonCard() {
 }
 
 // ── Vinted order kaart ────────────────────────────────────────────────────────
-function OrderCard({ order, onDownload, isDownloading, isDone }) {
+function OrderCard({ order, onDownload, isDownloading, isDone, printed, onTogglePrinted }) {
   const badge = getStatusBadge(order.status)
   const buyer = order.buyer_name || order.buyer || ''
 
@@ -110,8 +110,23 @@ function OrderCard({ order, onDownload, isDownloading, isDone }) {
       background: isDone ? 'rgba(0,255,136,0.04)' : 'var(--surface)',
       border: `1px solid ${isDone ? 'rgba(0,255,136,0.25)' : 'var(--border)'}`,
       borderRadius: 'var(--r-xl)', padding: '14px 18px',
-      transition: 'border-color .2s, background .2s',
+      transition: 'border-color .2s, background .2s, opacity .2s',
+      opacity: printed ? 0.5 : 1,
     }}>
+      {/* Geprint-vinkje */}
+      <label
+        title="Geprint — uitgesloten van 'Print alle labels'"
+        style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, cursor: 'pointer' }}
+      >
+        <input
+          type="checkbox"
+          checked={!!printed}
+          onChange={(e) => onTogglePrinted(e.target.checked)}
+          style={{ width: 16, height: 16, cursor: 'pointer' }}
+        />
+        <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', whiteSpace: 'nowrap' }}>Geprint</span>
+      </label>
+
       {/* Foto */}
       <div style={{
         width: 52, height: 52, borderRadius: 'var(--r-md)',
@@ -340,6 +355,7 @@ export default function Labels({ vintedCookie }) {
   const [downloaded, setDownloaded]   = useState(new Set())
 
   const [manualItems, setManualItems] = useState([])
+  const [manualPrinted, setManualPrinted] = useState(new Set())
   const [modalOpen, setModalOpen]     = useState(false)
   const [printing, setPrinting]       = useState(false)
 
@@ -366,6 +382,28 @@ export default function Labels({ vintedCookie }) {
   }, [])
 
   useEffect(() => { fetchOrders() }, [fetchOrders])
+
+  // ── "Geprint"-vinkje — optimistisch lokaal gezet, daarna naar Supabase
+  // geschreven zodat de status ook na een refresh en op andere apparaten
+  // klopt. Bij een schrijffout (bv. de label_printed-migratie nog niet
+  // gedraaid) wordt de lokale state teruggedraaid i.p.v. een status te tonen
+  // die niet écht opgeslagen is.
+  const togglePrinted = useCallback(async (order, printed) => {
+    setOrders((prev) => prev.map((o) => o.id === order.id ? { ...o, label_printed: printed } : o))
+    const { error } = await supabase.from('vinted_orders').update({ label_printed: printed }).eq('id', order.id)
+    if (error) {
+      console.warn('[Vault] label_printed opslaan mislukt:', error.message)
+      setOrders((prev) => prev.map((o) => o.id === order.id ? { ...o, label_printed: !printed } : o))
+    }
+  }, [])
+
+  const toggleManualPrinted = useCallback((id, printed) => {
+    setManualPrinted((prev) => {
+      const next = new Set(prev)
+      if (printed) next.add(id); else next.delete(id)
+      return next
+    })
+  }, [])
 
   const labelParams = (order) => new URLSearchParams(
     order.label_url
@@ -407,11 +445,12 @@ export default function Labels({ vintedCookie }) {
       a.click()
       URL.revokeObjectURL(url)
       setDownloaded((prev) => new Set([...prev, order.id]))
+      togglePrinted(order, true)
     } catch (e) {
       alert(`Download mislukt: ${e.message}`)
     }
     setDownloading((prev) => { const n = new Set(prev); n.delete(order.id); return n })
-  }, [vintedCookie])
+  }, [vintedCookie, togglePrinted])
 
   // ── Handmatige labels (al gecropt naar 4×6 door /api/label) ───────────────
   const addManualItem = ({ name, blob }) => {
@@ -427,13 +466,18 @@ export default function Labels({ vintedCookie }) {
   }
 
   // ── Alle labels printen (combineren tot één PDF) ──────────────────────────
+  // Al als "Geprint" gemarkeerde labels (handmatig, of automatisch na
+  // download) tellen niet mee — zie het vinkje per label hierboven.
+  const printableOrders = orders.filter((o) => !o.label_printed)
+  const printableManualItems = manualItems.filter((i) => !manualPrinted.has(i.id))
+
   const printAll = async () => {
-    if (!orders.length && !manualItems.length) return
+    if (!printableOrders.length && !printableManualItems.length) return
     setPrinting(true)
     try {
       const outPdf = await PDFDocument.create()
 
-      for (const order of orders) {
+      for (const order of printableOrders) {
         try {
           const blob    = await fetchOrderLabelBlob(order)
           const bytes   = new Uint8Array(await blob.arrayBuffer())
@@ -444,7 +488,7 @@ export default function Labels({ vintedCookie }) {
         } catch (e) { console.warn('[Vault] printAll order mislukt:', order.id, e.message) }
       }
 
-      for (const item of manualItems) {
+      for (const item of printableManualItems) {
         try {
           // item.blob is al door /api/label gecropt naar exact 4×6 — gewoon embedden
           const bytes = new Uint8Array(await item.blob.arrayBuffer())
@@ -474,7 +518,7 @@ export default function Labels({ vintedCookie }) {
     setPrinting(false)
   }
 
-  const totalCount = orders.length + manualItems.length
+  const totalCount = printableOrders.length + printableManualItems.length
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -549,6 +593,8 @@ export default function Labels({ vintedCookie }) {
                 onDownload={() => downloadLabel(order)}
                 isDownloading={downloading.has(order.id)}
                 isDone={downloaded.has(order.id)}
+                printed={order.label_printed}
+                onTogglePrinted={(checked) => togglePrinted(order, checked)}
               />
             ))}
           </div>
@@ -562,36 +608,51 @@ export default function Labels({ vintedCookie }) {
             Handmatig toegevoegd ({manualItems.length})
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {manualItems.map((item) => (
-              <div
-                key={item.id}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 10,
-                  background: 'var(--bg-2)', border: '1px solid var(--border)',
-                  borderRadius: 'var(--r-lg)', padding: '10px 14px',
-                }}
-              >
-                <div style={{
-                  width: 36, height: 36, borderRadius: 'var(--r-sm, 6px)',
-                  background: 'var(--surface)', border: '1px solid var(--border)',
-                  flexShrink: 0, overflow: 'hidden',
-                }}>
-                  <embed
-                    src={`${item.previewUrl}#toolbar=0&navpanes=0&scrollbar=0`}
-                    type="application/pdf"
-                    style={{ width: '100%', height: '100%', pointerEvents: 'none' }}
-                  />
+            {manualItems.map((item) => {
+              const printed = manualPrinted.has(item.id)
+              return (
+                <div
+                  key={item.id}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    background: 'var(--bg-2)', border: '1px solid var(--border)',
+                    borderRadius: 'var(--r-lg)', padding: '10px 14px',
+                    opacity: printed ? 0.5 : 1, transition: 'opacity .2s',
+                  }}
+                >
+                  <label
+                    title="Geprint — uitgesloten van 'Print alle labels'"
+                    style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, cursor: 'pointer' }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={printed}
+                      onChange={(e) => toggleManualPrinted(item.id, e.target.checked)}
+                      style={{ width: 16, height: 16, cursor: 'pointer' }}
+                    />
+                  </label>
+                  <div style={{
+                    width: 36, height: 36, borderRadius: 'var(--r-sm, 6px)',
+                    background: 'var(--surface)', border: '1px solid var(--border)',
+                    flexShrink: 0, overflow: 'hidden',
+                  }}>
+                    <embed
+                      src={`${item.previewUrl}#toolbar=0&navpanes=0&scrollbar=0`}
+                      type="application/pdf"
+                      style={{ width: '100%', height: '100%', pointerEvents: 'none' }}
+                    />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {item.name}
+                  </div>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => removeManualItem(item.id)}
+                    style={{ padding: '3px 8px', flexShrink: 0, fontSize: 14 }}
+                  >×</button>
                 </div>
-                <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {item.name}
-                </div>
-                <button
-                  className="btn btn-ghost btn-sm"
-                  onClick={() => removeManualItem(item.id)}
-                  style={{ padding: '3px 8px', flexShrink: 0, fontSize: 14 }}
-                >×</button>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </div>
       )}

@@ -28,6 +28,9 @@ ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS buyer_name TEXT;
 ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS item_titles TEXT;
 ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS batch_id TEXT;
 ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS label_pdf_url TEXT;
+-- "Geprint"-vinkje op de Labels-pagina — handmatig en automatisch (na
+-- download) gezet, persistent zodat de status ook op andere apparaten klopt.
+ALTER TABLE vinted_orders ADD COLUMN IF NOT EXISTS label_printed BOOLEAN DEFAULT FALSE;
 
 -- Vinted's numerieke transaction/shipment-statuscodes — primaire bron voor
 -- classifyOrderStage() (skuUtils.js) achter de Home-dashboard-statuskaarten,
