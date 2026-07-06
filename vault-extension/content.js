@@ -497,14 +497,28 @@
       const r = await vGet(`/api/v2/orders/${orderId}`);
       const ord = r.order || r;
       const rawItems = ord.items || ord.line_items || ord.order_items || ord.contents || [];
-      const photos = [];
       const titles = [];
-      for (const it of rawItems) {
-        const p = it.photos?.[0]?.url || it.photo?.url || it.item_photo?.url ||
-          it.item?.photos?.[0]?.url || it.item?.photo?.url || null;
+      let photos = [];
+      if (rawItems.length === 1) {
+        // Eén artikel: dit is de enige plek waar de VOLLEDIGE fotogalerij
+        // van een reeds verkocht enkel artikel nog retroactief opgehaald kan
+        // worden (dit endpoint blijft, i.t.t. /api/v2/items/{id}, bereikbaar
+        // na verkoop — zie hierboven) — voor een order met >1 artikel pakken
+        // we hieronder bewust maar 1 foto per artikel (een galerij-thumbnail
+        // per bundelproduct, geen volledige fotoset per product).
+        const it = rawItems[0];
+        const itPhotos = it.photos || it.item?.photos || [];
+        photos = itPhotos.map(p => p.url).filter(Boolean);
         const t = it.title || it.item?.title || null;
-        if (p) photos.push(p);
         if (t) titles.push(t);
+      } else {
+        for (const it of rawItems) {
+          const p = it.photos?.[0]?.url || it.photo?.url || it.item_photo?.url ||
+            it.item?.photos?.[0]?.url || it.item?.photo?.url || null;
+          const t = it.title || it.item?.title || null;
+          if (p) photos.push(p);
+          if (t) titles.push(t);
+        }
       }
       console.log(`[Vault] fetchOrderItemPhotos ${orderId}: ${photos.length} foto's / ${titles.length} titels (${rawItems.length} items in response)`);
       return { photos, titles };
@@ -650,9 +664,17 @@
     // fetchConvDetail-ronde voor reeds volledig verrijkte orders (die anders
     // hierna nooit meer aangeraakt worden), zodat bestaande orders alsnog
     // met transactionStatus/shipmentStatus/isCompleted worden aangevuld.
+    // Laatste OR-tak: orders die al eerder volledig verwerkt zijn (photo_urls
+    // staat al op null, geen listing-cache-hit toen) komen hier bewust nog 1x
+    // terug — enkel om de retroactieve /api/v2/orders/{orderId}-fallback
+    // hieronder een kans te geven (dat endpoint bestond toen dit voor het
+    // eerst liep misschien nog niet, of leverde toen niks op maar kan nu wél
+    // iets teruggeven). ordersApiPhotoTried voorkomt dat dit bij elke
+    // sync-ronde herhaald wordt zodra die ene herkansing gehad heeft.
     const needsDetail = orders.filter(o =>
       ((!o.photo || !o.buyer || !o.currentUserSide || o.transactionStatus === undefined || o.payoutDate === undefined) && (o.conversationId || o.convId))
       || (o.photo_urls === undefined && o.transactionId)
+      || (o.photo_urls == null && !o.ordersApiPhotoTried && o.orderId)
     );
 
     // Log VOOR de needsDetail-filter of deze 2 orders er überhaupt inzitten,
@@ -677,9 +699,17 @@
       await Promise.all(batch.map(async o => {
         const id = o.conversationId || o.convId;
         const isDebugTxn = DEBUG_TXN_IDS.has(o.transactionId);
+        // Buiten het if (id)-blok gedeclareerd (i.p.v. destructured const
+        // daarbinnen) — de "retroactieve foto-fallback" verderop (buiten dit
+        // blok) moet ook weten of dit een bundel was, ook als conversationId/
+        // convId ontbreekt (dan blijft itemIds gewoon leeg, wat hieronder als
+        // "geen bundel" behandeld wordt — de veiligste aanname).
+        let itemIds = [];
         if (id) {
           if (isDebugTxn) console.log(`[Vault] DEBUG txn ${o.transactionId}: fetchConvDetail(${id}) start`);
-          const { photo, buyer, buyerName, country, currentUserSide, itemIds, transactionStatus, shipmentStatus, isCompleted, payoutDate } = await fetchConvDetail(id, isDebugTxn);
+          const detail = await fetchConvDetail(id, isDebugTxn);
+          const { photo, buyer, buyerName, country, currentUserSide, transactionStatus, shipmentStatus, isCompleted, payoutDate } = detail;
+          itemIds = detail.itemIds || [];
           console.log(`[Vault] conv detail txn ${o.transactionId}: opp="${buyer}" country="${country}" side="${currentUserSide}"`);
           if (isDebugTxn) console.log(`[Vault] DEBUG txn ${o.transactionId}: fetchConvDetail resultaat →`, JSON.stringify({ photo, buyer, buyerName, country, currentUserSide, itemIds, transactionStatus, shipmentStatus, isCompleted, payoutDate }));
           o.transactionStatus = transactionStatus;
@@ -719,13 +749,31 @@
         if (o.photo_urls === undefined && o.transactionId) {
           const itemId = await fetchTransactionItemId(o.transactionId);
           const cached = itemId ? await getCachedItemPhotos(itemId) : null;
-          if (cached && cached.length > 1) {
-            o.photo_urls = JSON.stringify(cached);
-            console.log(`[Vault] txn ${o.transactionId}: ${cached.length} foto's uit listing-cache gehaald (item ${itemId})`);
-          } else {
-            o.photo_urls = null;
-          }
+          o.photo_urls = (cached && cached.length > 1) ? JSON.stringify(cached) : null;
+          if (cached && cached.length > 1) console.log(`[Vault] txn ${o.transactionId}: ${cached.length} foto's uit listing-cache gehaald (item ${itemId})`);
           changed = true;
+        }
+
+        // Retroactieve fallback voor orders zonder fotogalerij (net hierboven
+        // gezet, of al bij een vorige sync op `null` beland): de
+        // listing-fotocache dekt enkel items die nog actief waren tijdens een
+        // Listings-ververs vóór ze verkocht werden — een item dat razendsnel
+        // verkocht werd (of al verkocht was vóór deze cache-functionaliteit
+        // bestond) heeft dus nooit een cache-hit, ook al bestaat de order nog
+        // prima. /api/v2/orders/{orderId} (zie fetchOrderItemPhotos hierboven)
+        // blijft na verkoop wél bereikbaar, dus dat geeft alsnog een
+        // retroactieve fotogalerij — enkel voor single-item-orders (bundles
+        // liepen hierboven al via itemIds.length>1), en maar 1x per order
+        // (ordersApiPhotoTried) zodat een order zonder foto's niet bij elke
+        // sync opnieuw de API belast.
+        if (o.photo_urls == null && !o.ordersApiPhotoTried && itemIds.length <= 1 && o.orderId) {
+          o.ordersApiPhotoTried = true;
+          changed = true;
+          const { photos } = await fetchOrderItemPhotos(o.orderId);
+          if (photos.length > 1) {
+            o.photo_urls = JSON.stringify(photos);
+            console.log(`[Vault] txn ${o.transactionId}: ${photos.length} foto's retroactief via orders-API (geen listing-cache-hit)`);
+          }
         }
       }));
       done += batch.length;
