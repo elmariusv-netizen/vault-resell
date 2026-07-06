@@ -13,6 +13,7 @@ import Auth from './pages/Auth'
 import Onboarding from './pages/Onboarding'
 import Upgrade from './pages/Upgrade'
 import AdminUsers from './pages/AdminUsers'
+import ResetPassword from './pages/ResetPassword'
 import { loadCloudData, saveCloudData } from './utils/cloudStorage'
 import { SEED_DATA } from './data/seedData'
 import { getRemainingQty } from './utils/skuUtils'
@@ -63,6 +64,10 @@ export default function App() {
   // onboardingCompleted, autoSyncSales, autoSyncPurchases } — bepaalt of de
   // onboarding-flow getoond wordt en welke Nav-onderdelen zichtbaar zijn.
   const [userSettings, setUserSettings] = useState(null)
+  // Wordt true zodra een password-recovery-link herkend wordt (zie de twee
+  // effects hieronder) — toont dan ResetPassword i.p.v. de normale app,
+  // ongeacht login/onboarding/Whop-status.
+  const [passwordRecovery, setPasswordRecovery] = useState(false)
 
   // Uitbreiding van setPage: laat Home.jsx's "klik op een dag in de grafiek"
   // meteen een dag-filter meegeven aan de doelpagina (vooralsnog enkel
@@ -88,10 +93,29 @@ export default function App() {
       setSupabaseUser(session?.user ?? null)
       setAuthChecked(true)
     })
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setSupabaseUser(session?.user ?? null)
+      // Supabase's eigen, timing-onafhankelijke signaal voor een net-
+      // aangeklikte reset-wachtwoord-link (zie ook de losse hash-check
+      // hieronder — supabase-js verwerkt de #...&type=recovery-hash al bij
+      // het laden van de client, dus tegen de tijd dat React-effects draaien
+      // kan de hash al gestript zijn; dit event vangt dat geval alsnog op).
+      if (event === 'PASSWORD_RECOVERY') setPasswordRecovery(true)
     })
     return () => subscription.unsubscribe()
+  }, [])
+
+  // Directe check op de URL-hash — Supabase redirect na een reset-link-klik
+  // naar {SITE_URL}#access_token=...&type=recovery. Aanvullend op het
+  // PASSWORD_RECOVERY-event hierboven (niet vervangend): dekt het geval waar
+  // de hash bij het eerste React-effect nog intact is.
+  useEffect(() => {
+    if (window.location.hash.includes('type=recovery')) {
+      setPasswordRecovery(true)
+      // Voorkomt dat een refresh tijdens deze flow de check opnieuw
+      // triggert, en houdt de tokens niet zichtbaar in de adresbalk/geschiedenis.
+      window.history.replaceState(null, '', window.location.pathname)
+    }
   }, [])
 
   // ── Sessie-bewaking: uitloggen bij verwijderde gebruiker ──────────────────
@@ -373,6 +397,14 @@ export default function App() {
         Laden…
       </div>
     )
+  }
+
+  // Vóór alles anders — inclusief de !supabaseUser-check: een reset-link
+  // authenticeert de gebruiker al via een tijdelijke recovery-sessie, dus
+  // supabaseUser staat op dit punt al, maar ze moeten hun nieuw wachtwoord
+  // zetten voor ze de normale app (of Auth-scherm) te zien krijgen.
+  if (passwordRecovery) {
+    return <ResetPassword onDone={() => setPasswordRecovery(false)} />
   }
 
   if (!supabaseUser) return <Auth />
