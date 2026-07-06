@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '../utils/supabase'
 import { formatCurrency } from '../utils/skuUtils'
 import Modal from '../components/Modal'
@@ -223,6 +223,14 @@ export default function AdminUsers() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [selectedUserId, setSelectedUserId] = useState(null)
+  const [search, setSearch] = useState('')
+
+  const filteredUsers = useMemo(() => {
+    if (!users) return users
+    const q = search.trim().toLowerCase()
+    if (!q) return users
+    return users.filter((u) => u.email?.toLowerCase().includes(q))
+  }, [users, search])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -251,12 +259,29 @@ export default function AdminUsers() {
       <div className="page-header">
         <div>
           <h1>Gebruikers</h1>
-          <div className="page-subtitle">{users ? `${users.length} geregistreerde accounts` : '…'}</div>
+          <div className="page-subtitle">
+            {users
+              ? search.trim()
+                ? `${filteredUsers.length} van ${users.length} accounts`
+                : `${users.length} geregistreerde accounts`
+              : '…'}
+          </div>
         </div>
         <button className="btn btn-secondary" onClick={load} disabled={loading}>
           {loading ? '⏳ Bezig…' : '↻ Vernieuwen'}
         </button>
       </div>
+
+      {users && (
+        <div className="filters">
+          <input
+            className="search-input"
+            placeholder="Zoek e-mailadres…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+      )}
 
       {error && (
         <div className="empty-state">
@@ -270,7 +295,15 @@ export default function AdminUsers() {
         <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>Laden…</div>
       )}
 
-      {!error && users && (
+      {!error && users && filteredUsers.length === 0 && (
+        <div className="empty-state">
+          <div className="empty-icon">🔍</div>
+          <h3>Geen accounts gevonden</h3>
+          <p>Geen e-mailadres matcht "{search}".</p>
+        </div>
+      )}
+
+      {!error && users && filteredUsers.length > 0 && (
         <div className="table-wrap">
           <table>
             <thead>
@@ -283,7 +316,7 @@ export default function AdminUsers() {
               </tr>
             </thead>
             <tbody>
-              {users.map((u) => {
+              {filteredUsers.map((u) => {
                 const badge = statusBadge(u.whopStatus)
                 return (
                   <tr key={u.id} style={{ cursor: 'pointer' }} onClick={() => setSelectedUserId(u.id)}>
