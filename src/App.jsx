@@ -18,7 +18,7 @@ import AuthLinkError from './pages/AuthLinkError'
 import { loadCloudData, saveCloudData } from './utils/cloudStorage'
 import { SEED_DATA } from './data/seedData'
 import { getRemainingQty } from './utils/skuUtils'
-import { supabase } from './utils/supabase'
+import { supabase, getCachedSupabaseUser } from './utils/supabase'
 import { readWhopCache, writeWhopCache, fetchWhopStatus } from './utils/whopAccess'
 
 // De extensie ververst de sessiecookie bij elk Vinted-bezoek + elke ~4 min
@@ -58,8 +58,14 @@ export default function App() {
   // Automatisch gekoppeld" of "⚠ Extensie niet actief" toont.
   const [vintedCookieUpdatedAt, setVintedCookieUpdatedAt] = useState(null)
   const [vintedCookieStale, setVintedCookieStale] = useState(true)
-  const [supabaseUser, setSupabaseUser] = useState(null)
-  const [authChecked, setAuthChecked] = useState(false)
+  // Optimistisch geïnitialiseerd uit de door supabase-js zelf gepersisteerde
+  // sessie (localStorage, synchroon leesbaar) i.p.v. van null/false — zonder
+  // dit ziet een teruggekeerde, al ingelogde gebruiker bij ELKE F5 eerst het
+  // "Laden…"-scherm, puur omdat supabase.auth.getSession() zelf altijd
+  // asynchroon is óók als de sessie al lokaal gecached is. De effect
+  // hieronder blijft deze gok gewoon bevestigen/corrigeren op de achtergrond.
+  const [supabaseUser, setSupabaseUser] = useState(() => getCachedSupabaseUser())
+  const [authChecked, setAuthChecked] = useState(true)
   const [pendingDayFilter, setPendingDayFilter] = useState(null)
   // null = nog niet geladen (toont laadscherm), daarna { purchaseMethod,
   // onboardingCompleted, autoSyncSales, autoSyncPurchases } — bepaalt of de
