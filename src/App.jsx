@@ -234,6 +234,16 @@ export default function App() {
   // gecombineerde user_settings-select hierboven staan, dan faalt die hele
   // query (en dus ook onboardingCompleted e.d.) op accounts waar de migratie
   // nog niet gedraaid is.
+  //
+  // Eigen state (niet in userSettings gemerged) — deze query en de
+  // gecombineerde user_settings-query hierboven racen allebei meteen na het
+  // zetten van activeUserId, en de lichtere single-column select hier wint
+  // die race doorgaans. Een merge als `prev ? {...prev, isAdmin} : prev`
+  // vond dan een nog-lege userSettings (prev===null) en gooide isAdmin stil
+  // weg — permanent, want dit effect draait maar 1x per activeUserId. Losse
+  // state omzeilt die afhankelijkheid volledig.
+  const [isAdmin, setIsAdmin] = useState(false)
+
   useEffect(() => {
     if (!activeUserId) return
     supabase
@@ -243,7 +253,7 @@ export default function App() {
       .maybeSingle()
       .then(({ data: row, error }) => {
         if (error) { console.warn('[Vault] is_admin ophalen mislukt (migratie nog niet gedraaid?):', error.message); return }
-        setUserSettings((prev) => prev ? { ...prev, isAdmin: !!row?.is_admin } : prev)
+        setIsAdmin(!!row?.is_admin)
       })
   }, [activeUserId])
 
@@ -267,7 +277,7 @@ export default function App() {
 
   useEffect(() => {
     if (!activeUserId || !userSettings) return
-    if (userSettings.isAdmin) { setWhopAccess({ hasAccess: true, status: 'admin' }); return }
+    if (isAdmin) { setWhopAccess({ hasAccess: true, status: 'admin' }); return }
 
     const cached = readWhopCache(activeUserId)
     if (cached) { setWhopAccess(cached); return }
@@ -287,7 +297,11 @@ export default function App() {
       }
     })
     return () => { cancelled = true }
-  }, [activeUserId, userSettings?.isAdmin])
+    // !!userSettings (i.p.v. de volledige userSettings-object-referentie) is
+    // bewust de dependency: enkel opnieuw draaien zodra userSettings van
+    // null naar geladen overgaat, niet bij elke latere, ongerelateerde
+    // userSettings-wijziging (bv. een auto-sync-toggle in Settings.jsx).
+  }, [activeUserId, isAdmin, !!userSettings])
 
   const toggleTheme = useCallback(() => {
     const next = theme === 'light' ? 'dark' : 'light'
@@ -383,7 +397,7 @@ export default function App() {
     )
   }
 
-  if (!userSettings.isAdmin) {
+  if (!isAdmin) {
     if (whopAccess === null) {
       return (
         <div className="loading">
@@ -416,7 +430,7 @@ export default function App() {
         onToggleTheme={toggleTheme}
         userName={displayName}
         purchaseMethod={userSettings.purchaseMethod}
-        isAdmin={userSettings.isAdmin}
+        isAdmin={isAdmin}
       />
 
       <div className="content-area">
@@ -450,7 +464,7 @@ export default function App() {
             />
           )}
           {page === 'labels'    && <Labels data={data} vintedCookie={vintedCookie} />}
-          {page === 'gebruikers' && userSettings.isAdmin && <AdminUsers />}
+          {page === 'gebruikers' && isAdmin && <AdminUsers />}
         </main>
       </div>
     </div>
