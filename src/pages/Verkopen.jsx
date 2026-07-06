@@ -955,6 +955,32 @@ function ManualStatusBadge({ order, onSave }) {
   )
 }
 
+// ── Laadstatus voor de Vinted Orders-lijst — kaartvormige skeletons i.p.v.
+// een simpele "Laden…"-tekst, die veel korter is dan de uiteindelijke
+// orderkaarten en zo een storende layout-sprong gaf zodra de echte lijst
+// binnenkwam (de rest van de pagina eronder schoof dan plots naar beneden).
+// Skeletons in ongeveer dezelfde hoogte/vorm als VintedOrderRow voorkomen
+// die sprong grotendeels.
+function SkeletonOrderCard() {
+  const box = (w, h, r = 6) => (
+    <div style={{ width: w, height: h, borderRadius: r, background: 'var(--bg-2)', flexShrink: 0 }} />
+  )
+  return (
+    <div style={{
+      display: 'flex', gap: 14, alignItems: 'center',
+      border: '1px solid var(--border)', borderRadius: 12,
+      padding: 16, marginBottom: 10, opacity: 0.6,
+    }}>
+      {box(70, 70, 8)}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {box('70%', 14)}
+        {box('40%', 12)}
+        {box('30%', 12)}
+      </div>
+    </div>
+  )
+}
+
 // ── Order rij (Vinteer-stijl) ──────────────────────────────────────────────
 function VintedOrderRow({ order, onSave, onSaveFields, onBulkConfirm, onDismiss, onPhotoClick, onRegister, onDetail, onUnlinkSku, batches, allOrders, checked, onCheck }) {
   const [skuPickerOpen,  setSkuPickerOpen]  = useState(false)
@@ -2002,8 +2028,8 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
             )}
 
             {vtLoading ? (
-              <div style={{ padding: 20, background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
-                Laden…
+              <div>
+                {[1, 2, 3].map((i) => <SkeletonOrderCard key={i} />)}
               </div>
             ) : vtError ? (
               <div style={{ padding: 16, background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, color: 'var(--red)', fontSize: 13 }}>
