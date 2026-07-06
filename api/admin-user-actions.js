@@ -2,19 +2,54 @@ import { fetchWhopMembershipsByEmail } from './_lib/whop.js'
 import { verifySupabaseUser } from './_lib/verifyUser.js'
 import { fetchCallerFlags, fetchAuthUserById, serviceHeaders } from './_lib/adminAuth.js'
 
+// Zonder expliciete override valt Supabase terug op de project-brede
+// "Site URL" uit de Auth-instellingen — bij dit project nog een oude
+// localhost:3000-devwaarde, waardoor gegenereerde links (reset-e-mail,
+// impersonate) na productie-gebruik naar localhost verwijzen i.p.v. de
+// live app. VITE_APP_URL laat dit expliciet overschrijven; VERCEL_URL
+// (automatisch door Vercel gezet, zonder protocol) is de fallback per
+// deployment, en de hardcoded productie-URL is de laatste fallback.
+function getAppUrl() {
+  if (process.env.VITE_APP_URL) return process.env.VITE_APP_URL
+  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`
+  return 'https://vault-resell.vercel.app'
+}
+
+// GoTrue's exacte wire-formaat voor een redirect-override is niet publiek
+// gedocumenteerd (enkel de JS-SDK-signatuur) — redirect_to zowel als
+// query-param als als top-level body-veld meesturen dekt beide bekende
+// varianten; een niet-herkend veld/param wordt door GoTrue genegeerd, dus
+// dit is puur defensief en kan niet per ongeluk iets anders breken.
+function withRedirect(url) {
+  const u = new URL(url)
+  u.searchParams.set('redirect_to', getAppUrl())
+  return u
+}
+
+// 429 van GoTrue is bijna altijd de e-mail-rate-limit (Supabase's ingebouwde
+// mailer staat standaard op enkele e-mails per uur) — een technische
+// "429 {...}"-foutcode zegt een beheerder niets, dus die vertalen we naar een
+// begrijpelijke melding. Andere fouten blijven wel de rauwe status+body tonen
+// (nuttig om echte configuratieproblemen te herkennen).
+function describeError(status, rawBody) {
+  if (status === 429) return 'Te veel aanvragen — wacht even en probeer opnieuw.'
+  return `${status} ${rawBody.slice(0, 300)}`.trim()
+}
+
 // Genereert een Supabase auth-link (recovery/magiclink) via de Admin API.
 // Dit endpoint verstuurt ZELF geen e-mail — het geeft enkel de link/token
 // terug (bedoeld om je eigen e-mail-template mee te bouwen, of — zoals bij
 // impersonate hieronder — om de link rechtstreeks aan de admin te tonen).
 async function generateAuthLink(supabaseUrl, serviceKey, { type, email }) {
-  const res = await fetch(`${supabaseUrl}/auth/v1/admin/generate_link`, {
+  const url = withRedirect(`${supabaseUrl}/auth/v1/admin/generate_link`)
+  const res = await fetch(url, {
     method: 'POST',
     headers: serviceHeaders(serviceKey),
-    body: JSON.stringify({ type, email }),
+    body: JSON.stringify({ type, email, redirect_to: getAppUrl() }),
   })
   if (!res.ok) {
     const body = await res.text().catch(() => '')
-    throw new Error(`generate_link (${type}) mislukt: ${res.status} ${body.slice(0, 300)}`)
+    throw new Error(`generate_link (${type}) mislukt: ${describeError(res.status, body)}`)
   }
   const json = await res.json()
   // Vlak (action_link) of genest (properties.action_link) — API-versie-afhankelijk.
@@ -88,14 +123,15 @@ async function handleResetPassword(ctx, targetUserId) {
   // clientside ook aanroept — dat triggert wél Supabase's eigen
   // auth-mailtemplate. De anon-key volstaat hiervoor (geen service-key
   // nodig), maar toegang blijft server-side achter de is_admin-check hierboven.
-  const res = await fetch(`${supabaseUrl}/auth/v1/recover`, {
+  const res = await fetch(withRedirect(`${supabaseUrl}/auth/v1/recover`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', apikey: anonKey },
-    body: JSON.stringify({ email: authUser.email }),
+    body: JSON.stringify({ email: authUser.email, redirect_to: getAppUrl() }),
   })
   if (!res.ok) {
     const body = await res.text().catch(() => '')
-    return { status: 502, body: { error: `Reset-mail versturen mislukt: ${res.status} ${body.slice(0, 300)}` } }
+    if (res.status === 429) return { status: 429, body: { error: describeError(429, body) } }
+    return { status: 502, body: { error: `Reset-mail versturen mislukt: ${describeError(res.status, body)}` } }
   }
   return { status: 200, body: { success: true, email: authUser.email } }
 }
@@ -136,7 +172,7 @@ async function handleDeactivate(ctx, targetUserId, callerId) {
   })
   if (!deleteRes.ok) {
     const body = await deleteRes.text().catch(() => '')
-    return { status: 502, body: { error: `Deactiveren mislukt: ${deleteRes.status} ${body.slice(0, 300)}` } }
+    return { status: 502, body: { error: `Deactiveren mislukt: ${describeError(deleteRes.status, body)}` } }
   }
 
   const settingsDeleteRes = await fetch(
@@ -170,7 +206,7 @@ async function handleSetAdmin(ctx, targetUserId, callerId, desiredIsAdmin) {
   )
   if (!patchRes.ok) {
     const body = await patchRes.text().catch(() => '')
-    return { status: 502, body: { error: `Bijwerken mislukt: ${patchRes.status} ${body.slice(0, 300)}` } }
+    return { status: 502, body: { error: `Bijwerken mislukt: ${describeError(patchRes.status, body)}` } }
   }
   return { status: 200, body: { success: true, isAdmin: !!desiredIsAdmin } }
 }
