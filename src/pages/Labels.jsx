@@ -491,7 +491,7 @@ export default function Labels({ vintedCookie }) {
 
       <CarrierBadges />
       <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 20 }}>
-        Alle verzendlabels worden automatisch herkend en uitgeknipt op 4×6 voor je Munbyn printer.
+        Alle verzendlabels worden automatisch herkend en uitgeknipt op 4×6 voor je labelprinter.
       </div>
 
       {/* ── Vinted labels ────────────────────────────────────────────────── */}
