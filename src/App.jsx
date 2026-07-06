@@ -46,6 +46,40 @@ function validateData(loaded) {
   return changed ? { ...loaded, batches } : loaded
 }
 
+// Leest en strip de auth-hash (#error=...&error_code=... of
+// #access_token=...&type=recovery) op MODULE-niveau — dus vóórdat React
+// ook maar iets rendert, laat staan een effect draait. Een useEffect draait
+// pas ná de eerste commit/paint; in dat venster bleef de hash nog even
+// zichtbaar in de adresbalk, en een refresh daarbinnen triggerde 'm gewoon
+// opnieuw (geen sessie/server die de hash consumeert, dus niks "verbruikt"
+// 'm vanzelf). Dit bestand wordt door main.jsx geïmporteerd vóór de eerste
+// render-call — module-level code hier loopt dus gegarandeerd eerder.
+// window.location.hash is hierna leeg, dus het resultaat wordt hier meteen
+// bewaard voor de component (die kan de hash zelf niet meer aflezen).
+function parseAndStripAuthHash() {
+  const hash = window.location.hash
+  if (!hash) return null
+
+  const params = new URLSearchParams(hash.replace(/^#/, ''))
+  const hashError = params.get('error')
+  const isRecovery = hash.includes('type=recovery')
+  if (!hashError && !isRecovery) return null
+
+  window.history.replaceState(null, '', window.location.pathname)
+
+  if (hashError) {
+    return {
+      kind: 'error',
+      error: hashError,
+      errorCode: params.get('error_code'),
+      errorDescription: params.get('error_description'),
+    }
+  }
+  return { kind: 'recovery' }
+}
+
+const INITIAL_AUTH_HASH = parseAndStripAuthHash()
+
 export default function App() {
   const [page, setPage] = useState(() => localStorage.getItem('vault-page') || 'home')
   const [data, setData] = useState(null)
@@ -71,13 +105,15 @@ export default function App() {
   // onboardingCompleted, autoSyncSales, autoSyncPurchases } — bepaalt of de
   // onboarding-flow getoond wordt en welke Nav-onderdelen zichtbaar zijn.
   const [userSettings, setUserSettings] = useState(null)
-  // Wordt true zodra een password-recovery-link herkend wordt (zie de twee
-  // effects hieronder) — toont dan ResetPassword i.p.v. de normale app,
-  // ongeacht login/onboarding/Whop-status.
-  const [passwordRecovery, setPasswordRecovery] = useState(false)
-  // Gezet zodra de URL-hash een #error=...-fragment bevat (bv. een verlopen
-  // of al-gebruikte reset/magic-link) — { error, errorCode, errorDescription }.
-  const [authLinkError, setAuthLinkError] = useState(null)
+  // Uit INITIAL_AUTH_HASH (module-level, zie boven — de hash zelf is dan al
+  // gestript) i.p.v. opnieuw window.location.hash te lezen in een effect:
+  // toont ResetPassword i.p.v. de normale app, ongeacht login/onboarding/
+  // Whop-status. Het PASSWORD_RECOVERY-auth-event hieronder blijft een
+  // aanvullend, timing-onafhankelijk pad (bv. cross-tab session-sync zonder
+  // dat déze tab ooit de hash in zijn eigen URL had).
+  const [passwordRecovery, setPasswordRecovery] = useState(() => INITIAL_AUTH_HASH?.kind === 'recovery')
+  // Idem — { error, errorCode, errorDescription } of null.
+  const [authLinkError, setAuthLinkError] = useState(() => INITIAL_AUTH_HASH?.kind === 'error' ? INITIAL_AUTH_HASH : null)
 
   // Uitbreiding van setPage: laat Home.jsx's "klik op een dag in de grafiek"
   // meteen een dag-filter meegeven aan de doelpagina (vooralsnog enkel
@@ -105,50 +141,16 @@ export default function App() {
     })
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setSupabaseUser(session?.user ?? null)
-      // Supabase's eigen, timing-onafhankelijke signaal voor een net-
-      // aangeklikte reset-wachtwoord-link (zie ook de losse hash-check
-      // hieronder — supabase-js verwerkt de #...&type=recovery-hash al bij
-      // het laden van de client, dus tegen de tijd dat React-effects draaien
-      // kan de hash al gestript zijn; dit event vangt dat geval alsnog op).
+      // Aanvullend op parseAndStripAuthHash() hierboven (module-level, dus
+      // die heeft de hash al verwerkt vóór dit effect ooit draait) — dit
+      // event dekt scenario's waar déze tab de recovery-hash zelf nooit in
+      // zijn URL had (bv. cross-tab session-sync via supabase-js's eigen
+      // BroadcastChannel).
       if (event === 'PASSWORD_RECOVERY') setPasswordRecovery(true)
     })
     return () => subscription.unsubscribe()
   }, [])
 
-  // Directe check op de URL-hash — Supabase redirect na een reset-link-klik
-  // naar {SITE_URL}#access_token=...&type=recovery (gelukt) of
-  // {SITE_URL}#error=...&error_code=...&error_description=... (mislukt, bv.
-  // een verlopen of al-gebruikte link — GEEN sessie wordt dan aangemaakt, dus
-  // het PASSWORD_RECOVERY-event hierboven vuurt in dat geval niet). Aanvullend
-  // op dat event (niet vervangend): dekt het geval waar de hash bij het
-  // eerste React-effect nog intact is.
-  useEffect(() => {
-    const hash = window.location.hash
-    if (!hash) return
-
-    const params = new URLSearchParams(hash.replace(/^#/, ''))
-    const hashError = params.get('error')
-
-    if (hashError) {
-      setAuthLinkError({
-        error: hashError,
-        errorCode: params.get('error_code'),
-        errorDescription: params.get('error_description'),
-      })
-    } else if (hash.includes('type=recovery')) {
-      setPasswordRecovery(true)
-    } else {
-      return
-    }
-
-    // In beide gevallen: hash meteen verwijderen. Zonder dit blijft de
-    // #error=...-fragment na een mislukte link in de URL staan, en triggert
-    // een simpele herlaad dezelfde foutmelding keer op keer opnieuw — de hash
-    // wordt immers nooit door de server geconsumeerd, enkel client-side
-    // gelezen. Houdt ook de (bij succes) gevoelige tokens niet zichtbaar in
-    // de adresbalk/geschiedenis.
-    window.history.replaceState(null, '', window.location.pathname)
-  }, [])
 
   // ── Sessie-bewaking: uitloggen bij verwijderde gebruiker ──────────────────
   const forceSignOut = useCallback(() => supabase.auth.signOut(), [])
