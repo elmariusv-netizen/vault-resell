@@ -3,10 +3,18 @@ import { supabase } from './supabase'
 export const genId = () =>
   `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
 
-export const pad = (n) => String(n).padStart(3, '0')
-
+// SKU's krijgen geen voorloopnullen meer (RIA20 i.p.v. RIA020, RIA100 blijft
+// RIA100) — enige plek waar het nummer bij de prefix geplakt wordt, dus alle
+// weergaves (Home/Inventory/Stats/Settings/... gebruiken allemaal formatSku/
+// formatSkuRange) tonen vanzelf de nieuwe notatie. Bestaande batches (die
+// enkel startNum/endNum als getal opslaan, geen geformatteerde string) tonen
+// dus automatisch de nieuwe notatie — enkel al opgeslagen SKU-tékst
+// (vinted_orders.sku_ref) is geschreven vóór deze wijziging en moet apart
+// gemigreerd worden, zie vault-extension/migrate-sku-no-padding.sql en
+// normalizeSku()/getUsedSkus() hieronder (die blijven ook de oude, gepadde
+// notatie herkennen, migratie of niet).
 export function formatSku(prefix, num) {
-  return `${prefix}${pad(num)}`
+  return `${prefix}${num}`
 }
 
 export function getNextSkuNum(batches, prefix) {
@@ -21,8 +29,8 @@ export function getNextSkuLabel(batches, prefix) {
 }
 
 export function formatSkuRange(prefix, startNum, endNum) {
-  if (startNum === endNum) return `${prefix}${pad(startNum)}`
-  return `${prefix}${pad(startNum)}-${pad(endNum)}`
+  if (startNum === endNum) return `${prefix}${startNum}`
+  return `${prefix}${startNum}-${endNum}`
 }
 
 export function getNextRange(batches, supplierPrefix, quantity) {
@@ -238,12 +246,24 @@ export function getEffectiveStatusBadge(order) {
 // bundel-orders). Orders in excludeOrderIds (de order(s) die je nu net aan
 // het (her)koppelen bent) tellen niet mee — hun eigen bestaande koppeling mag
 // herzien worden zonder zichzelf te blokkeren.
+// Herleidt een los SKU-tekstfragment naar zijn canonieke, padding-vrije vorm
+// ("RIA056" én "RIA56" -> "RIA56") — zodat een sku_ref die nog in de oude
+// notatie staat (geschreven vóór de SKU-migratie, zie
+// vault-extension/migrate-sku-no-padding.sql) nooit per ongeluk als "vrij"
+// getoond wordt tegenover freeSkus (die sinds formatSku() hierboven zonder
+// padding genereert) — deze normalisatie werkt dus ook als die migratie nog
+// niet gedraaid is.
+function normalizeSku(text) {
+  const m = String(text).trim().match(/^([A-Za-z]{2,4})[\s-]?0*(\d+)$/)
+  return m ? `${m[1].toUpperCase()}${m[2]}` : String(text).trim().toUpperCase()
+}
+
 export function getUsedSkus(allOrders, excludeOrderIds = []) {
   const exclude = new Set(excludeOrderIds)
   const used = new Set()
   for (const o of allOrders || []) {
     if (exclude.has(o.id) || !o.sku_ref) continue
-    o.sku_ref.split(',').forEach(s => { const t = s.trim().toUpperCase(); if (t) used.add(t) })
+    o.sku_ref.split(',').forEach(s => { const t = normalizeSku(s); if (t) used.add(t) })
   }
   return used
 }

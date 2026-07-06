@@ -100,8 +100,10 @@ const SIZES = ['xxxl','xxl','xl','xs','xxs','3xl','2xl','one size',
 function suggestSku(title, description) {
   const combined = `${title || ''} ${description || ''}`
   if (!combined.trim()) return ''
-  // Zoek SKU-prefix: alleen letters, geen nummer (gebruiker kiest zelf het nummer)
-  const existing = combined.match(/\b([A-Z]{2,4})\d{3,6}\b/)
+  // Zoek SKU-prefix: alleen letters, geen nummer (gebruiker kiest zelf het nummer).
+  // \d{1,6} i.p.v. \d{3,6}: SKU's krijgen sinds de migratie geen voorloopnullen
+  // meer (RIA20 i.p.v. RIA020), dus het nummer kan ook 1 of 2 cijfers zijn.
+  const existing = combined.match(/\b([A-Z]{2,4})\d{1,6}\b/)
   if (existing) return existing[1]
 
   const t = combined.toLowerCase()
@@ -1467,7 +1469,9 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
     let cancelled = false
     fetchAllVintedOrders().then(rows => {
       if (cancelled) return
-      const SKU_RE = /\b([A-Z]{2,4}\d{3,6})\b/
+      // \d{1,6} i.p.v. \d{3,6}: SKU's krijgen sinds de migratie geen
+      // voorloopnullen meer (RIA20 i.p.v. RIA020).
+      const SKU_RE = /\b([A-Z]{2,4}\d{1,6})\b/
       const enriched = rows.map(row => {
         if (!row.sku_ref && row.description) {
           const m = row.description.match(SKU_RE)
