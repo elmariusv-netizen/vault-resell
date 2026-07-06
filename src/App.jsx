@@ -11,10 +11,13 @@ import Aankopen from './pages/Aankopen'
 import Kosten from './pages/Kosten'
 import Auth from './pages/Auth'
 import Onboarding from './pages/Onboarding'
+import Upgrade from './pages/Upgrade'
+import AdminUsers from './pages/AdminUsers'
 import { loadCloudData, saveCloudData } from './utils/cloudStorage'
 import { SEED_DATA } from './data/seedData'
 import { getRemainingQty } from './utils/skuUtils'
 import { supabase } from './utils/supabase'
+import { readWhopCache, writeWhopCache, fetchWhopStatus } from './utils/whopAccess'
 
 // De extensie ververst de sessiecookie bij elk Vinted-bezoek + elke ~4 min
 // zolang een tab openstaat (zie uploadVintedCookie() in content.js) — een
@@ -225,6 +228,67 @@ export default function App() {
     return () => { clearInterval(id); document.removeEventListener('visibilitychange', onVisible) }
   }, [activeUserId, refreshVintedCookieStatus])
 
+  // is_admin in een losse, geïsoleerde query opgehaald (zelfde reden als
+  // vinted_cookie_updated_at hierboven): het is een nieuwe kolom die pas
+  // bestaat ná de Whop-migratie in supabase-setup.sql — zou hij in de
+  // gecombineerde user_settings-select hierboven staan, dan faalt die hele
+  // query (en dus ook onboardingCompleted e.d.) op accounts waar de migratie
+  // nog niet gedraaid is.
+  useEffect(() => {
+    if (!activeUserId) return
+    supabase
+      .from('user_settings')
+      .select('is_admin')
+      .eq('user_id', activeUserId)
+      .maybeSingle()
+      .then(({ data: row, error }) => {
+        if (error) { console.warn('[Vault] is_admin ophalen mislukt (migratie nog niet gedraaid?):', error.message); return }
+        setUserSettings((prev) => prev ? { ...prev, isAdmin: !!row?.is_admin } : prev)
+      })
+  }, [activeUserId])
+
+  // ── Whop-abonnement-gate ───────────────────────────────────────────────
+  // null = nog onbekend (toont laadscherm), daarna { hasAccess, status, ... }.
+  // Admins slaan de Whop-check volledig over; iedereen anders krijgt eerst de
+  // 24u-cache (localStorage) en anders een verse server-check (api/whop-
+  // status.js), die op zijn beurt fail-open gaat zolang Whop niet
+  // geconfigureerd is of een fout geeft — hier dus nooit zelf op fouten
+  // hoeven te reageren, enkel op een expliciet "geen toegang"-antwoord.
+  const [whopAccess, setWhopAccess] = useState(null)
+
+  const recheckWhopAccess = useCallback(async () => {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session?.access_token) throw new Error('geen actieve sessie')
+    const result = await fetchWhopStatus(session.access_token, { forceRefresh: true })
+    setWhopAccess(result)
+    writeWhopCache(activeUserId, result)
+    return result
+  }, [activeUserId])
+
+  useEffect(() => {
+    if (!activeUserId || !userSettings) return
+    if (userSettings.isAdmin) { setWhopAccess({ hasAccess: true, status: 'admin' }); return }
+
+    const cached = readWhopCache(activeUserId)
+    if (cached) { setWhopAccess(cached); return }
+
+    let cancelled = false
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (!session?.access_token) return
+      try {
+        const result = await fetchWhopStatus(session.access_token)
+        if (!cancelled) { setWhopAccess(result); writeWhopCache(activeUserId, result) }
+      } catch (e) {
+        console.warn('[Vault] whop-status ophalen mislukt:', e.message)
+        // Fail-open op infrastructuurfouten aan onze kant (netwerk, functie
+        // gecrasht) — enkel een expliciet antwoord van api/whop-status.js
+        // mag de Upgrade-gate tonen.
+        if (!cancelled) setWhopAccess({ hasAccess: true, status: 'unknown' })
+      }
+    })
+    return () => { cancelled = true }
+  }, [activeUserId, userSettings?.isAdmin])
+
   const toggleTheme = useCallback(() => {
     const next = theme === 'light' ? 'dark' : 'light'
     document.body.classList.add('theme-transitioning')
@@ -313,10 +377,31 @@ export default function App() {
       <Onboarding
         activeUserId={activeUserId}
         onComplete={({ purchaseMethod, autoSyncSales, autoSyncPurchases }) =>
-          setUserSettings({ purchaseMethod, autoSyncSales, autoSyncPurchases, onboardingCompleted: true })
+          setUserSettings((prev) => ({ ...prev, purchaseMethod, autoSyncSales, autoSyncPurchases, onboardingCompleted: true }))
         }
       />
     )
+  }
+
+  if (!userSettings.isAdmin) {
+    if (whopAccess === null) {
+      return (
+        <div className="loading">
+          <span style={{ color: 'var(--green)' }}>●</span>
+          Laden…
+        </div>
+      )
+    }
+    if (!whopAccess.hasAccess) {
+      return (
+        <Upgrade
+          supabaseUser={supabaseUser}
+          status={whopAccess.status}
+          onSignOut={() => supabase.auth.signOut()}
+          onRecheck={recheckWhopAccess}
+        />
+      )
+    }
   }
 
   const displayName = supabaseUser.email.split('@')[0]
@@ -331,6 +416,7 @@ export default function App() {
         onToggleTheme={toggleTheme}
         userName={displayName}
         purchaseMethod={userSettings.purchaseMethod}
+        isAdmin={userSettings.isAdmin}
       />
 
       <div className="content-area">
@@ -364,6 +450,7 @@ export default function App() {
             />
           )}
           {page === 'labels'    && <Labels data={data} vintedCookie={vintedCookie} />}
+          {page === 'gebruikers' && userSettings.isAdmin && <AdminUsers />}
         </main>
       </div>
     </div>

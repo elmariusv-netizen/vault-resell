@@ -307,3 +307,40 @@ ALTER TABLE business_costs ADD COLUMN IF NOT EXISTS invoice_path TEXT;
 INSERT INTO storage.buckets (id, name, public)
   VALUES ('invoices', 'invoices', true)
   ON CONFLICT DO NOTHING;
+
+-- ══════════════════════════════════════════════════════════════════
+-- WHOP.COM ABONNEMENT-GATING (Upgrade.jsx, AdminUsers.jsx, api/whop-status.js)
+-- ══════════════════════════════════════════════════════════════════
+
+-- is_admin: bypast de Whop-check volledig (eigenaar + eventuele andere
+-- beheerders) EN geeft toegang tot de "Gebruikers"-pagina. Bewust één vlag
+-- voor beide — er is geen apart "owner"-concept nodig.
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE;
+
+-- whop_status/whop_checked_at: server-side cache (enkel gelezen/geschreven
+-- door api/whop-status.js via SERVICE_KEY) zodat we niet bij elke laadbeurt
+-- Whop's API bevragen. NOOIT door de client zelf gelezen of geschreven —
+-- zie de REVOKE hieronder.
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS whop_status TEXT;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS whop_checked_at TIMESTAMPTZ;
+
+-- whop_email_override: enkel handmatig te zetten door een beheerder (via SQL
+-- editor) — lost het "Whop-aankoop-e-mail wijkt af van Vault Resell-login-
+-- e-mail"-scenario op zonder dat de gebruiker moet heraankopen. Zie ook de
+-- UI-melding in Upgrade.jsx.
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS whop_email_override TEXT;
+
+-- BELANGRIJK: de bestaande "user beheert eigen settings"-policy is FOR ALL
+-- zonder kolom-restrictie — zonder deze REVOKE zou een technische gebruiker
+-- via de browser-devtools zelf `is_admin: true` of `whop_status: 'active'`
+-- naar hun eigen rij kunnen schrijven (zelf-toegekende admin-rechten /
+-- zelf-toegekende betaalstatus). Enkel de service-role (die RLS én
+-- kolom-grants omzeilt) mag deze kolommen nog schrijven — dat gebeurt
+-- uitsluitend vanuit api/whop-status.js en api/admin-users.js.
+REVOKE UPDATE (is_admin, whop_status, whop_checked_at, whop_email_override)
+  ON user_settings FROM authenticated;
+
+-- Eenmalig: geef je eigen account admin/eigenaar-rechten (bypast Whop volledig,
+-- toont de "Gebruikers"-pagina). Zoek je UUID op via Dashboard → Authentication
+-- → Users, zoals bij de bestaande MIGRATIE-sectie hierboven in dit bestand.
+-- UPDATE user_settings SET is_admin = true WHERE user_id = '<JOUW_UUID>';

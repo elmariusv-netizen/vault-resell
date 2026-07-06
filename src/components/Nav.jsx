@@ -7,6 +7,7 @@ const NAV_LINKS = [
   { id: 'kosten',    label: 'Kosten',       icon: '💸' },
   { id: 'stats',     label: 'Stats',        icon: '📊' },
   { id: 'labels',    label: 'Labels',       icon: '🏷' },
+  { id: 'gebruikers', label: 'Gebruikers',  icon: '🛡' },
   { id: 'settings',  label: 'Instellingen', icon: '⚙' },
 ]
 
@@ -28,10 +29,11 @@ const SUPPLIER_ONLY_PAGES = new Set(['inventory', 'new'])
 // Voorraad/Nieuw in plaats daarvan). Zie onboarding STAP 1 / Instellingen.
 const VINTED_ONLY_PAGES = new Set(['aankopen'])
 
-export default function Nav({ currentPage, onNavigate, theme, onToggleTheme, userName, purchaseMethod }) {
+export default function Nav({ currentPage, onNavigate, theme, onToggleTheme, userName, purchaseMethod, isAdmin }) {
   const links = NAV_LINKS.filter((l) =>
     (purchaseMethod !== 'vinted' || !SUPPLIER_ONLY_PAGES.has(l.id)) &&
-    (purchaseMethod !== 'suppliers' || !VINTED_ONLY_PAGES.has(l.id))
+    (purchaseMethod !== 'suppliers' || !VINTED_ONLY_PAGES.has(l.id)) &&
+    (l.id !== 'gebruikers' || isAdmin)
   )
   const bottomLinks = links.filter((l) => BOTTOM_TABS.includes(l.id))
 
