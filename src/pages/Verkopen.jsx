@@ -410,7 +410,7 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave, 
                 {order.buyer_name && (
                   <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>{order.buyer_name}</span>
                 )}
-                {order.buyer && (
+                {order.buyer && order.buyer.toLowerCase() !== (order.buyer_name || '').toLowerCase() && (
                   <span style={{ fontSize: 13, color: 'var(--text-3)' }}>@{order.buyer}</span>
                 )}
                 {order.country && (
