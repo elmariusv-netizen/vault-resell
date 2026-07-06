@@ -5,14 +5,22 @@ import { fetchCallerFlags, fetchAuthUserById, serviceHeaders } from './_lib/admi
 // Zonder expliciete override valt Supabase terug op de project-brede
 // "Site URL" uit de Auth-instellingen — bij dit project nog een oude
 // localhost:3000-devwaarde, waardoor gegenereerde links (reset-e-mail,
-// impersonate) na productie-gebruik naar localhost verwijzen i.p.v. de
-// live app. VITE_APP_URL laat dit expliciet overschrijven; VERCEL_URL
-// (automatisch door Vercel gezet, zonder protocol) is de fallback per
-// deployment, en de hardcoded productie-URL is de laatste fallback.
+// impersonate) na productie-gebruik naar localhost verwezen i.p.v. de
+// live app.
+//
+// LET OP: dit was eerder VITE_APP_URL, maar die kolom bleef leeg lezen —
+// niet omdat VITE_-prefix-vars onbeschikbaar zijn in serverless functions
+// (process.env.VITE_SUPABASE_URL hierboven/elders in api/*.js bewijst het
+// tegendeel: Vercel injecteert gewoon alles wat in de projectinstellingen
+// staat, ongeacht prefix — de VITE_-beperking geldt enkel voor wat Vite
+// client-side inbundelt via import.meta.env, niet voor Node's process.env).
+// De echte oorzaak kon dus ook aan de Vercel-env-scope liggen (bv. per
+// ongeluk enkel voor Preview/Development gezet, niet Production) — in plaats
+// van dat verder na te zoeken, hardcoden we de productie-URL direct: die
+// verandert toch niet, en APP_URL (zonder VITE_-prefix, puur ter overriding
+// als dat ooit nodig is) blijft optioneel.
 function getAppUrl() {
-  if (process.env.VITE_APP_URL) return process.env.VITE_APP_URL
-  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`
-  return 'https://vault-resell.vercel.app'
+  return process.env.APP_URL || 'https://vault-resell.vercel.app'
 }
 
 // GoTrue's exacte wire-formaat voor een redirect-override is niet publiek
