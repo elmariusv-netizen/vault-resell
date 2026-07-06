@@ -343,4 +343,21 @@ REVOKE UPDATE (is_admin, whop_status, whop_checked_at, whop_email_override)
 -- Eenmalig: geef je eigen account admin/eigenaar-rechten (bypast Whop volledig,
 -- toont de "Gebruikers"-pagina). Zoek je UUID op via Dashboard → Authentication
 -- → Users, zoals bij de bestaande MIGRATIE-sectie hierboven in dit bestand.
+-- LET OP: dit moet het user_id zijn van het account waarmee je ECHT bent
+-- ingelogd in de webapp (te controleren via Network-tab → een user_settings-
+-- request → user_id=eq.<UUID> in de query-string) — niet zomaar een UUID uit
+-- de Authentication-lijst, die kan van een ander/verweesd account zijn.
 -- UPDATE user_settings SET is_admin = true WHERE user_id = '<JOUW_UUID>';
+
+-- is_super_admin: apart van is_admin — geeft géén extra Whop-bypass of
+-- gebruikers-zichtbaarheid bovenop is_admin (die heb je al via is_admin),
+-- maar bepaalt WIE via de Gebruikers-pagina andermans is_admin-vlag mag
+-- aan/uitzetten. Voorkomt dat een gewone beheerder (bv. iemand die je later
+-- zelf admin maakt) op zijn beurt weer nieuwe beheerders kan aanstellen —
+-- enkel jijzelf (of wie jij expliciet super-admin maakt) kan dat.
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS is_super_admin BOOLEAN DEFAULT FALSE;
+REVOKE UPDATE (is_super_admin) ON user_settings FROM authenticated;
+
+-- Eenmalig: geef je eigen account super-admin (zelfde UUID-waarschuwing als
+-- hierboven).
+-- UPDATE user_settings SET is_admin = true, is_super_admin = true WHERE user_id = '<JOUW_UUID>';
