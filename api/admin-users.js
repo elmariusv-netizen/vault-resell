@@ -1,5 +1,6 @@
 import { fetchWhopMembershipsByEmail } from './_lib/whop.js'
 import { verifySupabaseUser } from './_lib/verifyUser.js'
+import { fetchCallerFlags, serviceHeaders } from './_lib/adminAuth.js'
 
 // Haalt ALLE geregistreerde accounts op via Supabase's eigen Auth Admin API
 // (geeft direct email/created_at/last_sign_in_at) — geen aparte
@@ -41,23 +42,18 @@ export default async function handler(req, res) {
   const caller = await verifySupabaseUser(SUPABASE_URL, ANON_KEY, accessToken).catch(() => null)
   if (!caller?.id) return res.status(401).json({ error: 'invalid session' })
 
-  const sbHeaders = { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}` }
+  const sbHeaders = serviceHeaders(SERVICE_KEY)
 
   // Dit is het echte afdwingpunt — niet de UI (Nav verbergt de link enkel
   // voor het gemak, een client-side vlag wordt hier nooit vertrouwd).
-  const callerSettingsRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/user_settings?user_id=eq.${encodeURIComponent(caller.id)}&select=is_admin&limit=1`,
-    { headers: sbHeaders }
-  )
-  if (!callerSettingsRes.ok) return res.status(500).json({ error: 'kon rechten niet verifiëren' })
-  const [callerSettings] = await callerSettingsRes.json()
-  if (!callerSettings?.is_admin) return res.status(403).json({ error: 'forbidden' })
+  const callerFlags = await fetchCallerFlags(SUPABASE_URL, SERVICE_KEY, caller.id)
+  if (!callerFlags.isAdmin) return res.status(403).json({ error: 'forbidden' })
 
   let authUsers, settingsRows
   try {
     authUsers = await fetchAllAuthUsers(SUPABASE_URL, SERVICE_KEY)
     const settingsRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/user_settings?select=user_id,is_admin,whop_email_override`,
+      `${SUPABASE_URL}/rest/v1/user_settings?select=user_id,is_admin,is_super_admin,whop_email_override`,
       { headers: sbHeaders }
     )
     if (!settingsRes.ok) throw new Error(`user_settings fetch mislukt: ${settingsRes.status}`)
@@ -96,6 +92,7 @@ export default async function handler(req, res) {
       createdAt: u.created_at,
       lastSignInAt: u.last_sign_in_at || null,
       isAdmin: !!settings?.is_admin,
+      isSuperAdmin: !!settings?.is_super_admin,
       whopStatus,
       whopEmailOverride: settings?.whop_email_override || null,
     }
@@ -103,5 +100,8 @@ export default async function handler(req, res) {
 
   rows.sort((a, b) => new Date(b.lastSignInAt || 0) - new Date(a.lastSignInAt || 0))
 
-  return res.status(200).json(rows)
+  // callerIsSuperAdmin laat de client weten of de admin-toggle-UI getoond mag
+  // worden — puur voor de UI, de echte afdwinging gebeurt server-side in
+  // admin-user-actions.js's set-admin-actie.
+  return res.status(200).json({ rows, callerIsSuperAdmin: callerFlags.isSuperAdmin })
 }
