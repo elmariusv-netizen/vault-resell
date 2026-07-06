@@ -14,6 +14,7 @@ import Onboarding from './pages/Onboarding'
 import Upgrade from './pages/Upgrade'
 import AdminUsers from './pages/AdminUsers'
 import ResetPassword from './pages/ResetPassword'
+import AuthLinkError from './pages/AuthLinkError'
 import { loadCloudData, saveCloudData } from './utils/cloudStorage'
 import { SEED_DATA } from './data/seedData'
 import { getRemainingQty } from './utils/skuUtils'
@@ -68,6 +69,9 @@ export default function App() {
   // effects hieronder) — toont dan ResetPassword i.p.v. de normale app,
   // ongeacht login/onboarding/Whop-status.
   const [passwordRecovery, setPasswordRecovery] = useState(false)
+  // Gezet zodra de URL-hash een #error=...-fragment bevat (bv. een verlopen
+  // of al-gebruikte reset/magic-link) — { error, errorCode, errorDescription }.
+  const [authLinkError, setAuthLinkError] = useState(null)
 
   // Uitbreiding van setPage: laat Home.jsx's "klik op een dag in de grafiek"
   // meteen een dag-filter meegeven aan de doelpagina (vooralsnog enkel
@@ -106,16 +110,38 @@ export default function App() {
   }, [])
 
   // Directe check op de URL-hash — Supabase redirect na een reset-link-klik
-  // naar {SITE_URL}#access_token=...&type=recovery. Aanvullend op het
-  // PASSWORD_RECOVERY-event hierboven (niet vervangend): dekt het geval waar
-  // de hash bij het eerste React-effect nog intact is.
+  // naar {SITE_URL}#access_token=...&type=recovery (gelukt) of
+  // {SITE_URL}#error=...&error_code=...&error_description=... (mislukt, bv.
+  // een verlopen of al-gebruikte link — GEEN sessie wordt dan aangemaakt, dus
+  // het PASSWORD_RECOVERY-event hierboven vuurt in dat geval niet). Aanvullend
+  // op dat event (niet vervangend): dekt het geval waar de hash bij het
+  // eerste React-effect nog intact is.
   useEffect(() => {
-    if (window.location.hash.includes('type=recovery')) {
+    const hash = window.location.hash
+    if (!hash) return
+
+    const params = new URLSearchParams(hash.replace(/^#/, ''))
+    const hashError = params.get('error')
+
+    if (hashError) {
+      setAuthLinkError({
+        error: hashError,
+        errorCode: params.get('error_code'),
+        errorDescription: params.get('error_description'),
+      })
+    } else if (hash.includes('type=recovery')) {
       setPasswordRecovery(true)
-      // Voorkomt dat een refresh tijdens deze flow de check opnieuw
-      // triggert, en houdt de tokens niet zichtbaar in de adresbalk/geschiedenis.
-      window.history.replaceState(null, '', window.location.pathname)
+    } else {
+      return
     }
+
+    // In beide gevallen: hash meteen verwijderen. Zonder dit blijft de
+    // #error=...-fragment na een mislukte link in de URL staan, en triggert
+    // een simpele herlaad dezelfde foutmelding keer op keer opnieuw — de hash
+    // wordt immers nooit door de server geconsumeerd, enkel client-side
+    // gelezen. Houdt ook de (bij succes) gevoelige tokens niet zichtbaar in
+    // de adresbalk/geschiedenis.
+    window.history.replaceState(null, '', window.location.pathname)
   }, [])
 
   // ── Sessie-bewaking: uitloggen bij verwijderde gebruiker ──────────────────
@@ -396,6 +422,18 @@ export default function App() {
         <span style={{ color: 'var(--green)' }}>●</span>
         Laden…
       </div>
+    )
+  }
+
+  // Vóór alles anders, ook vóór passwordRecovery/!supabaseUser: een mislukte
+  // link (verlopen/al gebruikt) authenticeert niemand, maar moet wel eerst
+  // uitgelegd worden i.p.v. zomaar het normale inlogscherm te tonen.
+  if (authLinkError) {
+    return (
+      <AuthLinkError
+        error={authLinkError}
+        onBack={() => { supabase.auth.signOut(); setAuthLinkError(null) }}
+      />
     )
   }
 
