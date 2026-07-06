@@ -340,6 +340,53 @@ export function skuOptionsForSlot(slotKey, slotSkus, freeSkus) {
   return freeSkus.filter(s => s === slotSkus[slotKey] || !claimedByOthers.has(s))
 }
 
+// ── Titel-keyword-matching — voor Stats.jsx's beste-categorie/kleur/maat-
+// analyse: producttitels bevatten geen apart category/color/size-veld, dus
+// worden die via keyword-matching uit de vrije titeltekst herleid (dezelfde
+// aanpak als Verkopen.jsx's eigen, losse merk/maat/kleur-detectie voor de
+// meta-regel onder een order — hier een eigen kopie omdat Verkopen.jsx zijn
+// lijsten module-lokaal houdt).
+const CATEGORIES_MAP = [
+  ['t-shirt', 'T-shirts'], ['tshirt', 'T-shirts'], ['shirt', 'T-shirts'],
+  ['polo', "Polo's"], ['trui', 'Truien'], ['sweater', 'Truien'],
+  ['hoodie', 'Hoodies'], ['vest', 'Vesten'], ['jas', 'Jassen'],
+  ['jacket', 'Jassen'], ['coat', 'Jassen'], ['jeans', 'Jeans'],
+  ['broek', 'Broeken'], ['pants', 'Broeken'], ['short', 'Shorts'],
+  ['jurk', 'Jurken'], ['dress', 'Jurken'], ['rok', 'Rokken'],
+  ['overhemd', 'Overhemden'], ['blouse', 'Blouses'], ['sneakers', 'Schoenen'],
+  ['schoenen', 'Schoenen'], ['boots', 'Schoenen'], ['pet', 'Petten'],
+  ['muts', 'Mutsen'], ['sjaal', 'Sjaals'], ['tas', 'Tassen'], ['riem', 'Riemen'],
+]
+const TITLE_COLORS_MAP = [
+  ['zwart','Zwart'], ['black','Zwart'], ['wit','Wit'], ['white','Wit'],
+  ['blauw','Blauw'], ['blue','Blauw'], ['navy','Blauw'], ['marineblauw','Blauw'],
+  ['rood','Rood'], ['red','Rood'], ['roze','Roze'], ['pink','Roze'], ['fuchsia','Roze'],
+  ['groen','Groen'], ['green','Groen'], ['kaki','Kaki'], ['khaki','Kaki'], ['olijf','Groen'],
+  ['geel','Geel'], ['yellow','Geel'], ['paars','Paars'], ['purple','Paars'], ['violet','Paars'],
+  ['oranje','Oranje'], ['orange','Oranje'], ['grijs','Grijs'], ['grey','Grijs'], ['gray','Grijs'],
+  ['beige','Beige'], ['creme','Beige'], ['cream','Beige'], ['ecru','Beige'],
+  ['bruin','Bruin'], ['brown','Bruin'], ['camel','Bruin'], ['cognac','Bruin'],
+  ['bordeaux','Bordeaux'], ['wijnrood','Bordeaux'], ['lila','Lila'], ['mintgroen','Groen'],
+]
+const TITLE_SIZES = ['xxxl','xxl','xl','xs','xxs','3xl','2xl','one size',
+  '50','48','46','44','42','40','38','36','34','32','30',
+  '27','28','29','31','33','s','m','l']
+
+// Herleidt categorie/kleur/maat uit een vrije producttitel via keyword-
+// matching (case-insensitive, eerste match wint). Maat gebruikt een
+// woordgrens-regex (i.p.v. .includes()) zodat bv. de maat "s" niet
+// per ongeluk binnenin een ander woord matcht.
+export function detectTitleMeta(title) {
+  const t = (title || '').toLowerCase()
+  let category = '', color = '', size = ''
+  for (const [kw, label] of CATEGORIES_MAP) if (t.includes(kw)) { category = label; break }
+  for (const [kw, label] of TITLE_COLORS_MAP) if (t.includes(kw)) { color = label; break }
+  for (const s of TITLE_SIZES) {
+    if (new RegExp(`(?:^|\\s|maat\\s*)${s}(?:\\s|$|/)`, 'i').test(t)) { size = s.toUpperCase(); break }
+  }
+  return { category, color, size }
+}
+
 // ── Bedrijfskosten — gedeeld tussen Kosten.jsx (totaal bovenaan) en
 // Stats.jsx (aftrek van de netto winst), zodat ze nooit uit elkaar kunnen
 // lopen. business_costs is een losse, RLS-beveiligde tabel (owner_id =

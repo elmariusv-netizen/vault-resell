@@ -7,8 +7,9 @@ import DateRangeFilter, { getDateBounds, filterByRange } from '../components/Dat
 import {
   formatCurrency, formatSkuRange, calcSaleProfit,
   getRemainingQty, getSupplierColor, normalizePlatform,
-  fetchBusinessCosts, sumCosts, getBatchUnitCost,
+  fetchBusinessCosts, sumCosts, getBatchUnitCost, detectTitleMeta,
 } from '../utils/skuUtils'
+import { supabase } from '../utils/supabase'
 
 const ChartTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null
@@ -36,8 +37,21 @@ export default function Stats({ data, theme }) {
   const [customTo, setCustomTo] = useState('')
   const [tab, setTab] = useState('overview')
   const [businessCosts, setBusinessCosts] = useState([])
+  // vintedOrderId -> title, enkel voor de beste-categorie/kleur/maat-analyse
+  // hieronder — sales[] zelf heeft geen title-veld (dat leeft enkel op de
+  // gekoppelde vinted_orders-rij), dus 1 lichte, aparte query i.p.v. de hele
+  // rij per sale opnieuw op te vragen.
+  const [orderTitles, setOrderTitles] = useState({})
 
   useEffect(() => { fetchBusinessCosts().then(setBusinessCosts) }, [])
+  useEffect(() => {
+    supabase.from('vinted_orders').select('id, title').then(({ data, error }) => {
+      if (error) { console.warn('[Vault] order-titels ophalen mislukt:', error.message); return }
+      const map = {}
+      ;(data || []).forEach((row) => { map[row.id] = row.title })
+      setOrderTitles(map)
+    })
+  }, [])
 
   const bounds = useMemo(() => getDateBounds(range, customFrom, customTo), [range, customFrom, customTo])
   const filteredSales = useMemo(() => filterByRange(sales, range, bounds), [sales, range, bounds])
@@ -153,6 +167,37 @@ export default function Stats({ data, theme }) {
       .sort((a, b) => b.revenue - a.revenue)
   }, [filteredSales, batches])
 
+  // Beste categorie/kleur/maat — herleid uit de titel van de gekoppelde
+  // Vinted-order (orderTitles hierboven) via detectTitleMeta() (skuUtils.js).
+  // Categorie geeft voorrang aan de titel-keyword-match (specifieker, bv.
+  // "T-shirts"/"Truien") en valt pas terug op de eigen batch.category (vaak
+  // een grove, generieke waarde als "Kleding") als de titel geen keyword
+  // opleverde. Sales zonder titel (handmatige verkoop, geen gekoppelde
+  // Vinted-order) EN zonder batch.category vallen onder "Onbekend", dezelfde
+  // aanpak als perBrand hierboven.
+  const titleMetaStats = useMemo(() => {
+    const byCategory = {}, byColor = {}, bySize = {}
+    const bump = (map, key, sale) => {
+      const k = key || 'Onbekend'
+      if (!map[k]) map[k] = { revenue: 0, sold: 0 }
+      map[k].revenue += (sale.salePrice || 0) * (sale.quantity || 1)
+      map[k].sold += sale.quantity || 1
+    }
+    filteredSales.forEach((s) => {
+      const b = batches.find((x) => x.id === s.batchId)
+      const title = (s.vintedOrderId && orderTitles[s.vintedOrderId]) || ''
+      const meta = detectTitleMeta(title)
+      bump(byCategory, meta.category || b?.category?.trim(), s)
+      bump(byColor, meta.color, s)
+      bump(bySize, meta.size, s)
+    })
+    const topOf = (map) => Object.entries(map)
+      .map(([name, v]) => ({ name, ...v }))
+      .filter((e) => e.name !== 'Onbekend')
+      .sort((a, b) => b.sold - a.sold)[0] || null
+    return { topCategory: topOf(byCategory), topColor: topOf(byColor), topSize: topOf(bySize) }
+  }, [filteredSales, batches, orderTitles])
+
   const TABS = [
     { id: 'overview', label: 'Overzicht' },
     { id: 'supplier', label: 'Leveranciers' },
@@ -195,6 +240,24 @@ export default function Stats({ data, theme }) {
           </div>
         ))}
       </div>
+
+      {/* Beste categorie/kleur/maat — herleid uit producttitels, zie titleMetaStats */}
+      {(titleMetaStats.topCategory || titleMetaStats.topColor || titleMetaStats.topSize) && (
+        <div className="stats-grid" style={{ marginBottom: 20 }}>
+          {[
+            { label: 'Beste categorie', top: titleMetaStats.topCategory, accent: '#a78bfa' },
+            { label: 'Beste kleur', top: titleMetaStats.topColor, accent: '#f472b6' },
+            { label: 'Beste maat', top: titleMetaStats.topSize, accent: '#60a5fa' },
+          ].map((c) => (
+            <div className="stat-card" key={c.label}>
+              <div className="s-accent" style={{ background: c.accent }} />
+              <div className="s-label">{c.label}</div>
+              <div className="s-value" style={{ fontSize: '1.3rem' }}>{c.top ? c.top.name : '—'}</div>
+              <div className="s-sub">{c.top ? `${c.top.sold} verkocht · ${formatCurrency(c.top.revenue)}` : 'Nog geen data'}</div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="toggle-group" style={{ marginBottom: 20, maxWidth: 600 }}>
