@@ -1,8 +1,21 @@
 import { createClient } from '@supabase/supabase-js'
 
+// Expliciet i.p.v. op de (identieke) supabase-js-defaults te vertrouwen: een
+// mobiele browser mag de JS-tab tussen bezoeken volledig verwijlen — enkel
+// localStorage (persistSession) overleeft dat, dus de sessie moet daar
+// betrouwbaar uit hersteld worden, en autoRefreshToken zorgt dat een
+// verlopen access_token bij het heropenen automatisch via de refresh_token
+// vernieuwd wordt i.p.v. de gebruiker uit te loggen.
 export const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY
+  import.meta.env.VITE_SUPABASE_ANON_KEY,
+  {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+    },
+  }
 )
 
 // Synchrone, best-effort lees van de sessie die supabase-js zelf al in

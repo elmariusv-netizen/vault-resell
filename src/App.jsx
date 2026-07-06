@@ -124,12 +124,27 @@ export default function App() {
     setPage(targetPage)
   }, [])
 
+  // ── Sessie-bewaking: uitloggen bij verwijderde gebruiker ──────────────────
+  const forceSignOut = useCallback(() => supabase.auth.signOut(), [])
+
+  const isAuthError = (err) =>
+    err?.status === 401 || err?.status === 403 ||
+    /jwt|unauthorized|row.level security|not authenticated/i.test(err?.message || '')
+
   // ── Supabase Auth ─────────────────────────────────────────────────────────
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (session) {
         const { error } = await supabase.auth.getUser()
-        if (error) {
+        // Enkel bij een ECHTE auth-fout (token ongeldig/ingetrokken)
+        // uitloggen — niet bij elke fout. getUser() faalt op mobiel vaak
+        // door een kortstondige netwerkhapering (net wakker, wifi->4G-
+        // overgang) vlak na het openen van de app; dat zonder onderscheid
+        // als "uitgelogd" behandelen was de reden dat mobiele gebruikers
+        // zich telkens opnieuw moesten aanmelden terwijl hun sessie prima
+        // geldig was. isAuthError() maakt hier hetzelfde onderscheid als bij
+        // de cloud-save-aanroepen verderop.
+        if (error && isAuthError(error)) {
           await supabase.auth.signOut()
           setSupabaseUser(null)
           setAuthChecked(true)
@@ -151,20 +166,17 @@ export default function App() {
     return () => subscription.unsubscribe()
   }, [])
 
-
-  // ── Sessie-bewaking: uitloggen bij verwijderde gebruiker ──────────────────
-  const forceSignOut = useCallback(() => supabase.auth.signOut(), [])
-
-  const isAuthError = (err) =>
-    err?.status === 401 || err?.status === 403 ||
-    /jwt|unauthorized|row.level security|not authenticated/i.test(err?.message || '')
-
+  // Zelfde isAuthError-onderscheid als hierboven — een tijdelijke
+  // netwerkfout bij deze periodieke/tabblad-terugkeer-check mag de
+  // gebruiker niet uitloggen.
   const checkSession = useCallback(async () => {
     if (!supabaseUser) return
     const { error } = await supabase.auth.getUser()
-    if (error) {
+    if (error && isAuthError(error)) {
       console.warn('[Vault] sessiecheck mislukt — uitloggen:', error.message)
       forceSignOut()
+    } else if (error) {
+      console.warn('[Vault] sessiecheck: tijdelijke fout genegeerd (geen echte auth-fout):', error.message)
     }
   }, [supabaseUser, forceSignOut])
 
