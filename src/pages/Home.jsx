@@ -388,10 +388,35 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
     onNavigate('verkopen', { day: date })
   }
 
-  const recentSales = useMemo(
-    () => [...sales].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 6),
-    [sales]
-  )
+  // Bundel-orders (BulkSkuModal in Verkopen.jsx) slaan elk item als een eigen
+  // sales-entry op maar delen dezelfde vintedOrderId (zie orderKey()
+  // hierboven) — zonder groepering vulden de N items van 1 bundel tot wel N
+  // van de 6 "Recente verkopen"-plekken, en verdrongen zo andere, écht
+  // verschillende bestellingen. Groepeert op orderKey en toont 1 rij per
+  // bestelling, met opgetelde hoeveelheid/omzet/winst over alle items in die
+  // bestelling (elk item kan een andere batch/COGS hebben, dus de winst
+  // wordt per item apart via calcSaleProfit berekend en dan pas opgeteld).
+  const recentSales = useMemo(() => {
+    const groups = new Map()
+    for (const s of sales) {
+      const key = orderKey(s)
+      if (!groups.has(key)) groups.set(key, [])
+      groups.get(key).push(s)
+    }
+    return [...groups.values()]
+      .map((items) => {
+        const first = items[0]
+        const quantity = items.reduce((sum, s) => sum + (s.quantity || 1), 0)
+        const revenue = items.reduce((sum, s) => sum + (s.salePrice || 0) * (s.quantity || 1), 0)
+        const profit = items.reduce((sum, s) => {
+          const b = batches.find((x) => x.id === s.batchId)
+          return sum + (b ? calcSaleProfit(s, b).profit : 0)
+        }, 0)
+        return { ...first, quantity, _ids: items.map((s) => s.id), _revenue: revenue, _profit: profit }
+      })
+      .sort((a, b) => new Date(b.date) - new Date(a.date))
+      .slice(0, 6)
+  }, [sales, batches])
 
   const sparkData = useMemo(() => {
     const today = new Date()
@@ -626,7 +651,6 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
             <div>
               {recentSales.map((s) => {
                 const b = batches.find((x) => x.id === s.batchId)
-                const p = b ? calcSaleProfit(s, b) : null
                 const sup = suppliers.find((x) => b && x.prefix === b.supplierPrefix)
                 const pd = normalizePlatform(s.platform)
                 const sp = pd === 'Medeverkoper/Groothandel' ? 'B2B' : pd === 'Privé persoon' ? 'Privé' : pd
@@ -666,16 +690,16 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
                       <div>
                         {s.isFree
                           ? <div style={{ fontSize: 12, color: D.text3 }}>Gratis</div>
-                          : <div style={{ fontSize: 14, fontWeight: 700, color: D.text }}>{formatCurrency((s.salePrice || 0) * (s.quantity || 1))}</div>}
-                        {p && !s.isFree && (
-                          <div style={{ fontSize: 11, fontWeight: 600, color: p.profit >= 0 ? D.green : D.red, marginTop: 1 }}>
-                            {p.profit >= 0 ? '+' : ''}{formatCurrency(p.profit)}
+                          : <div style={{ fontSize: 14, fontWeight: 700, color: D.text }}>{formatCurrency(s._revenue)}</div>}
+                        {!s.isFree && (
+                          <div style={{ fontSize: 11, fontWeight: 600, color: s._profit >= 0 ? D.green : D.red, marginTop: 1 }}>
+                            {s._profit >= 0 ? '+' : ''}{formatCurrency(s._profit)}
                           </div>
                         )}
                       </div>
                       {onDeleteSale && (
                         <button
-                          onClick={() => setConfirmDeleteId(s.id)}
+                          onClick={() => setConfirmDeleteId(s._ids)}
                           style={{ background: 'none', border: 'none', color: D.text3, cursor: 'pointer', fontSize: 14, padding: 4, lineHeight: 1, opacity: 0.6 }}
                           title="Verwijder verkoop"
                         >
@@ -790,7 +814,6 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
           ) : (
             recentSales.map((s) => {
               const b = batches.find((x) => x.id === s.batchId)
-              const p = b ? calcSaleProfit(s, b) : null
               const sup = suppliers.find((x) => b && x.prefix === b.supplierPrefix)
               // Zie de desktop-variant hierboven: producttitel i.p.v. de
               // (voor de gebruiker onherkenbare) SKU-range van de hele batch.
@@ -811,11 +834,11 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
                   </div>
                   <div style={{ textAlign: 'right', flexShrink: 0 }}>
                     <div style={{ fontSize: 14, fontWeight: 700, color: D.text }}>
-                      {s.isFree ? 'Gratis' : formatCurrency((s.salePrice || 0) * (s.quantity || 1))}
+                      {s.isFree ? 'Gratis' : formatCurrency(s._revenue)}
                     </div>
-                    {p && !s.isFree && (
-                      <div style={{ fontSize: 11, color: p.profit >= 0 ? D.green : D.red, fontWeight: 600 }}>
-                        {p.profit >= 0 ? '+' : ''}{formatCurrency(p.profit)}
+                    {!s.isFree && (
+                      <div style={{ fontSize: 11, color: s._profit >= 0 ? D.green : D.red, fontWeight: 600 }}>
+                        {s._profit >= 0 ? '+' : ''}{formatCurrency(s._profit)}
                       </div>
                     )}
                   </div>
@@ -842,7 +865,11 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
             </p>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setConfirmDeleteId(null)}>Annuleer</button>
-              <button className="btn btn-danger" onClick={() => { onDeleteSale(confirmDeleteId); setConfirmDeleteId(null) }}>
+              <button className="btn btn-danger" onClick={() => {
+                const ids = Array.isArray(confirmDeleteId) ? confirmDeleteId : [confirmDeleteId]
+                ids.forEach((id) => onDeleteSale(id))
+                setConfirmDeleteId(null)
+              }}>
                 Definitief verwijderen
               </button>
             </div>
