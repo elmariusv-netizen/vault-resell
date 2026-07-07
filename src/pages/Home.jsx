@@ -235,7 +235,7 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
   const fetchVtOrders = useCallback(async () => {
     const { data: rows, error } = await supabase
       .from('vinted_orders')
-      .select('id, status, order_direction, label_available, label_pdf_url, transaction_status, shipment_status, is_completed')
+      .select('id, title, status, order_direction, label_available, label_pdf_url, transaction_status, shipment_status, is_completed')
     if (!error) setVtOrders(rows || [])
   }, [])
   useEffect(() => { fetchVtOrders() }, [fetchVtOrders])
@@ -630,6 +630,13 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
                 const sup = suppliers.find((x) => b && x.prefix === b.supplierPrefix)
                 const pd = normalizePlatform(s.platform)
                 const sp = pd === 'Medeverkoper/Groothandel' ? 'B2B' : pd === 'Privé persoon' ? 'Privé' : pd
+                // Producttitel van de gekoppelde Vinted-order i.p.v. de
+                // SKU-range — de titel toont wat er écht verkocht is, de
+                // SKU-range (bv. "RIA1-100") is enkel de hele batch en dus
+                // voor de gebruiker niet herkenbaar. Valt terug op de
+                // SKU-range voor handmatige verkopen zonder gekoppelde order.
+                const title = (s.vintedOrderId && vtOrders.find((o) => o.id === s.vintedOrderId)?.title)
+                  || (b ? formatSkuRange(b.supplierPrefix, b.startNum, b.endNum) : '?')
                 return (
                   <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: `1px solid ${D.border}` }}>
                     <div style={{
@@ -642,14 +649,14 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
                       {s.photo ? <img src={s.photo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : '🏷'}
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: D.text }}>
-                        {b ? formatSkuRange(b.supplierPrefix, b.startNum, b.endNum) : '?'}
-                        {s.quantity > 1 && <span style={{ color: D.text3 }}> ×{s.quantity}</span>}
-                        <span style={{ marginLeft: 7, fontSize: 10, fontWeight: 600, background: 'var(--bg-2)', padding: '2px 6px', borderRadius: 4, color: D.text2 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: D.text, display: 'flex', alignItems: 'center' }}>
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 180 }}>{title}</span>
+                        {s.quantity > 1 && <span style={{ color: D.text3, flexShrink: 0 }}>&nbsp;×{s.quantity}</span>}
+                        <span style={{ marginLeft: 7, fontSize: 10, fontWeight: 600, background: 'var(--bg-2)', padding: '2px 6px', borderRadius: 4, color: D.text2, flexShrink: 0 }}>
                           {sp}
                         </span>
-                        {s.isFree && <span style={{ marginLeft: 4, fontSize: 10, color: D.green, fontWeight: 700 }}>GRATIS</span>}
-                        {s.shipped && <span style={{ marginLeft: 4, fontSize: 10, color: D.blue, fontWeight: 700 }}>VERZONDEN</span>}
+                        {s.isFree && <span style={{ marginLeft: 4, fontSize: 10, color: D.green, fontWeight: 700, flexShrink: 0 }}>GRATIS</span>}
+                        {s.shipped && <span style={{ marginLeft: 4, fontSize: 10, color: D.blue, fontWeight: 700, flexShrink: 0 }}>VERZONDEN</span>}
                       </div>
                       <div style={{ fontSize: 11, color: D.text3, marginTop: 2 }}>
                         {formatDate(s.date)}{s.buyer ? ` · ${s.buyer}` : ''}
@@ -785,14 +792,18 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
               const b = batches.find((x) => x.id === s.batchId)
               const p = b ? calcSaleProfit(s, b) : null
               const sup = suppliers.find((x) => b && x.prefix === b.supplierPrefix)
+              // Zie de desktop-variant hierboven: producttitel i.p.v. de
+              // (voor de gebruiker onherkenbare) SKU-range van de hele batch.
+              const title = (s.vintedOrderId && vtOrders.find((o) => o.id === s.vintedOrderId)?.title)
+                || (b ? formatSkuRange(b.supplierPrefix, b.startNum, b.endNum) : '?')
               return (
                 <div key={s.id} style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 14, padding: '13px 14px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 12 }}>
                   <div style={{ width: 38, height: 38, borderRadius: 9, background: (sup?.color || ACCENT_HEX) + '20', border: `1px solid ${(sup?.color || ACCENT_HEX)}30`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden', fontSize: 14 }}>
                     {s.photo ? <img src={s.photo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 8 }} /> : '🏷'}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: D.text }}>
-                      {b ? formatSkuRange(b.supplierPrefix, b.startNum, b.endNum) : '?'}
+                    <div style={{ fontSize: 13, fontWeight: 600, color: D.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {title}
                     </div>
                     <div style={{ fontSize: 11, color: D.text3 }}>
                       {normalizePlatform(s.platform)} · {formatDate(s.date)}
