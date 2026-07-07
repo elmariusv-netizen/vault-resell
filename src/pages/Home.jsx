@@ -127,13 +127,17 @@ const DashTooltip = ({ active, payload, label }) => {
   )
 }
 
-function DashCard({ label, value, sub, accent, small, tooltip }) {
+function DashCard({ label, value, sub, accent, small, tooltip, onClick }) {
   return (
-    <div style={{
-      background: D.card, border: `1px solid ${D.border}`,
-      borderRadius: 14, padding: small ? '14px 16px' : '18px 20px',
-      position: 'relative', overflow: 'hidden',
-    }}>
+    <div
+      onClick={onClick}
+      style={{
+        background: D.card, border: `1px solid ${D.border}`,
+        borderRadius: 14, padding: small ? '14px 16px' : '18px 20px',
+        position: 'relative', overflow: 'hidden',
+        cursor: onClick ? 'pointer' : 'default',
+      }}
+    >
       {accent && <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: accent }} />}
       <div style={{ fontSize: 10, color: D.text3, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', marginBottom: 9, display: 'flex', alignItems: 'center', gap: 5 }}>
         {label}
@@ -549,6 +553,7 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
             value={stats.labelsReady}
             sub="Klaar om te printen"
             accent={D.blue}
+            onClick={() => onNavigate('labels')}
           />
         </div>
 
@@ -770,10 +775,14 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
             { label: 'Te verzenden', value: stats.toShip, color: D.yellow },
             { label: 'Onderweg', value: stats.onTheWay, color: D.text2 },
             { label: '📍 Bij afhaalpunt', value: stats.atPickupPoint, color: D.yellow },
-            { label: '🖨️ Labels klaar', value: stats.labelsReady, color: D.blue },
+            { label: '🖨️ Labels klaar', value: stats.labelsReady, color: D.blue, onClick: () => onNavigate('labels') },
             { label: 'In voorraad', value: stats.totalItems, color: D.text3 },
           ].map((p) => (
-            <div key={p.label} style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 12, padding: '10px 14px', flexShrink: 0 }}>
+            <div
+              key={p.label}
+              onClick={p.onClick}
+              style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 12, padding: '10px 14px', flexShrink: 0, cursor: p.onClick ? 'pointer' : 'default' }}
+            >
               <div style={{ fontSize: 20, fontWeight: 800, color: p.color }}>{p.value}</div>
               <div style={{ fontSize: 10, color: D.text3, marginTop: 2, whiteSpace: 'nowrap' }}>{p.label}</div>
             </div>
