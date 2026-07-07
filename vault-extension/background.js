@@ -394,10 +394,9 @@ async function createLabelViaTab(conversationId, txId) {
                 "créer l'étiquette", "créer l'étiquette d'expédition",
                 'create shipping label', 'create label',
               ];
-              const findButton = () => {
-                const buttons = [...document.querySelectorAll('button')];
-                return buttons.find(b => LABEL_BUTTON_TEXTS.includes((b.textContent || '').trim().toLowerCase()));
-              };
+              const findAllButtons = () =>
+                [...document.querySelectorAll('button')].filter(b => LABEL_BUTTON_TEXTS.includes((b.textContent || '').trim().toLowerCase()));
+              const findButton = () => findAllButtons()[0];
 
               const match = findButton();
               if (!match) {
@@ -405,53 +404,56 @@ async function createLabelViaTab(conversationId, txId) {
                 return { clicked: false, reason: 'button_not_found' };
               }
 
-              // Bevestigd via handmatige test: 1 klik is niet genoeg, er is
-              // een TWEEDE klik nodig vóór het label écht aangemaakt wordt
-              // (reden nog onbekend — mogelijk een tussenliggende
-              // bevestigingsstap). We loggen daarom de DOM-toestand vóór en
-              // na de eerste klik (button-count + of het element zelf nog
-              // bestaat/dezelfde tekst/disabled-state heeft) zodat een
-              // toekomstige ronde kan tonen of er een specifieke
-              // tussenstap is om op te reageren, i.p.v. blind 2x dezelfde
-              // knop te raken.
-              const snapshot = () => ({
-                buttonCount: document.querySelectorAll('button').length,
-                matchInDom: document.body.contains(match),
-                matchText: document.body.contains(match) ? match.textContent.trim() : null,
-                matchDisabled: document.body.contains(match) ? match.disabled : null,
-              });
-
-              const before = snapshot();
+              // Bevestigd via live handmatige test (txn/conversatie
+              // 23603582349, Mondial Relay): de eerste klik opent geen
+              // tussenstap IN de chat, maar een volledige BEVESTIGINGS-MODAL
+              // (vervoerder + adres van verzender/ontvanger, elk met een
+              // eigen "bewerk"-knop) met ONDERAAN een TWEEDE knop — EXACT
+              // dezelfde tekst ("Verzendlabel aanmaken") als de knop in de
+              // chat. De vorige implementatie klikte bij een 2e klik simpelweg
+              // opnieuw hetzelfde `match`-element als dat nog in de DOM zat —
+              // en dat bleek zo te zijn: Vinted verwijdert de originele
+              // chat-knop niet, de modal wordt er gewoon overheen getoond.
+              // Daardoor werd de eerste (nu onzichtbare, want overlapte)
+              // chat-knop een 2e keer geraakt i.p.v. de modal-knop, en werd
+              // het label dus nooit echt aangemaakt. Zoek nu expliciet naar
+              // een NIEUW element (!== match) i.p.v. blind hetzelfde element
+              // of de eerste match in document-volgorde te hergebruiken, en
+              // wacht (poll) tot de modal daadwerkelijk gerenderd is i.p.v.
+              // een vast timeout te gokken.
+              const before = { buttonCount: document.querySelectorAll('button').length };
               console.log('[Vault-tab] "Verzendlabel aanmaken"-knop gevonden, eerste klik voor txn', txIdForLog, '—', match.textContent.trim());
               match.click();
 
               return new Promise(resolve => {
-                setTimeout(() => {
-                  const after = snapshot();
-                  const domChanged = JSON.stringify(before) !== JSON.stringify(after);
-                  console.log('[Vault-tab] DOM ná eerste klik — voor:', JSON.stringify(before), 'na:', JSON.stringify(after), 'gewijzigd:', domChanged);
-
-                  // Tweede klik: als het oorspronkelijke element nog in de DOM
-                  // zit, klik dat opnieuw; anders opnieuw zoeken (bv. als
-                  // Vinted een nieuw element met dezelfde tekst gerenderd
-                  // heeft i.p.v. hetzelfde element hergebruikt).
-                  const secondTarget = after.matchInDom ? match : findButton();
-                  if (secondTarget) {
-                    console.log('[Vault-tab] tweede klik voor txn', txIdForLog, '—', secondTarget.textContent.trim());
-                    secondTarget.click();
-                  } else {
-                    console.log('[Vault-tab] geen knop meer gevonden voor tweede klik (txn', txIdForLog, ') — mogelijk al voltooid na de eerste klik');
+                const maxWaitMs = 5000, intervalMs = 300;
+                let waited = 0;
+                const poll = () => {
+                  // Elke knop met de doel-tekst DIE NIET het oorspronkelijke
+                  // `match`-element is — dat is per definitie de modal-knop
+                  // (of, in een flow zonder tussenstap, gewoon niks).
+                  const newMatches = findAllButtons().filter(b => b !== match);
+                  const secondTarget = newMatches[newMatches.length - 1] || null;
+                  if (secondTarget || waited >= maxWaitMs) {
+                    if (secondTarget) {
+                      console.log('[Vault-tab] bevestigingsmodal-knop gevonden ná', waited, 'ms, tweede klik voor txn', txIdForLog, '—', secondTarget.textContent.trim());
+                      secondTarget.click();
+                    } else {
+                      console.log('[Vault-tab] geen aparte bevestigingsmodal-knop gevonden binnen', maxWaitMs, 'ms voor txn', txIdForLog, '— mogelijk geen tussenstap voor deze vervoerder/bestelling');
+                    }
+                    resolve({
+                      clicked: true,
+                      buttonText: match.textContent.trim(),
+                      secondClicked: !!secondTarget,
+                      debugButtonCountBefore: before.buttonCount,
+                      debugWaitedMs: waited,
+                    });
+                    return;
                   }
-
-                  resolve({
-                    clicked: true,
-                    buttonText: match.textContent.trim(),
-                    debugDomChangedBetweenClicks: domChanged,
-                    debugBeforeFirstClick: before,
-                    debugAfterFirstClick: after,
-                    debugSecondClickPerformed: !!secondTarget,
-                  });
-                }, 800);
+                  waited += intervalMs;
+                  setTimeout(poll, intervalMs);
+                };
+                setTimeout(poll, intervalMs);
               });
             },
             args: [txId],

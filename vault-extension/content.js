@@ -1822,18 +1822,7 @@
           console.log(`[Vault] label niet ophaalbaar voor txn ${o.transactionId} — probeer automatisch aan te maken via conversatie ${convId}…`);
           const clickResult = await sendMsg({ type: 'CREATE_LABEL_VIA_CHAT', conversationId: convId, transactionId: o.transactionId }, 25000);
           if (clickResult?.clicked) {
-            // TIJDELIJKE DEBUG-LOGGING — niet gepusht. Bevestigd via
-            // handmatige test dat 1 klik niet genoeg is (createLabelViaTab
-            // klikt nu 2x) — dit logt of de DOM tussen de 2 klikken
-            // daadwerkelijk verandert (bv. een tussenliggende bevestigingsstap),
-            // zodat we kunnen zien of blind 2x klikken volstaat of dat er
-            // specifiek op een tussenstap gereageerd moet worden.
-            if (clickResult.debugDomChangedBetweenClicks !== undefined) {
-              console.log(`[Vault] DEBUG DOM tussen de 2 klikken gewijzigd: ${clickResult.debugDomChangedBetweenClicks}`);
-              console.log(`[Vault] DEBUG vóór 1e klik:`, clickResult.debugBeforeFirstClick);
-              console.log(`[Vault] DEBUG na 1e klik:`, clickResult.debugAfterFirstClick);
-              console.log(`[Vault] DEBUG 2e klik uitgevoerd: ${clickResult.debugSecondClickPerformed}`);
-            }
+            console.log(`[Vault] "Verzendlabel aanmaken" geklikt voor txn ${o.transactionId} — bevestigingsmodal-knop ${clickResult.secondClicked ? `gevonden en geklikt (na ${clickResult.debugWaitedMs}ms)` : 'NIET gevonden (mogelijk geen tussenstap voor deze bestelling)'}`)
             try {
               await prefetchLabel(o.transactionId);
               await addAutoSent(o.transactionId);
@@ -1841,7 +1830,15 @@
               console.log(`[Vault] Label automatisch aangemaakt voor txn ${o.transactionId}`);
               continue;
             } catch (e2) {
-              console.log(`[Vault] "Verzendlabel aanmaken"-knop 2x geklikt voor txn ${o.transactionId}, maar label nog steeds niet ophaalbaar (${e2.message}) — later opnieuw proberen`);
+              // Mondial Relay genereert het label ASYNCHROON (Vinted's eigen
+              // bevestiging: "we laten het je weten als we klaar zijn, kan
+              // een paar uur duren") — een mislukte test-fetch meteen na de
+              // klik is dus verwacht, geen fout. refreshLabels() draait
+              // periodiek opnieuw (chrome.alarms, ~4 min) en probeert dan
+              // gewoon opnieuw prefetchLabel(); de knop zelf is dan al
+              // vervangen door Vinted's "even geduld"-bericht, dus een
+              // volgende ronde klikt niet nogmaals.
+              console.log(`[Vault] label nog niet ophaalbaar voor txn ${o.transactionId} na klik (${e2.message}) — normaal bij asynchrone aanmaak (bv. Mondial Relay), volgende sync-ronde probeert opnieuw`);
             }
           } else {
             console.log(`[Vault] kon "Verzendlabel aanmaken"-knop niet vinden/klikken voor txn ${o.transactionId} (${clickResult?.reason || 'onbekend'}) — overgeslagen`);
