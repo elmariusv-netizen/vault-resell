@@ -388,9 +388,17 @@ export default function Labels({ vintedCookie }) {
   // klopt. Bij een schrijffout (bv. de label_printed-migratie nog niet
   // gedraaid) wordt de lokale state teruggedraaid i.p.v. een status te tonen
   // die niet écht opgeslagen is.
+  //
+  // Aanvinken zet meteen ook manual_status op 'prepared' ("Préparée"/klaar
+  // voor verzending, zie MANUAL_STATUSES in skuUtils.js) — een geprint label
+  // betekent voor de gebruiker dat het pakket klaarligt om verzonden te
+  // worden, dus die statusbadge (Verkopen.jsx) moet meteen meebewegen i.p.v.
+  // achteraf nog apart aangepast te moeten worden. Uitvinken laat de status
+  // bewust ongemoeid (kan intussen al verder gezet zijn, bv. naar 'shipped').
   const togglePrinted = useCallback(async (order, printed) => {
-    setOrders((prev) => prev.map((o) => o.id === order.id ? { ...o, label_printed: printed } : o))
-    const { error } = await supabase.from('vinted_orders').update({ label_printed: printed }).eq('id', order.id)
+    const patch = printed ? { label_printed: true, manual_status: 'prepared' } : { label_printed: false }
+    setOrders((prev) => prev.map((o) => o.id === order.id ? { ...o, ...patch } : o))
+    const { error } = await supabase.from('vinted_orders').update(patch).eq('id', order.id)
     if (error) {
       console.warn('[Vault] label_printed opslaan mislukt:', error.message)
       setOrders((prev) => prev.map((o) => o.id === order.id ? { ...o, label_printed: !printed } : o))
