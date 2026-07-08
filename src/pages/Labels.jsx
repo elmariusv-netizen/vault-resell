@@ -99,10 +99,18 @@ function SkeletonCard() {
   )
 }
 
+// Vinted Go "digitaal label" orders hebben geen PDF — enkel een QR-code-
+// afbeelding (zie label-prefetch.js). Herkenbaar aan de bestandsextensie van
+// label_pdf_url, geen aparte DB-kolom nodig.
+function isQrLabel(order) {
+  return /\.(png|jpe?g)(\?|$)/i.test(order.label_pdf_url || '')
+}
+
 // ── Vinted order kaart ────────────────────────────────────────────────────────
 function OrderCard({ order, onDownload, isDownloading, isDone, printed, onTogglePrinted }) {
   const badge = getStatusBadge(order.status)
   const buyer = order.buyer_name || order.buyer || ''
+  const isQr = isQrLabel(order)
 
   return (
     <div style={{
@@ -167,7 +175,7 @@ function OrderCard({ order, onDownload, isDownloading, isDone, printed, onToggle
           disabled={isDownloading}
           style={{ whiteSpace: 'nowrap' }}
         >
-          {isDownloading ? 'Downloaden…' : '⬇ Download 4×6 label'}
+          {isDownloading ? '…' : isQr ? '🔲 QR-code tonen' : '⬇ Download 4×6 label'}
         </button>
       </div>
     </div>
@@ -441,8 +449,17 @@ export default function Labels({ vintedCookie }) {
     return res.blob()
   }
 
-  // ── Label downloaden ───────────────────────────────────────────────────────
+  // ── Label downloaden (of, voor een QR-code-label, gewoon tonen) ───────────
   const downloadLabel = useCallback(async (order) => {
+    // QR-code-labels (Vinted Go "digitaal", geen printer nodig) hebben geen
+    // PDF om te downloaden — enkel een afbeelding om te scannen. Gewoon
+    // openen i.p.v. forceren als bestandsdownload.
+    if (isQrLabel(order)) {
+      window.open(order.label_pdf_url, '_blank')
+      setDownloaded((prev) => new Set([...prev, order.id]))
+      togglePrinted(order, true)
+      return
+    }
     setDownloading((prev) => new Set([...prev, order.id]))
     try {
       const blob = await fetchOrderLabelBlob(order)
@@ -476,7 +493,9 @@ export default function Labels({ vintedCookie }) {
   // ── Alle labels printen (combineren tot één PDF) ──────────────────────────
   // Al als "Geprint" gemarkeerde labels (handmatig, of automatisch na
   // download) tellen niet mee — zie het vinkje per label hierboven.
-  const printableOrders = orders.filter((o) => !o.label_printed)
+  // QR-code-labels horen hier niet bij: het zijn afbeeldingen, geen PDF's,
+  // en kunnen niet in de samengevoegde print-PDF ingebed worden.
+  const printableOrders = orders.filter((o) => !o.label_printed && !isQrLabel(o))
   const printableManualItems = manualItems.filter((i) => !manualPrinted.has(i.id))
 
   const printAll = async () => {

@@ -36,23 +36,41 @@ export default async function handler(req, res) {
     // een echt label (bv. een niet-bestaand/nog-niet-klaar label).
     const contentType = labelResp.headers.get('content-type') || '';
     const looksLikePdf = rawBytes.slice(0, 5).toString('latin1') === '%PDF-';
-    if (!looksLikePdf) {
-      console.warn(`[label-prefetch] geen geldige PDF voor txn ${transaction_id} — content-type: "${contentType}", eerste bytes: ${rawBytes.slice(0, 20).toString('latin1')}`);
-      return res.status(422).json({ error: `Response is geen geldige PDF (content-type: ${contentType || 'onbekend'})` });
+    // Sommige orders (bv. Vinted Go "digitaal label, geen printer nodig")
+    // hebben HELEMAAL geen PDF — de presigned URL geeft rechtstreeks een
+    // PNG-QR-code terug (live bevestigd op txn 20793680722: de Vinted-inbox
+    // toont voor zo'n order geen "Verzendlabel aanmaken"-knop, enkel
+    // "Digitaal verzendlabel openen" → een QR-code om te scannen bij het
+    // afhaalpunt). Dat is geen fout, geen ontbrekend label — het is het
+    // echte, volledige label voor die verzendmethode. Zonder deze tak bleef
+    // zo'n order voor altijd "niet beschikbaar" (422) en probeerde de
+    // aanroeper zinloos een niet-bestaande knop te klikken.
+    const looksLikePng = rawBytes.slice(0, 8).toString('latin1') === '\x89PNG\r\n\x1a\n';
+    const looksLikeJpg = rawBytes[0] === 0xff && rawBytes[1] === 0xd8;
+    if (!looksLikePdf && !looksLikePng && !looksLikeJpg) {
+      console.warn(`[label-prefetch] geen geldige PDF/afbeelding voor txn ${transaction_id} — content-type: "${contentType}", eerste bytes: ${rawBytes.slice(0, 20).toString('latin1')}`);
+      return res.status(422).json({ error: `Response is geen geldig label (content-type: ${contentType || 'onbekend'})` });
     }
 
-    const cropped = await cropToLabel(rawBytes);
+    const isQrImage = !looksLikePdf;
+    const outBytes = isQrImage ? rawBytes : await cropToLabel(rawBytes);
+    const ext = isQrImage ? (looksLikePng ? 'png' : 'jpg') : 'pdf';
+    const uploadContentType = isQrImage ? (looksLikePng ? 'image/png' : 'image/jpeg') : 'application/pdf';
 
-    const path = `${transaction_id}-4x6.pdf`;
+    // Extensie in het pad (i.p.v. een aparte kolom) is bewust: Labels.jsx
+    // herkent een QR-label puur aan de .png/.jpg-extensie van label_pdf_url
+    // en toont dan "QR-code tonen" i.p.v. "Download 4×6 label" — geen
+    // schema-migratie nodig voor dit onderscheid.
+    const path = `${transaction_id}-${isQrImage ? 'qr' : '4x6'}.${ext}`;
     const uploadRes = await fetch(`${SUPABASE_URL}/storage/v1/object/labels/${path}`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${SERVICE_KEY}`,
         'apikey': SERVICE_KEY,
-        'Content-Type': 'application/pdf',
+        'Content-Type': uploadContentType,
         'x-upsert': 'true',
       },
-      body: cropped,
+      body: outBytes,
     });
     if (!uploadRes.ok) {
       const err = await uploadRes.text();
