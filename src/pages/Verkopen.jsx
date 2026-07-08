@@ -257,6 +257,16 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave, 
 
   const downloadLabel = async () => {
     if (!vintedCookie) { alert('Geen Vinted cookie — koppel je account in Instellingen.'); return }
+    // De cookie wordt hieronder als HTTP-header meegestuurd — die mag enkel
+    // Latin-1-tekens bevatten. Zonder deze check laat een corrupte opgeslagen
+    // waarde (bv. per ongeluk mee-gekopieerde consoletekst i.p.v. enkel de
+    // cookie, zie VintedKoppeling in Settings.jsx die dit nu bij het opslaan
+    // al tegenhoudt) fetch() hier stuklopen met een cryptische foutmelding —
+    // geef in dat geval meteen een bruikbare hint i.p.v. de rauwe TypeError.
+    if ([...vintedCookie].some((ch) => ch.charCodeAt(0) > 255)) {
+      alert('De opgeslagen Vinted-cookie bevat ongeldige tekens (waarschijnlijk per ongeluk extra tekst mee gekopieerd). Koppel je account opnieuw via Instellingen → Vinted account.')
+      return
+    }
     setDownloading(true)
     try {
       const params = order.label_url
@@ -267,8 +277,15 @@ function OrderDetailModal({ order, onClose, vintedCookie, onPhotoClick, onSave, 
       const blob = await res.blob()
       const url  = URL.createObjectURL(blob)
       const a    = document.createElement('a')
-      a.href = url; a.download = `label-${order.transaction_id || order.id}.pdf`; a.click()
-      URL.revokeObjectURL(url)
+      a.href = url; a.download = `label-${order.transaction_id || order.id}.pdf`
+      // Append + delay revoke: sommige (vooral mobiele) browsers geven de
+      // download pas na click() asynchroon door aan de OS-downloadmanager —
+      // een a die niet in de DOM zit, of een blob-URL die meteen daarna al
+      // ingetrokken wordt, laat de download dan zonder foutmelding stilvallen.
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 30000)
       setDownloaded(true)
     } catch (e) {
       alert(`Label download mislukt: ${e.message}`)
