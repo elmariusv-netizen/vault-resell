@@ -342,20 +342,16 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
   const bounds = useMemo(() => getDateBounds(range, customFrom, customTo), [range, customFrom, customTo])
   const filteredSales = useMemo(() => filterByRange(sales, range, bounds), [sales, range, bounds])
 
-  const todayStr = localDateStr(new Date())
-  // Geen batch-guard: een net-gesynchroniseerde verkoop zonder gekoppelde SKU
-  // (batchId null) moet vandaag al meetellen — getBatchUnitCost(undefined)
-  // valt terug op €0 kostprijs, dus calcSaleProfit werkt ook zonder batch.
-  const todayProfit = useMemo(() =>
-    sales.filter((s) => s.date === todayStr).reduce((sum, s) => {
-      const b = batches.find((x) => x.id === s.batchId)
-      return sum + calcSaleProfit(s, b).profit
-    }, 0)
-  , [sales, batches, todayStr])
-
   const stats = useMemo(() => {
     const paid = filteredSales.filter((s) => !s.isFree)
     const totalRevenue = paid.reduce((s, x) => s + (x.salePrice || 0) * (x.quantity || 1), 0)
+    // Winst over de gekozen periode — zelfde calcSaleProfit() als todayProfit
+    // hierboven gebruikte, maar dan over filteredSales i.p.v. enkel vandaag,
+    // zodat de mobiele hero mee kan bewegen met de datumfilter.
+    const totalProfit = filteredSales.reduce((sum, s) => {
+      const b = batches.find((x) => x.id === s.batchId)
+      return sum + calcSaleProfit(s, b).profit
+    }, 0)
     // Aantal DISTINCTE bestellingen, niet aantal sales-regels — zie orderKey().
     const totalOrders = new Set(paid.map(orderKey)).size
     const avgOrder = totalOrders > 0 ? totalRevenue / totalOrders : 0
@@ -377,7 +373,7 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
     const labelsReady = vtOrders.filter(isLabelReady).length
 
     const totalItems = batches.reduce((s, b) => s + getRemainingQty(b, sales), 0)
-    return { totalRevenue, totalOrders, avgOrder, toShip, onTheWay, atPickupPoint, labelsReady, totalItems }
+    return { totalRevenue, totalProfit, totalOrders, avgOrder, toShip, onTheWay, atPickupPoint, labelsReady, totalItems }
   }, [filteredSales, sales, batches, vtOrders])
 
   const chartData = useMemo(() => buildChartData(filteredSales, range, bounds), [filteredSales, range, bounds])
@@ -421,16 +417,6 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
       .sort((a, b) => new Date(b.date) - new Date(a.date))
       .slice(0, 6)
   }, [sales, batches])
-
-  const sparkData = useMemo(() => {
-    const today = new Date()
-    return Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(today); d.setDate(d.getDate() - (6 - i))
-      const ds = localDateStr(d)
-      const rev = sales.filter((s) => s.date === ds).reduce((sum, s) => sum + (s.salePrice || 0) * (s.quantity || 1), 0)
-      return { i, rev }
-    })
-  }, [sales])
 
   const handleSaveSale = (sale) => {
     const updates = { sales: [...sales, sale] }
@@ -725,10 +711,10 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
         {/* Hero */}
         <div style={{ background: 'linear-gradient(180deg, var(--bg-2) 0%, var(--bg) 100%)', padding: '28px 20px 24px' }}>
           <div style={{ fontSize: 10, color: D.text3, fontWeight: 700, letterSpacing: '.12em', textTransform: 'uppercase', marginBottom: 10 }}>
-            Vandaag verdiend
+            {rangeLabel[range]} verdiend
           </div>
           <div style={{ fontSize: '3rem', fontWeight: 800, color: D.green, letterSpacing: '-0.04em', lineHeight: 1 }}>
-            {formatCurrency(todayProfit)}
+            {formatCurrency(stats.totalProfit)}
           </div>
           <div style={{ fontSize: 12, color: D.text3, marginTop: 8 }}>
             {new Date().toLocaleDateString('nl-BE', { weekday: 'long', day: 'numeric', month: 'long' })}
@@ -787,20 +773,6 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
               <div style={{ fontSize: 10, color: D.text3, marginTop: 2, whiteSpace: 'nowrap' }}>{p.label}</div>
             </div>
           ))}
-        </div>
-
-        {/* Sparkline */}
-        <div style={{ padding: '0 20px 4px' }}>
-          <div style={{ fontSize: 10, color: D.text3, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', marginBottom: 6 }}>
-            Afgelopen 7 dagen
-          </div>
-          <div style={{ height: 56 }}>
-            <ResponsiveContainer width="100%" height={56}>
-              <LineChart data={sparkData}>
-                <Line type="monotone" dataKey="rev" stroke={D.blue} strokeWidth={2.5} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
         </div>
 
         {/* Quick action */}
