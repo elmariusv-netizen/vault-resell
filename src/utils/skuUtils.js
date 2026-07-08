@@ -144,7 +144,14 @@ export function isInTransitStatus(status) {
 // die nog geen transaction_status/is_completed hebben (nog niet opnieuw
 // gesynct sinds die velden zijn toegevoegd — dan is transaction_status null).
 //
-// Mapping opgebouwd uit live STATUS-MAPPING-logging (80+ orders):
+// Mapping opgebouwd uit live STATUS-MAPPING-logging (80+ orders), plus een
+// gerichte correctie (2026-07) na een live vergelijking tegen Vinted's eigen
+// statustekst: transaction_status=230 wordt bereikt zodra het verzendlabel
+// klaarstaat, NIET pas zodra de verkoper het pakket ook echt afgeeft — de
+// shipment_status maakt dat onderscheid pas. shipment_status=230 bleek in de
+// praktijk exact "Verzendlabel is naar de verkoper gestuurd." te zijn (dus
+// nog te verzenden), niet "onderweg" zoals de vorige "veiligste default"
+// aannam — die default stond dus verkeerd om.
 //   transaction_status=510                 → geannuleerd/mislukt (terugbetaald)
 //   is_completed===true                    → voltooid (dekt zowel 450 als 460,
 //                                             ongeacht shipment_status-variant)
@@ -154,13 +161,11 @@ export function isInTransitStatus(status) {
 //                                             door de koper (postkantoor/
 //                                             afhaalpunt), dat vóelt voor de
 //                                             gebruiker niet meer als
-//                                             "onderweg". Geen van beide
-//                                             hoort ooit bij "te verzenden":
-//                                             de verkoper heeft in BEIDE
-//                                             gevallen al verzonden.
-//   transaction_status=230, overige/onbekende shipment_status → onderweg
-//                                             (veiligste default voor een
-//                                             nog niet geziene variant)
+//                                             "onderweg".
+//   transaction_status=230, overige/onbekende shipment_status (bv. 230 zelf)
+//                                           → te verzenden (label staat klaar,
+//                                             maar is nog niet als "verzonden"
+//                                             of "bij afhaalpunt" bevestigd)
 //   transaction_status=430                 → gepauzeerd (probleemgeval, telt
 //                                             nergens in mee — geen normale
 //                                             voortgang)
@@ -174,7 +179,11 @@ export function classifyOrderStage(order) {
   if (numericStatus != null) {
     if (numericStatus === 510) return 'cancelled'
     if (isCompleted === true) return 'finished'
-    if (numericStatus === 230) return shipmentStatus === 310 ? 'at_pickup_point' : 'in_transit'
+    if (numericStatus === 230) {
+      if (shipmentStatus === 310) return 'at_pickup_point'
+      if (shipmentStatus === 300) return 'in_transit'
+      return 'to_ship'
+    }
     if (numericStatus === 430) return 'paused'
     return 'to_ship'
   }
