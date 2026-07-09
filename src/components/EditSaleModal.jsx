@@ -2,7 +2,7 @@ import { useState } from 'react'
 import Modal from './Modal'
 import { formatSkuRange, formatCurrency, calcSaleProfit, getRemainingQty, getBatchUnitCost } from '../utils/skuUtils'
 
-const PLATFORMS = ['Vinted', 'Privé persoon', 'Medeverkoper/Groothandel']
+const PLATFORM_PRESETS = ['Vinted', 'WhatsApp', 'Instagram', 'Lokaal']
 
 function LinkRow({ value, onChange, onRemove }) {
   return (
@@ -20,7 +20,9 @@ export default function EditSaleModal({ data, sale, onClose, onSave }) {
 
   const [batchId,      setBatchId]      = useState(sale.batchId || batches[0]?.id || '')
   const [salePrice,    setSalePrice]    = useState(sale.isFree ? '' : String(sale.salePrice ?? ''))
-  const [platform,     setPlatform]     = useState(sale.platform || 'Vinted')
+  const isPresetPlatform = PLATFORM_PRESETS.includes(sale.platform)
+  const [platformChoice, setPlatformChoice] = useState(isPresetPlatform || !sale.platform ? (sale.platform || 'Vinted') : 'Ander')
+  const [customPlatform, setCustomPlatform] = useState(isPresetPlatform ? '' : (sale.platform || ''))
   const [buyer,        setBuyer]        = useState(sale.buyer || '')
   const [buyerCountry, setBuyerCountry] = useState(sale.buyerCountry || '')
   const [shippingCost, setShippingCost] = useState(String(sale.shippingCost || ''))
@@ -42,12 +44,14 @@ export default function EditSaleModal({ data, sale, onClose, onSave }) {
     ? calcSaleProfit({ quantity: 1, salePrice: effectivePrice, shippingCost: effectiveShipping, fees: 0 }, batch)
     : null
 
+  const effectivePlatform = platformChoice === 'Ander' ? (customPlatform.trim() || 'Ander') : platformChoice
+
   const handleSave = () => {
     onSave({
       ...sale,
       batchId,
       salePrice:    isFree ? 0 : parseFloat(salePrice) || 0,
-      platform,
+      platform:     effectivePlatform,
       buyer:        buyer.trim(),
       buyerCountry: buyerCountry.trim(),
       shippingCost: effectiveShipping,
@@ -125,9 +129,19 @@ export default function EditSaleModal({ data, sale, onClose, onSave }) {
 
         <div className="form-group">
           <label>Platform</label>
-          <select value={platform} onChange={(e) => setPlatform(e.target.value)}>
-            {PLATFORMS.map((p) => <option key={p} value={p}>{p}</option>)}
+          <select value={platformChoice} onChange={(e) => setPlatformChoice(e.target.value)}>
+            {PLATFORM_PRESETS.map((p) => <option key={p} value={p}>{p}</option>)}
+            <option value="Ander">Ander</option>
           </select>
+          {platformChoice === 'Ander' && (
+            <input
+              type="text"
+              placeholder="Naam van het platform"
+              value={customPlatform}
+              onChange={(e) => setCustomPlatform(e.target.value)}
+              style={{ marginTop: 8 }}
+            />
+          )}
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>

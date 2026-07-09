@@ -2,19 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react'
 import Modal from './Modal'
 import { genId, formatSkuRange, calcSaleProfit, formatCurrency, getRemainingQty, getBatchUnitCost } from '../utils/skuUtils'
 
-const PLATFORMS = [
-  { value: 'Vinted', label: 'Vinted', tooltip: null },
-  {
-    value: 'Privé persoon',
-    label: 'Privé persoon',
-    tooltip: 'Gewone privéverkoop — standaard BTW-regels van toepassing',
-  },
-  {
-    value: 'Medeverkoper/Groothandel',
-    label: 'Medeverkoper/Groothandel',
-    tooltip: 'Verkoop aan andere reseller of groothandel — andere BTW-regels kunnen van toepassing zijn',
-  },
-]
+const PLATFORMS = ['Vinted', 'WhatsApp', 'Instagram', 'Lokaal', 'Ander']
 
 async function compressPhoto(file) {
   return new Promise((resolve) => {
@@ -67,6 +55,7 @@ export default function SaleModal({ data, onClose, onSave, defaultBatchId, prefi
   const [qty, setQty] = useState(1)
   const [price, setPrice] = useState(prefill?.price != null ? String(prefill.price) : '')
   const [platform, setPlatform] = useState('Vinted')
+  const [customPlatform, setCustomPlatform] = useState('')
   const [buyer, setBuyer] = useState(prefill?.buyer || '')
   const [shippingCost, setShippingCost] = useState('')
   const [saleNotes, setSaleNotes] = useState(prefill?.notes || '')
@@ -126,6 +115,8 @@ export default function SaleModal({ data, onClose, onSave, defaultBatchId, prefi
   const updateLink = (i, val) => setLinks((l) => l.map((x, idx) => idx === i ? val : x))
   const removeLink = (i) => setLinks((l) => l.filter((_, idx) => idx !== i))
 
+  const effectivePlatform = platform === 'Ander' ? (customPlatform.trim() || 'Ander') : platform
+
   const handleSave = () => {
     if (!batch || (!price && !isFree)) return
     const sale = {
@@ -134,7 +125,7 @@ export default function SaleModal({ data, onClose, onSave, defaultBatchId, prefi
       type,
       quantity: effectiveQty,
       salePrice: isFree ? 0 : parseFloat(price),
-      platform,
+      platform: effectivePlatform,
       buyer,
       fees: 0,
       shippingCost: effectiveShipping,
@@ -303,16 +294,23 @@ export default function SaleModal({ data, onClose, onSave, defaultBatchId, prefi
           <div className="platform-group">
             {PLATFORMS.map((p) => (
               <button
-                key={p.value}
-                className={`platform-btn${platform === p.value ? ' active' : ''}`}
-                title={p.tooltip || undefined}
-                onClick={() => setPlatform(p.value)}
+                key={p}
+                className={`platform-btn${platform === p ? ' active' : ''}`}
+                onClick={() => setPlatform(p)}
               >
-                {p.label}
-                {p.tooltip && <span style={{ marginLeft: 4, opacity: 0.5, fontSize: 10 }}>ⓘ</span>}
+                {p}
               </button>
             ))}
           </div>
+          {platform === 'Ander' && (
+            <input
+              type="text"
+              placeholder="Naam van het platform"
+              value={customPlatform}
+              onChange={(e) => setCustomPlatform(e.target.value)}
+              style={{ marginTop: 8 }}
+            />
+          )}
         </div>
 
         <div className="form-row">

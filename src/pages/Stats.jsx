@@ -35,6 +35,7 @@ export default function Stats({ data, theme }) {
   const [range, setRange] = useState('all')
   const [customFrom, setCustomFrom] = useState('')
   const [customTo, setCustomTo] = useState('')
+  const [platformFilter, setPlatformFilter] = useState('all')
   const [tab, setTab] = useState('overview')
   const [businessCosts, setBusinessCosts] = useState([])
   // vintedOrderId -> title, enkel voor de beste-categorie/kleur/maat-analyse
@@ -54,7 +55,16 @@ export default function Stats({ data, theme }) {
   }, [])
 
   const bounds = useMemo(() => getDateBounds(range, customFrom, customTo), [range, customFrom, customTo])
-  const filteredSales = useMemo(() => filterByRange(sales, range, bounds), [sales, range, bounds])
+  // Alle platforms staan standaard samen in de cijfers — platformFilter is
+  // optioneel en verfijnt enkel wanneer de gebruiker 'm expliciet instelt.
+  const availablePlatforms = useMemo(
+    () => [...new Set(sales.map((s) => normalizePlatform(s.platform)).filter(Boolean))].sort(),
+    [sales]
+  )
+  const filteredSales = useMemo(() => {
+    const byDate = filterByRange(sales, range, bounds)
+    return platformFilter === 'all' ? byDate : byDate.filter((s) => normalizePlatform(s.platform) === platformFilter)
+  }, [sales, range, bounds, platformFilter])
   // business_costs gebruikt cost_date i.p.v. sales' date — filterByRange
   // verwacht een .date-veld, dus even mappen vóór het filteren.
   const filteredCosts = useMemo(
@@ -216,13 +226,34 @@ export default function Stats({ data, theme }) {
       </div>
 
       {/* Date filter */}
-      <div style={{ marginBottom: 20 }}>
+      <div style={{ marginBottom: 12 }}>
         <DateRangeFilter
           value={range} onChange={setRange}
           customFrom={customFrom} customTo={customTo}
           onCustom={(k, v) => k === 'from' ? setCustomFrom(v) : setCustomTo(v)}
         />
       </div>
+
+      {/* Platform filter — standaard alle platforms samen */}
+      {availablePlatforms.length > 1 && (
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center', marginBottom: 20 }}>
+          <button
+            onClick={() => setPlatformFilter('all')}
+            className={`filter-chip${platformFilter === 'all' ? ' active' : ''}`}
+          >
+            Alle platforms
+          </button>
+          {availablePlatforms.map((p) => (
+            <button
+              key={p}
+              onClick={() => setPlatformFilter(p)}
+              className={`filter-chip${platformFilter === p ? ' active' : ''}`}
+            >
+              {p}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Overview stat cards */}
       <div className="stats-grid" style={{ marginBottom: 20 }}>
