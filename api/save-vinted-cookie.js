@@ -23,6 +23,12 @@ export default async function handler(req, res) {
   if (!vinted_user_id || !cookie) {
     return res.status(400).json({ error: 'vinted_user_id en cookie vereist' })
   }
+  // TIJDELIJK diagnose-log (geen gevoelige waarden) — helpt uitzoeken of de
+  // extensie vinted_login/vinted_photo daadwerkelijk meestuurt. Weer weg te
+  // halen zodra de profiel-backfill bevestigd werkt.
+  console.log('[save-vinted-cookie] DEBUG ontvangen velden:', {
+    vinted_user_id, hasLogin: !!vinted_login, hasPhoto: !!vinted_photo,
+  })
 
   // De cookie wordt later als x-vinted-cookie HTTP-header meegestuurd naar
   // Vinted (zie api/label.js) — headers mogen enkel Latin-1-tekens (code
@@ -79,7 +85,7 @@ export default async function handler(req, res) {
     // koppeling). Nooit de cookie-save laten falen op een probleem hier.
     if (vinted_login || vinted_photo) {
       try {
-        await fetch(`${SUPABASE_URL}/rest/v1/vinted_account_links?vinted_user_id=eq.${encodeURIComponent(vinted_user_id)}`, {
+        const backfillRes = await fetch(`${SUPABASE_URL}/rest/v1/vinted_account_links?vinted_user_id=eq.${encodeURIComponent(vinted_user_id)}`, {
           method: 'PATCH',
           headers: { ...hdrs, 'Prefer': 'return=minimal' },
           body: JSON.stringify({
@@ -87,9 +93,12 @@ export default async function handler(req, res) {
             ...(vinted_photo ? { vinted_photo } : {}),
           }),
         })
+        console.log('[save-vinted-cookie] DEBUG profiel-backfill status:', backfillRes.status)
       } catch (e) {
         console.warn('[save-vinted-cookie] profiel-backfill mislukt:', e.message)
       }
+    } else {
+      console.log('[save-vinted-cookie] DEBUG geen login/photo meegestuurd, backfill overgeslagen')
     }
 
     return res.status(200).json({ success: true, updated_at: updatedAt })
