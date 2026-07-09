@@ -82,7 +82,7 @@ export default async function handler(req, res) {
     if (!geminiRes.ok) {
       const errText = await geminiRes.text().catch(() => '')
       console.error('[generate-listing] Gemini-fout:', geminiRes.status, errText.slice(0, 300))
-      return res.status(502).json({ error: 'ai_failed', message: 'Genereren via AI is mislukt. Probeer opnieuw of vul handmatig in.' })
+      return res.status(502).json({ error: 'ai_failed', message: 'Genereren via AI is mislukt. Probeer opnieuw of vul handmatig in.', _debug: errText.slice(0, 500) })
     }
 
     const body = await geminiRes.json()
