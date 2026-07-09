@@ -3,6 +3,28 @@ import { genId, getNextRange, formatSkuRange, formatCurrency, getNextSkuLabel } 
 
 const COLORS = ['#00ff88', '#4fc3f7', '#ce93d8', '#ffb74d', '#80cbc4', '#ff7043', '#f06292', '#aed581', '#ffd60a', '#3ecfff']
 
+// Foto's staan als volledige-resolutie base64 in `photos` (voor opslag/thumbnail).
+// Voor de AI-aanvraag verkleinen we naar max 1024px zodat de request klein en
+// snel blijft — de Vercel-functie heeft een payload-limiet en het model heeft
+// geen baat bij de volledige foto-resolutie.
+function downscaleForAI(dataUrl, maxDim = 1024, quality = 0.82) {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => {
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height))
+      const w = Math.round(img.width * scale)
+      const h = Math.round(img.height * scale)
+      const canvas = document.createElement('canvas')
+      canvas.width = w
+      canvas.height = h
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h)
+      resolve(canvas.toDataURL('image/jpeg', quality))
+    }
+    img.onerror = () => reject(new Error('foto kon niet geladen worden'))
+    img.src = dataUrl
+  })
+}
+
 export default function NewSKU({ data, updateData, onNavigate }) {
   const { batches, suppliers } = data
 
@@ -10,12 +32,15 @@ export default function NewSKU({ data, updateData, onNavigate }) {
   const [name, setName] = useState('')
   const [brand, setBrand] = useState('')
   const [category, setCategory] = useState('')
+  const [description, setDescription] = useState('')
   const [photos, setPhotos] = useState([])
   const [costPrice, setCostPrice] = useState('')
   const [importTax, setImportTax] = useState('')
   const [quantity, setQuantity] = useState('')
   const [purchaseDate, setPurchaseDate] = useState(new Date().toISOString().split('T')[0])
   const [note, setNote] = useState('')
+  const [generating, setGenerating] = useState(false)
+  const [generateError, setGenerateError] = useState('')
 
   const [showNewSupplier, setShowNewSupplier] = useState(false)
   const [newSupPrefix, setNewSupPrefix] = useState('')
@@ -54,6 +79,37 @@ export default function NewSKU({ data, updateData, onNavigate }) {
 
   const removePhoto = (i) => setPhotos((prev) => prev.filter((_, idx) => idx !== i))
 
+  const handleGenerate = async () => {
+    if (!photos.length || generating) return
+    setGenerating(true)
+    setGenerateError('')
+    try {
+      const small = await Promise.all(photos.slice(0, 2).map((p) => downscaleForAI(p)))
+      const images = small.map((dataUrl) => {
+        const [, mimeType, data] = dataUrl.match(/^data:(.+?);base64,(.+)$/) || []
+        return { mimeType, data }
+      })
+      const res = await fetch('/api/generate-listing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ images }),
+      })
+      const result = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setGenerateError(result.message || 'Genereren mislukt. Probeer opnieuw of vul handmatig in.')
+        return
+      }
+      if (result.title) setName(result.title)
+      if (result.description) setDescription(result.description)
+      if (result.brand && !brand) setBrand(result.brand)
+      if (result.category && !category) setCategory(result.category)
+    } catch {
+      setGenerateError('Genereren mislukt — check je internetverbinding en probeer opnieuw.')
+    } finally {
+      setGenerating(false)
+    }
+  }
+
   const handleCreateSupplier = () => {
     if (!newSupPrefix.trim() || !newSupName.trim()) return
     const prefix = newSupPrefix.toUpperCase().slice(0, 4)
@@ -82,6 +138,7 @@ export default function NewSKU({ data, updateData, onNavigate }) {
       name,
       brand,
       category,
+      description,
       photo: photos[0] || null,
       photos,
       costPrice: parseFloat(costPrice) || 0,
@@ -326,6 +383,35 @@ export default function NewSKU({ data, updateData, onNavigate }) {
                   Eerste foto wordt gebruikt als thumbnail
                 </div>
               )}
+            </div>
+
+            {/* AI-titel/beschrijving-voorstel — vult enkel de velden hierboven,
+                niets wordt automatisch opgeslagen. Gebruiker kan alles nog
+                aanpassen vóór "Aankoop opslaan". */}
+            <div className="form-group" style={{ marginTop: 0 }}>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={handleGenerate}
+                disabled={!photos.length || generating}
+              >
+                {generating ? '✨ Bezig met genereren…' : '✨ Genereer titel & beschrijving'}
+              </button>
+              {!photos.length && (
+                <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 6 }}>Voeg eerst een foto toe.</div>
+              )}
+              {generateError && (
+                <div style={{ fontSize: 12, color: 'var(--red)', marginTop: 6 }}>{generateError}</div>
+              )}
+            </div>
+
+            <div className="form-group" style={{ marginTop: 0 }}>
+              <label>Beschrijving (optioneel)</label>
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Wordt gebruikt als Vinted-omschrijving — pas gerust aan na AI-voorstel"
+              />
             </div>
           </div>
 
