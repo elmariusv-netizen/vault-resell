@@ -1098,6 +1098,7 @@
       { id:'verkopen',   label:'📦 Verkopen'  },
       { id:'aankopen',   label:'🛍 Aankopen'  },
       { id:'labels',     label:'🏷 Labels'    },
+      { id:'sku',        label:'🔖 SKU'       },
     ];
     TABS.forEach(({ id, label }) => {
       const t = btn(label, `background:transparent;color:#6b7280;padding:7px 14px;border-radius:8px;transition:all 0.15s`);
@@ -1140,6 +1141,7 @@
       if (id === 'verkopen')   await tabVerkopen(content, footer);
       if (id === 'aankopen')   await tabAankopen(content, footer);
       if (id === 'labels')     await tabLabels(content, footer);
+      if (id === 'sku')        await tabSku(content, footer);
     } catch (err) {
       console.error('[Vault]', err);
       content.innerHTML = '';
@@ -1376,6 +1378,44 @@
   }
 
   // ── Tab: Listings ──────────────────────────────────────────────────────────
+  // ── Tab: Volgende SKU ───────────────────────────────────────────────────────
+  // Zonder dit had de gebruiker geen zichtbare "volgende SKU" bij het aanmaken
+  // van een Vinted-listing, en zette die dus nooit in titel/beschrijving —
+  // daardoor vond de bestaande SKU-detectie (extractSkuCandidate hierboven)
+  // simpelweg nooit iets om te herkennen. Haalt batches/suppliers op via
+  // api/next-sku.js (server-side, want dit content-script kent de webapp-data
+  // niet — zie GET_NEXT_SKU in background.js).
+  async function tabSku(content, footer) {
+    const vintedUserId = await getVintedUserId();
+    const res = vintedUserId ? await sendMsg({ type: 'GET_NEXT_SKU', vintedUserId }) : null;
+    content.innerHTML = '';
+    if (!res?.success || !res.suppliers?.length) {
+      content.appendChild(emptyState('🏷', 'Geen SKU-suggestie beschikbaar',
+        res?.error === 'geen Vault-koppeling voor dit Vinted-account'
+          ? 'Koppel eerst je Vault-account via Instellingen op de webapp.'
+          : 'Voeg eerst een leverancier toe op de webapp.'));
+      return;
+    }
+    content.appendChild(sectionHead('Volgende SKU per leverancier'));
+    content.appendChild(el('div', `font-size:12px;color:${D.sub};line-height:1.6;margin:-4px 0 14px`,
+      'Zet dit in de titel of beschrijving van je nieuwe Vinted-listing, zodat Vault de verkoop straks automatisch aan de juiste SKU koppelt.'));
+    const rows = res.suppliers.map((s, i) => {
+      const dot = el('span', `width:10px;height:10px;border-radius:50%;background:${s.color || '#666'};flex-shrink:0`);
+      const skuLabel = el('div', `font-family:monospace;font-size:16px;font-weight:800;color:${D.text}`, esc(s.nextSku));
+      const copyBtn = btn('📋 Kopieer', `background:${D.accent};color:#fff;flex-shrink:0;padding:8px 14px;font-size:12px`);
+      copyBtn.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(s.nextSku);
+          toast(`${s.nextSku} gekopieerd`);
+        } catch {
+          toast('Kopiëren mislukt', false);
+        }
+      });
+      return rowDiv([dot, textStack(s.name, s.prefix), skuLabel, copyBtn], i < res.suppliers.length - 1);
+    });
+    content.appendChild(cardWrap(rows));
+  }
+
   async function tabZoekertjes(content, footer) {
     const items = await getListings();
     content.innerHTML = '';

@@ -571,7 +571,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     uploadVintedCookie(message.vintedUserId, message.vintedLogin, message.vintedPhoto).then(sendResponse);
     return true;
   }
+  // Volgende-SKU-suggestie voor de 🏷 SKU-tab (content.js tabSku()) — zie
+  // api/next-sku.js voor de owner_id-opzoek + batches/suppliers-uitleg.
+  if (message.type === 'GET_NEXT_SKU') {
+    fetchNextSku(message.vintedUserId).then(sendResponse);
+    return true;
+  }
 });
+
+async function fetchNextSku(vintedUserId) {
+  if (!vintedUserId) return { success: false, error: 'no_vinted_user_id' };
+  try {
+    const res = await fetch(`https://vault-resell.vercel.app/api/next-sku?vinted_user_id=${encodeURIComponent(vintedUserId)}`);
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) return { success: false, error: body.error || `HTTP ${res.status}` };
+    return { success: true, suppliers: body.suppliers || [] };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+}
 
 async function uploadVintedCookie(vintedUserId, vintedLogin, vintedPhoto) {
   if (!vintedUserId) return { success: false, error: 'no_vinted_user_id' };
