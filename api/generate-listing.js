@@ -2,7 +2,7 @@
 // via Gemini 2.5 Flash-Lite (gratis tier, zie GEMINI_API_KEY hieronder). Draait
 // server-side zodat de API-key nooit client-zichtbaar is — zelfde patroon als
 // de andere api/*.js-bestanden hier.
-const MODEL = 'gemini-2.5-flash-lite'
+const MODEL = 'gemini-2.5-flash'
 const MAX_IMAGES = 2
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024 // ruwe geschatte grootte na base64-decode
 
