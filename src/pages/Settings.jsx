@@ -482,21 +482,26 @@ function VintedAccountLink({ supabaseUser }) {
         {hasProfile && profile.photo ? (
           <img
             src={profile.photo} alt=""
-            style={{ width: 42, height: 42, borderRadius: 12, flexShrink: 0, objectFit: 'cover', border: '1px solid rgba(0,255,136,0.3)' }}
+            style={{ width: 42, height: 42, borderRadius: '50%', flexShrink: 0, objectFit: 'cover', border: '1px solid rgba(0,255,136,0.3)' }}
           />
         ) : (
           <div style={{
-            width: 42, height: 42, borderRadius: 12, flexShrink: 0,
+            width: 42, height: 42, borderRadius: '50%', flexShrink: 0,
             background: iconColor, border: `1px solid ${iconBorder}`,
             display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22,
           }}>🔗</div>
         )}
 
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 700, fontSize: 15 }}>Vinted-account (voor automatische synchronisatie)</div>
+          <div style={{ fontWeight: 700, fontSize: 15, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span>Vinted-account</span>
+            {hasProfile && profile.login && (
+              <span style={{ fontWeight: 600, color: 'var(--green)' }}>@{profile.login}</span>
+            )}
+          </div>
           <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2 }}>
             {linked === null ? 'Laden…'
-              : hasProfile    ? `✓ Gekoppeld — ${profile.login || 'extensie sync werkt'}`
+              : hasProfile    ? '✓ Gekoppeld — extensie sync werkt'
               : linked        ? 'Gekoppeld — extensie sync werkt'
               : waiting       ? 'Wachten op koppeling…'
               :                 'Niet gekoppeld — sync werkt pas na koppeling'}
