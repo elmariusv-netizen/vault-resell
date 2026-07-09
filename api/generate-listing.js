@@ -1,8 +1,12 @@
 // Genereert een Vinted-stijl titel + beschrijving op basis van 1-2 productfoto's,
-// via Gemini 2.5 Flash-Lite (gratis tier, zie GEMINI_API_KEY hieronder). Draait
-// server-side zodat de API-key nooit client-zichtbaar is — zelfde patroon als
-// de andere api/*.js-bestanden hier.
-const MODEL = 'gemini-2.5-flash'
+// via Gemini (gratis tier, zie GEMINI_API_KEY hieronder). Draait server-side
+// zodat de API-key nooit client-zichtbaar is — zelfde patroon als de andere
+// api/*.js-bestanden hier.
+//
+// Flash-Lite eerst (ruimste gratis quotum), met één fallback naar Flash bij
+// een 503 "model overladen" — dat bleek bij live testen af en toe voor te
+// komen op Flash-Lite; Flash valt ook onder de gratis tier, dus geen kosten.
+const MODELS = ['gemini-2.5-flash-lite', 'gemini-2.5-flash']
 const MAX_IMAGES = 2
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024 // ruwe geschatte grootte na base64-decode
 
@@ -61,28 +65,33 @@ export default async function handler(req, res) {
   ]
 
   try {
-    const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${encodeURIComponent(API_KEY)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts }],
-          generationConfig: {
-            responseMimeType: 'application/json',
-            responseSchema: RESPONSE_SCHEMA,
-          },
-        }),
+    let geminiRes, lastErrText = ''
+    for (let i = 0; i < MODELS.length; i++) {
+      geminiRes = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${MODELS[i]}:generateContent?key=${encodeURIComponent(API_KEY)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts }],
+            generationConfig: {
+              responseMimeType: 'application/json',
+              responseSchema: RESPONSE_SCHEMA,
+            },
+          }),
+        }
+      )
+      if (geminiRes.status === 429) {
+        return res.status(429).json({ error: 'quota_exceeded', message: 'Gratis AI-quotum voor vandaag is bereikt. Probeer later opnieuw of vul handmatig in.' })
       }
-    )
-
-    if (geminiRes.status === 429) {
-      return res.status(429).json({ error: 'quota_exceeded', message: 'Gratis AI-quotum voor vandaag is bereikt. Probeer later opnieuw of vul handmatig in.' })
-    }
-    if (!geminiRes.ok) {
-      const errText = await geminiRes.text().catch(() => '')
-      console.error('[generate-listing] Gemini-fout:', geminiRes.status, errText.slice(0, 300))
-      return res.status(502).json({ error: 'ai_failed', message: 'Genereren via AI is mislukt. Probeer opnieuw of vul handmatig in.', _debug: errText.slice(0, 500) })
+      if (geminiRes.ok) break
+      lastErrText = await geminiRes.text().catch(() => '')
+      const isOverloaded = geminiRes.status === 503
+      if (!isOverloaded || i === MODELS.length - 1) {
+        console.error('[generate-listing] Gemini-fout:', geminiRes.status, lastErrText.slice(0, 300))
+        return res.status(502).json({ error: 'ai_failed', message: 'Genereren via AI is mislukt. Probeer opnieuw of vul handmatig in.' })
+      }
+      // model overladen (503) — probeer de volgende, betrouwbaardere fallback
     }
 
     const body = await geminiRes.json()
