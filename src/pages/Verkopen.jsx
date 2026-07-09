@@ -2136,12 +2136,20 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
                           />
                         )}
                         <div>
-                          <span
-                            className="sku-tag"
-                            style={{ background: (s.sup?.color || '#666') + '14', color: s.sup?.color || '#666' }}
-                          >
-                            {s.sku}
-                          </span>
+                          {/* s.sku kan een comma-lijst zijn voor bundels die via
+                              vtOrder.sku_ref terugvallen (zie enriched hierboven,
+                              handleBulkSkuConfirm zet dit als CSV bij meerdere
+                              leveranciers/batches in 1 order) — 1 badge per SKU
+                              i.p.v. de hele lijst in 1 badge proppen. */}
+                          {s.sku.split(',').map((sk) => sk.trim()).filter(Boolean).map((sk) => (
+                            <span
+                              key={sk}
+                              className="sku-tag"
+                              style={{ background: (s.sup?.color || '#666') + '14', color: s.sup?.color || '#666', marginRight: 4 }}
+                            >
+                              {sk}
+                            </span>
+                          ))}
                           {s.quantity > 1 && (
                             <span style={{ marginLeft: 4, fontSize: 11, color: 'var(--text-3)' }}>×{s.quantity}</span>
                           )}
@@ -2219,9 +2227,11 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
                   )}
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                      <span className="sku-tag" style={{ background: (s.sup?.color || '#666') + '14', color: s.sup?.color || '#666' }}>
-                        {s.sku}
-                      </span>
+                      {s.sku.split(',').map((sk) => sk.trim()).filter(Boolean).map((sk) => (
+                        <span key={sk} className="sku-tag" style={{ background: (s.sup?.color || '#666') + '14', color: s.sup?.color || '#666' }}>
+                          {sk}
+                        </span>
+                      ))}
                       {s.quantity > 1 && <span style={{ fontSize: 11, color: 'var(--text-3)' }}>×{s.quantity}</span>}
                       <span style={{ fontSize: 11, background: 'var(--bg-2)', padding: '2px 6px', borderRadius: 5, color: 'var(--text-2)' }}>
                         {short(s.platformDisplay)}
