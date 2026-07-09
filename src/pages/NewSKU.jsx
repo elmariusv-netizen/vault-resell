@@ -34,7 +34,7 @@ export default function NewSKU({ data, updateData, onNavigate }) {
   const [category, setCategory] = useState('')
   const [description, setDescription] = useState('')
   const [photos, setPhotos] = useState([])
-  const [costPrice, setCostPrice] = useState('')
+  const [totalPurchasePrice, setTotalPurchasePrice] = useState('')
   const [importTax, setImportTax] = useState('')
   const [quantity, setQuantity] = useState('')
   const [purchaseDate, setPurchaseDate] = useState(new Date().toISOString().split('T')[0])
@@ -58,14 +58,21 @@ export default function NewSKU({ data, updateData, onNavigate }) {
   }, [supplier, quantity, batches])
 
   // importTax is een TOTAAL bedrag voor de hele batch (bv. 1 douanefactuur
-  // voor de hele zending), geen bedrag per stuk — komt dus maar 1x bij de
-  // totale inkoopkost, niet vermenigvuldigd met het aantal.
+  // voor de hele zending) — komt dus maar 1x bij de totale inkoopkost.
+  // totalPurchasePrice is ook een TOTAAL bedrag (voor alle stuks samen); de
+  // rest van de app (COGS/marge-berekeningen) verwacht een prijs PER STUK op
+  // batch.costPrice, dus die wordt hier afgeleid, niet omgekeerd.
   const totalCost = useMemo(() => {
-    const q = parseInt(quantity) || 0
-    const c = parseFloat(costPrice) || 0
+    const p = parseFloat(totalPurchasePrice) || 0
     const t = parseFloat(importTax) || 0
-    return q * c + t
-  }, [quantity, costPrice, importTax])
+    return p + t
+  }, [totalPurchasePrice, importTax])
+
+  const unitCostPreview = useMemo(() => {
+    const q = parseInt(quantity) || 0
+    const p = parseFloat(totalPurchasePrice) || 0
+    return q > 0 ? p / q : 0
+  }, [quantity, totalPurchasePrice])
 
   const handlePhotos = (e) => {
     const files = Array.from(e.target.files)
@@ -141,7 +148,7 @@ export default function NewSKU({ data, updateData, onNavigate }) {
       description,
       photo: photos[0] || null,
       photos,
-      costPrice: parseFloat(costPrice) || 0,
+      costPrice: q > 0 ? (parseFloat(totalPurchasePrice) || 0) / q : 0,
       importTax: parseFloat(importTax) || 0,
       quantity: q,
       purchaseDate,
@@ -422,8 +429,13 @@ export default function NewSKU({ data, updateData, onNavigate }) {
             </div>
             <div className="form-row">
               <div className="form-group">
-                <label>Inkoopprijs per stuk (€)</label>
-                <input type="number" step="0.01" min="0" value={costPrice} onChange={(e) => setCostPrice(e.target.value)} placeholder="0,00" />
+                <label>Totale inkoopprijs (€)</label>
+                <input type="number" step="0.01" min="0" value={totalPurchasePrice} onChange={(e) => setTotalPurchasePrice(e.target.value)} placeholder="bv. 300 voor de hele batch" />
+                {quantity > 0 && totalPurchasePrice > 0 && (
+                  <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4 }}>
+                    = {formatCurrency(unitCostPreview)} per stuk
+                  </div>
+                )}
               </div>
               <div className="form-group">
                 <label>Import tax totaal (€)</label>
