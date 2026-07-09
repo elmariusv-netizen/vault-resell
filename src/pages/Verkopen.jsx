@@ -1578,6 +1578,14 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
     const vtOrderPatches = {}
     const resolveBatch = (order) => {
       if (order.batch_id && !order.batch_id.includes(',')) {
+        // Order heeft al een batch_id (bv. eerder gekoppeld, of net hersteld
+        // via toReconcile hieronder) — toch in vtOrderPatches zetten, anders
+        // slaat de patchedSales-stap verderop deze order over en blijft de
+        // bijhorende sales-entry op batchId:null staan (telt dan nooit mee
+        // in getRemainingQty/"X verkocht" voor die batch, ook al is de order
+        // wél degelijk gekoppeld — dit was de oorzaak van een structureel
+        // te lage verkocht-telling voor sommige batches).
+        vtOrderPatches[order.id] = { batch_id: order.batch_id, cost_price: order.cost_price ?? null }
         return { batchId: order.batch_id, costPrice: order.cost_price ?? null }
       }
       if (order.sku_ref && !order.sku_ref.includes(',')) {
