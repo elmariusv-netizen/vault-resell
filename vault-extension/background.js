@@ -107,7 +107,13 @@ async function lookupOwnerId(vintedUserId) {
     );
     if (!res.ok) return null;
     const rows = await res.json();
-    return rows?.[0]?.owner_id ?? null;
+    const ownerId = rows?.[0]?.owner_id ?? null;
+    // Cachen voor checkAndSync() hieronder — die draait timer-based in de
+    // service worker, los van elke content-script/tab-context, en heeft dus
+    // geen andere manier om te weten welke owner_id bij DIT geïnstalleerde
+    // account hoort (zie checkAndSync()-comment voor de bug die dit fixt).
+    if (ownerId) await chrome.storage.local.set({ cachedOwnerId: ownerId });
+    return ownerId;
   } catch { return null; }
 }
 
@@ -615,6 +621,10 @@ async function fetchNextSku(vintedUserId) {
 
 async function uploadVintedCookie(vintedUserId, vintedLogin, vintedPhoto) {
   if (!vintedUserId) return { success: false, error: 'no_vinted_user_id' };
+  // Best-effort, niet afwachten: dit is de meest betrouwbare, frequente hook
+  // (elke boot() + elke 4 min, zie content.js) om cachedOwnerId te vullen
+  // vóórdat checkAndSync() hieronder z'n eerste ticks draait.
+  lookupOwnerId(vintedUserId).catch(() => {});
   try {
     // Zelfde chrome.cookies.getAll-aanpak als fetchLabelViaProxy() hierboven —
     // de service worker heeft hier al toegang toe via de "cookies"-permission
@@ -736,13 +746,22 @@ async function checkAndSync() {
   // dan "niet bewaard" terwijl hij dat eigenlijk wel is.
   const fetchStartedAt = Date.now();
   try {
-    // Geen vault_sync_requested-filter meer op deze fetch: we lezen nu élke
-    // tick de volledige rij, zodat we meteen ook de 3 live-sync-toggles
-    // (auto_sync_sales/purchases/labels) kunnen cachen in chrome.storage.local
-    // voor runLiveSync() (chrome.alarms) hieronder — dat scheelt een tweede,
-    // losse poll-loop tegen Supabase (zie rapportage vóór deze uitbreiding).
+    // BUG (tot 2026-07-10): deze fetch had GEEN user_id-filter — user_sync_
+    // status is een view over ALLE accounts, en Postgres/PostgREST garandeert
+    // geen bepaalde volgorde zonder ORDER BY, dus `limit=1` gaf een
+    // willekeurige rij terug uit de HELE tabel. Met meerdere geregistreerde
+    // accounts (bevestigd: 4 rijen) overschreef dit de lokale cache elke 5s
+    // met de live-sync-toggles van een WILLEKEURIG ANDER account — de eigen
+    // "Labels"/"Labels automatisch aanmaken"-toggle leek daardoor nooit
+    // bewaard te blijven (chrome.storage.local.liveSyncSettings kreeg
+    // binnen enkele seconden de verkeerde waarden terug), en auto_create_
+    // labels werkte dus feitelijk nooit betrouwbaar. cachedOwnerId (zie
+    // lookupOwnerId/uploadVintedCookie hierboven) filtert nu op het account
+    // dat daadwerkelijk aan DEZE extensie-installatie gekoppeld is.
+    const { cachedOwnerId } = await chrome.storage.local.get(['cachedOwnerId'])
+    if (!cachedOwnerId) return
     const checkRes = await fetch(
-      `${SYNC_STATUS_URL}?select=user_id,vault_sync_requested,auto_sync_sales,auto_sync_purchases,auto_sync_labels,auto_create_labels&limit=1`,
+      `${SYNC_STATUS_URL}?user_id=eq.${encodeURIComponent(cachedOwnerId)}&select=user_id,vault_sync_requested,auto_sync_sales,auto_sync_purchases,auto_sync_labels,auto_create_labels&limit=1`,
       { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
     )
     if (!checkRes.ok) return
