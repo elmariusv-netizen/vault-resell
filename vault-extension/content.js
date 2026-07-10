@@ -502,40 +502,85 @@
 
   // ── SKU-detectie ────────────────────────────────────────────────────────
   // De titel is altijd beschikbaar (ook na verkoop, via /api/v2/my_orders).
-  // De beschrijving is dat NIET: /api/v2/items/{id} (waar description
-  // vandaan komt) geeft na verkoop een "niet gevonden"-pagina terug (zie
-  // fetchOrderItemPhotos hierboven) — best-effort dus, met stille fallback
-  // i.p.v. een crash als de beschrijving niet (meer) opgehaald kan worden.
-  async function fetchItemDescription(itemId) {
-    if (!itemId) return null;
+  // De beschrijving is dat NIET via /api/v2/items/{id} (waar description
+  // oorspronkelijk vandaan kwam) — dat endpoint geeft na verkoop een "niet
+  // gevonden"-pagina terug, waardoor de 'beschrijving'/'titel dan
+  // beschrijving'-detectiemodi in de praktijk NOOIT iets vonden voor een
+  // reeds voltooide verkoop (enkel de detectie-ronde draait pas als de order
+  // als "nieuw" binnenkomt, en dus vrijwel altijd al verkocht/afgerond is).
+  // Zelfde fix als fetchOrderItemPhotos hierboven: /api/v2/transactions/{id}
+  // → transaction.order.items[] blijft wél bereikbaar, ook lang na verkoop
+  // (live bevestigd 2026-07-08) en bevat dezelfde description per item.
+  async function fetchOrderItemDescriptions(transactionId) {
+    if (!transactionId) return [];
     try {
-      const d = await vGet(`/api/v2/items/${itemId}`);
-      return d.item?.description || d.description || null;
+      const d = await vGet(`/api/v2/transactions/${transactionId}`);
+      const rawItems = d.transaction?.order?.items || [];
+      return rawItems.map(it => it.description).filter(Boolean);
     } catch (e) {
-      console.log(`[Vault] fetchItemDescription ${itemId}: niet beschikbaar (${e.message}) — waarschijnlijk al verkocht/verwijderd`);
-      return null;
+      console.warn(`[Vault] fetchOrderItemDescriptions txn ${transactionId} mislukt:`, e.message);
+      return [];
     }
   }
 
-  // Bekende SKU-prefixen (zie de leveranciers in seedData.js/webapp-
-  // Instellingen) — hardcoded omdat dit content-script geen toegang heeft tot
-  // de leveranciers-tabel. Nieuwe leverancier met een ander prefix? Hier
-  // toevoegen.
-  const SKU_PREFIXES = ['IND', 'RIA', 'IMV', 'MAU'];
+  // Bekende SKU-prefixen — dit content-script heeft geen rechtstreekse
+  // toegang tot de leveranciers-tabel (die leeft in user_data.payload op de
+  // webapp), dus wordt bij gebrek aan beters een lokaal gecachete kopie
+  // gebruikt, ververst via refreshSkuPrefixes() (api/next-sku.js, dezelfde
+  // bron als de 🔖 SKU-tab). IND/RIA/IMV/MAU is enkel de fallback vóór de
+  // allereerste succesvolle refresh (bv. net geïnstalleerd, nog geen cache) —
+  // eerder was dit een hardcoded array die nooit meebewoog met nieuwe/
+  // hernoemde leveranciers, waardoor SKU-detectie voor die prefixen altijd
+  // stilzwijgend niets vond.
+  let SKU_PREFIXES = ['IND', 'RIA', 'IMV', 'MAU'];
+  let SKU_CANDIDATE_RE = buildSkuCandidateRe(SKU_PREFIXES);
 
-  // Kandidaat-SKU uit vrije tekst: één van de bekende prefixen gevolgd door
-  // 1-4 cijfers, met optioneel een spatie/koppelteken ertussen —
-  // hoofdletterongevoelig, dekt "RIA056", "RIA 056", "ria-056" en "RIA56"
-  // (zonder voorloop-nullen). Zoekt gericht op de 4 bekende prefixen i.p.v.
-  // een generiek "2-4 letters + cijfers"-patroon — anders zou een eerder
-  // toevallig treffer in de tekst (bv. "Air Max 90" → "Max90") de match
-  // winnen vóór de echte SKU later in dezelfde titel/beschrijving.
-  const SKU_CANDIDATE_RE = new RegExp(`\\b(${SKU_PREFIXES.join('|')})[\\s-]?(\\d{1,4})\\b`, 'i');
+  function buildSkuCandidateRe(prefixes) {
+    // Kandidaat-SKU uit vrije tekst: één van de bekende prefixen gevolgd door
+    // 1-4 cijfers, met optioneel een spatie/koppelteken ertussen —
+    // hoofdletterongevoelig, dekt "RIA056", "RIA 056", "ria-056" en "RIA56"
+    // (zonder voorloop-nullen). Zoekt gericht op de bekende prefixen i.p.v.
+    // een generiek "2-4 letters + cijfers"-patroon — anders zou een eerder
+    // toevallig treffer in de tekst (bv. "Air Max 90" → "Max90") de match
+    // winnen vóór de echte SKU later in dezelfde titel/beschrijving.
+    const escaped = prefixes.map(p => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    return new RegExp(`\\b(${escaped.join('|')})[\\s-]?(\\d{1,4})\\b`, 'i');
+  }
+
   function extractSkuCandidate(text) {
     if (!text) return null;
     const m = String(text).match(SKU_CANDIDATE_RE);
     if (!m) return null;
     return `${m[1].toUpperCase()}${m[2].padStart(3, '0')}`;
+  }
+
+  // Ververst SKU_PREFIXES vanuit de échte leveranciers (api/next-sku.js,
+  // service-role, herleidt owner_id server-side) — best-effort en met een
+  // chrome.storage.local-cache zodat de allereerste detectie na een
+  // extensie-herstart niet op de kale IND/RIA/IMV/MAU-fallback hoeft te
+  // draaien terwijl de netwerkaanvraag nog loopt. Aanroepers wachten dit NIET
+  // op de kritieke pad — ze roepen dit gewoon 1x aan vóór een detectie-ronde.
+  let skuPrefixesRefreshed = false;
+  async function refreshSkuPrefixes() {
+    try {
+      const { skuPrefixesCache } = await chrome.storage.local.get(['skuPrefixesCache']);
+      if (!skuPrefixesRefreshed && Array.isArray(skuPrefixesCache) && skuPrefixesCache.length) {
+        SKU_PREFIXES = skuPrefixesCache;
+        SKU_CANDIDATE_RE = buildSkuCandidateRe(SKU_PREFIXES);
+      }
+      const vintedUserId = await getVintedUserId();
+      if (!vintedUserId) return;
+      const res = await sendMsg({ type: 'GET_NEXT_SKU', vintedUserId });
+      const prefixes = res?.success ? res.suppliers.map(s => s.prefix).filter(Boolean) : [];
+      if (prefixes.length) {
+        SKU_PREFIXES = prefixes;
+        SKU_CANDIDATE_RE = buildSkuCandidateRe(SKU_PREFIXES);
+        await chrome.storage.local.set({ skuPrefixesCache: prefixes });
+      }
+      skuPrefixesRefreshed = true;
+    } catch (e) {
+      console.warn('[Vault] refreshSkuPrefixes mislukt (blijft bij vorige/fallback lijst):', e.message);
+    }
   }
 
   // Stuurt de huidige actieve listings (met sku_ref alvast client-side
@@ -547,6 +592,7 @@
     try {
       const vintedUserId = await getVintedUserId();
       if (!vintedUserId) return;
+      await refreshSkuPrefixes();
       const listings = items.map((o) => ({
         id: o.itemId, title: o.title, photo: o.photo, price: o.price,
         url: o.url, sku: extractSkuCandidate(o.title),
@@ -571,8 +617,8 @@
       const fromTitle = extractSkuCandidate(order.title);
       if (fromTitle) return fromTitle;
     }
-    const description = await fetchItemDescription(order.itemId);
-    return extractSkuCandidate(description);
+    const descriptions = await fetchOrderItemDescriptions(order.transactionId);
+    return extractSkuCandidate(descriptions.join(' '));
   }
 
   // Haal foto + buyer info op via conversation detail
@@ -833,6 +879,10 @@
       ...teCorrigeren.map(o => ({ order: o, kind: 'direction-check' })),
     ];
     console.log(`[Vault] refreshKnownOrders: ${orders.length} orders — ${nieuw.length} nieuw (wordt automatisch gesynct, autoSyncSales=${autoSyncSales}/autoSyncPurchases=${autoSyncPurchases}), ${nieuwOvergeslagen.length} nieuw overgeslagen (enkel via het extensiepaneel), ${teVerversen.length} te verversen, ${teCorrigeren.length} voltooid+richting-check`);
+
+    // 1x vóór de detectie-ronde i.p.v. per order — SKU-prefixen wijzigen
+    // zelden, geen reden voor een netwerkaanvraag per nieuwe verkoop.
+    if (nieuw.length) await refreshSkuPrefixes();
 
     const reportProgress = async (progress) => {
       if (!userId) return;
@@ -1608,11 +1658,27 @@
         syncBtn.textContent = `⏳ Conversaties ophalen…`;
         try { await enrichOrders(targets); } catch (e) { console.warn('[Vault] enrichOrders skip:', e.message); }
 
+        // Deze handmatige knop stuurde nooit een skuRef mee — enkel de
+        // automatische "nieuw"-flow in refreshKnownOrders deed dat, dus elke
+        // verkoop die de gebruiker hier handmatig (opnieuw) aanvinkte kreeg
+        // gegarandeerd nooit een sku_ref. Alleen voor orders die nog NERGENS
+        // bekend zijn (nog geen syncedOrders-entry) detecteren we hier alsnog
+        // een SKU — bij een reeds bekende order laten we skuRef weg, zodat een
+        // eventuele handmatige correctie in de webapp niet overschreven wordt
+        // (zelfde contract als background.js's syncToSupabase).
+        const { syncedOrders: knownOrders = [] } = await chrome.storage.local.get(['syncedOrders']);
+        const knownIds = new Set(knownOrders.map(o => o.transactionId).filter(Boolean));
+        await refreshSkuPrefixes();
+
         for (let i = 0; i < targets.length; i++) {
           const o = targets[i];
           syncBtn.textContent = `⏳ ${i + 1}/${targets.length} — sync…`;
           console.log(`[Vault] sync ${i + 1}/${targets.length}: txn ${o.transactionId} — "${o.title}"`);
-          const res = await sendMsg({ type: 'SYNC_TO_SUPABASE', order: { ...o, vintedUserId: await getVintedUserId() } }, 20000);
+          let skuRef = null;
+          if (!knownIds.has(o.transactionId) && o.currentUserSide !== 'buyer') {
+            try { skuRef = await detectSkuForOrder(o); } catch (e) { console.warn(`[Vault] SKU-detectie mislukt voor txn ${o.transactionId}:`, e.message); }
+          }
+          const res = await sendMsg({ type: 'SYNC_TO_SUPABASE', order: { ...o, vintedUserId: await getVintedUserId(), skuRef } }, 20000);
           if (res?.success) {
             ok++;
             console.log(`[Vault] sync ✓ txn ${o.transactionId} (HTTP ${res.status})`);
