@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect } from 'react'
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis,
-  Tooltip, CartesianGrid, Cell, LineChart, Line,
+  Tooltip, CartesianGrid, Cell, LineChart, Line, Legend,
 } from 'recharts'
 import DateRangeFilter, { getDateBounds, filterByRange } from '../components/DateRangeFilter'
 import {
@@ -17,7 +17,8 @@ const ChartTooltip = ({ active, payload, label }) => {
     <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 14px', boxShadow: 'var(--shadow-md)' }}>
       <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 5 }}>{label}</div>
       {payload.map((p, i) => (
-        <div key={i} style={{ color: p.fill || p.color || 'var(--green)', fontWeight: 700, fontSize: 14 }}>
+        <div key={i} style={{ color: p.color || p.fill || 'var(--green)', fontWeight: 700, fontSize: 14 }}>
+          {p.name && payload.length > 1 && <span style={{ fontWeight: 500, marginRight: 6 }}>{p.name}:</span>}
           {typeof p.value === 'number' ? formatCurrency(p.value) : p.value}
         </div>
       ))}
@@ -90,6 +91,65 @@ export default function Stats({ data, theme }) {
     return { totalRevenue, totalSold, totalProfit, totalCosts, totalInvested, totalStock, margin, avgProfit, avgSale, orders: paid.length }
   }, [filteredSales, filteredCosts, batches, sales])
 
+  // Trend-vergelijking — vergelijkt de huidige periode met de onmiddellijk
+  // voorafgaande periode van dezelfde lengte (bv. "deze week" vs de week
+  // ervoor). Enkel zinvol bij een begrensde periode, dus niet bij "Alle tijd"
+  // (geen eenduidige "vorige periode" mogelijk over de volledige historiek).
+  const trend = useMemo(() => {
+    if (range === 'all') return null
+    const periodMs = bounds.to - bounds.from
+    if (periodMs <= 0) return null
+    const prevFrom = new Date(bounds.from.getTime() - periodMs)
+    const prevTo = new Date(bounds.from.getTime() - 1)
+    const prevSales = sales.filter((s) => {
+      if (!s.date) return false
+      const d = new Date(s.date)
+      if (d < prevFrom || d > prevTo) return false
+      return platformFilter === 'all' || normalizePlatform(s.platform) === platformFilter
+    })
+    const paid = prevSales.filter((s) => !s.isFree)
+    const revenue = paid.reduce((s, x) => s + (x.salePrice || 0) * (x.quantity || 1), 0)
+    const profit = prevSales.reduce((s, sale) => {
+      const b = batches.find((x) => x.id === sale.batchId)
+      return b ? s + calcSaleProfit(sale, b).profit : s
+    }, 0)
+    const pctChange = (curr, prev) => {
+      if (prev === 0) return curr === 0 ? 0 : 100
+      return ((curr - prev) / Math.abs(prev)) * 100
+    }
+    return {
+      revenue, profit,
+      revenueChange: pctChange(overview.totalRevenue, revenue),
+      profitChange: pctChange(overview.totalProfit, profit),
+    }
+  }, [range, bounds, sales, platformFilter, batches, overview.totalRevenue, overview.totalProfit])
+
+  // Verkooptijd — dagen tussen batch.purchaseDate (inkoopdatum) en sale.date
+  // (verkoopdatum), enkel voor sales waar beide data bekend zijn. Negatieve
+  // waarden (bv. foutieve/ontbrekende datums) worden genegeerd i.p.v. het
+  // gemiddelde te verstoren.
+  const sellTimeStats = useMemo(() => {
+    let totalDays = 0, count = 0
+    const perSupplierDays = {}
+    filteredSales.forEach((s) => {
+      const b = batches.find((x) => x.id === s.batchId)
+      if (!b?.purchaseDate || !s.date) return
+      const days = (new Date(s.date) - new Date(b.purchaseDate)) / 86400000
+      if (days < 0) return
+      const qty = s.quantity || 1
+      totalDays += days * qty
+      count += qty
+      if (!perSupplierDays[b.supplierPrefix]) perSupplierDays[b.supplierPrefix] = { totalDays: 0, count: 0 }
+      perSupplierDays[b.supplierPrefix].totalDays += days * qty
+      perSupplierDays[b.supplierPrefix].count += qty
+    })
+    const bySupplier = {}
+    Object.entries(perSupplierDays).forEach(([prefix, v]) => {
+      bySupplier[prefix] = v.count > 0 ? v.totalDays / v.count : null
+    })
+    return { avgDays: count > 0 ? totalDays / count : null, bySupplier }
+  }, [filteredSales, batches])
+
   const perSupplier = useMemo(() => {
     return suppliers
       .map((sup) => {
@@ -103,11 +163,12 @@ export default function Stats({ data, theme }) {
         const sold = sSales.reduce((s, x) => s + (x.quantity || 1), 0)
         const stock = sBatches.reduce((s, b) => s + getRemainingQty(b, sales), 0)
         const margin = revenue > 0 ? (profit / revenue) * 100 : 0
-        return { ...sup, revenue, profit, sold, stock, margin }
+        const avgSellDays = sellTimeStats.bySupplier[sup.prefix] ?? null
+        return { ...sup, revenue, profit, sold, stock, margin, avgSellDays }
       })
       .filter((s) => s.stock > 0 || s.sold > 0)
       .sort((a, b) => b.revenue - a.revenue)
-  }, [suppliers, batches, filteredSales, sales])
+  }, [suppliers, batches, filteredSales, sales, sellTimeStats])
 
   const perBatch = useMemo(() => {
     return batches
@@ -258,16 +319,24 @@ export default function Stats({ data, theme }) {
       {/* Overview stat cards */}
       <div className="stats-grid" style={{ marginBottom: 20 }}>
         {[
-          { label: 'Totale omzet', value: formatCurrency(overview.totalRevenue), sub: `${overview.orders} bestellingen`, accent: '#ffd60a' },
-          { label: 'Netto winst', value: formatCurrency(overview.totalProfit), sub: overview.totalCosts > 0 ? `Marge ${overview.margin.toFixed(1)}% · -${formatCurrency(overview.totalCosts)} kosten` : `Marge ${overview.margin.toFixed(1)}%`, accent: '#22c55e', green: overview.totalProfit >= 0 },
+          { label: 'Totale omzet', value: formatCurrency(overview.totalRevenue), sub: `${overview.orders} bestellingen`, accent: '#ffd60a', trendPct: trend?.revenueChange },
+          { label: 'Netto winst', value: formatCurrency(overview.totalProfit), sub: overview.totalCosts > 0 ? `Marge ${overview.margin.toFixed(1)}% · -${formatCurrency(overview.totalCosts)} kosten` : `Marge ${overview.margin.toFixed(1)}%`, accent: '#22c55e', green: overview.totalProfit >= 0, trendPct: trend?.profitChange },
           { label: 'Geïnvesteerd', value: formatCurrency(overview.totalInvested), sub: `${overview.totalStock} in voorraad`, accent: '#888' },
           { label: 'Gem. winst/stuk', value: formatCurrency(overview.avgProfit), sub: `${overview.totalSold} stuks verkocht`, accent: '#3ecfff', green: overview.avgProfit >= 0 },
+          { label: 'Gem. verkooptijd', value: sellTimeStats.avgDays != null ? `${sellTimeStats.avgDays.toFixed(0)} dagen` : '—', sub: 'inkoop tot verkoop', accent: '#f59e0b' },
         ].map((c) => (
           <div className="stat-card" key={c.label}>
             <div className="s-accent" style={{ background: c.accent }} />
             <div className="s-label">{c.label}</div>
             <div className={`s-value${c.green ? ' green' : ''}`} style={{ fontSize: '1.3rem' }}>{c.value}</div>
-            <div className="s-sub">{c.sub}</div>
+            <div className="s-sub">
+              {c.sub}
+              {c.trendPct != null && (
+                <span style={{ marginLeft: 6, color: c.trendPct >= 0 ? 'var(--green)' : 'var(--red)', fontWeight: 700 }}>
+                  {c.trendPct >= 0 ? '▲' : '▼'} {Math.abs(c.trendPct).toFixed(0)}% vs vorige periode
+                </span>
+              )}
+            </div>
           </div>
         ))}
       </div>
@@ -323,10 +392,10 @@ export default function Stats({ data, theme }) {
         </div>
       )}
 
-      {/* ── Overview: revenue per supplier chart ── */}
+      {/* ── Overview: revenue & profit per supplier chart ── */}
       {tab === 'overview' && (
         <div className="glass-card">
-          <div className="chart-section-label">Omzet per leverancier</div>
+          <div className="chart-section-label">Omzet & winst per leverancier</div>
           {supplierChartData.length === 0 ? (
             <div className="empty-state" style={{ padding: '40px 0' }}>
               <div className="empty-icon">📊</div>
@@ -340,9 +409,11 @@ export default function Stats({ data, theme }) {
                 <XAxis dataKey="name" stroke="transparent" tick={{ fill: tickColor, fontSize: 12, fontFamily: 'inherit' }} axisLine={false} tickLine={false} />
                 <YAxis stroke="transparent" tick={{ fill: tickColor, fontSize: 11, fontFamily: 'inherit' }} tickFormatter={(v) => `€${v}`} axisLine={false} tickLine={false} width={52} />
                 <Tooltip content={<ChartTooltip />} cursor={{ fill: cursorFill }} />
-                <Bar dataKey="revenue" radius={[6, 6, 0, 0]}>
+                <Legend wrapperStyle={{ fontSize: 12, color: tickColor }} />
+                <Bar dataKey="revenue" name="Omzet" fill="#9ca3af" radius={[6, 6, 0, 0]}>
                   {supplierChartData.map((e, i) => <Cell key={i} fill={e.color} />)}
                 </Bar>
+                <Bar dataKey="profit" name="Winst" fill="#22c55e" radius={[6, 6, 0, 0]} opacity={0.55} />
               </BarChart>
             </ResponsiveContainer>
           )}
@@ -443,12 +514,13 @@ export default function Stats({ data, theme }) {
                 <th>Omzet</th>
                 <th>Winst</th>
                 <th>Marge</th>
+                <th>Gem. verkooptijd</th>
                 <th>In stock</th>
               </tr>
             </thead>
             <tbody>
               {perSupplier.length === 0 ? (
-                <tr><td colSpan={6} style={{ textAlign: 'center', padding: 40, color: 'var(--text-3)' }}>Geen data</td></tr>
+                <tr><td colSpan={7} style={{ textAlign: 'center', padding: 40, color: 'var(--text-3)' }}>Geen data</td></tr>
               ) : (
                 perSupplier.map((s) => (
                   <tr key={s.id}>
@@ -471,6 +543,7 @@ export default function Stats({ data, theme }) {
                         {s.sold > 0 ? `${s.margin.toFixed(1)}%` : '—'}
                       </span>
                     </td>
+                    <td style={{ color: 'var(--text-2)' }}>{s.avgSellDays != null ? `${s.avgSellDays.toFixed(0)}d` : '—'}</td>
                     <td style={{ color: 'var(--text-2)' }}>{s.stock}</td>
                   </tr>
                 ))
