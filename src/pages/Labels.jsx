@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { PDFDocument } from 'pdf-lib'
 import { supabase } from '../utils/supabase'
-import { genId, isLabelReady } from '../utils/skuUtils'
+import { genId, isLabelReady, classifyOrderStage } from '../utils/skuUtils'
 
 const OUT_W = 288
 const OUT_H = 432
@@ -354,6 +354,10 @@ function ManualLabelModal({ onClose, onAdd }) {
   )
 }
 
+// Fases (classifyOrderStage, skuUtils) waarin het pakket al verzonden is —
+// het label heeft dan zijn nut al gehad, zie fetchOrders hieronder.
+const SHIPPED_STAGES = new Set(['in_transit', 'at_pickup_point', 'finished'])
+
 // ── Hoofdcomponent ────────────────────────────────────────────────────────────
 export default function Labels({ vintedCookie }) {
   const [orders, setOrders]           = useState([])
@@ -373,6 +377,13 @@ export default function Labels({ vintedCookie }) {
   // zodat beide pagina's nooit meer uit elkaar kunnen lopen. Enkel
   // api/label-prefetch.js zet beide velden samen, na een geslaagde
   // PDF-verificatie.
+  //
+  // Zodra een order 'in_transit'/'at_pickup_point'/'finished' bereikt (zie
+  // classifyOrderStage, dezelfde taalonafhankelijke transaction_status/
+  // shipment_status-classificatie als Verkopen.jsx) is het pakket al
+  // verzonden — het label heeft dan zijn nut al gehad en hoeft niet langer
+  // in "Beschikbare labels" te staan. 'to_ship'/'paused' blijven wél zichtbaar
+  // (nog te verzenden, resp. een probleemgeval dat aandacht verdient).
   const fetchOrders = useCallback(() => {
     setOrdersLoading(true)
     setOrdersError(null)
@@ -384,7 +395,7 @@ export default function Labels({ vintedCookie }) {
       .order('synced_at', { ascending: false })
       .then(({ data, error }) => {
         if (error) { setOrdersError(error.message); setOrdersLoading(false); return }
-        setOrders((data || []).filter(isLabelReady))
+        setOrders((data || []).filter(isLabelReady).filter((o) => !SHIPPED_STAGES.has(classifyOrderStage(o))))
         setOrdersLoading(false)
       })
   }, [])
