@@ -1,12 +1,13 @@
-import { useState, useMemo, useRef } from 'react'
+import { useState, useMemo, useRef, useEffect } from 'react'
 import EditBatchModal from '../components/EditBatchModal'
 import SaleModal from '../components/SaleModal'
 import MediaModal from '../components/MediaModal'
 import SkuDetailModal from '../components/SkuDetailModal'
 import {
   genId, formatSku, formatSkuRange, formatCurrency, formatDate,
-  getRemainingQty, getSupplierColor, getBatchUnitCost,
+  getRemainingQty, getSupplierColor, getBatchUnitCost, findBatchForSku,
 } from '../utils/skuUtils'
+import { supabase } from '../utils/supabase'
 
 function LiveModal({ batch, remaining, onClose, onSave }) {
   const liveCount = batch.liveCount || 0
@@ -57,6 +58,53 @@ function LiveModal({ batch, remaining, onClose, onSave }) {
   )
 }
 
+// Toont de écht actieve Vinted-listings die de extensie voor deze batch
+// herkende (via sku_ref-match, zie active_listings/api/sync-listings.js) —
+// i.p.v. enkel het handmatige liveCount-getal. Listings zonder herkenbare
+// SKU in hun titel duiken hier nooit op (zie SKU-detectie/🔖 SKU-tab).
+function LiveListingsModal({ batch, listings, onClose }) {
+  return (
+    <div className="modal-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal" style={{ maxWidth: 480 }}>
+        <div className="modal-header">
+          <h2>Actief op Vinted — {formatSkuRange(batch.supplierPrefix, batch.startNum, batch.endNum)}</h2>
+          <button className="modal-close" onClick={onClose}>×</button>
+        </div>
+        <div className="form">
+          {listings.length === 0 ? (
+            <div style={{ fontSize: 13, color: 'var(--text-3)', lineHeight: 1.6, padding: '8px 0' }}>
+              Geen actieve Vinted-listings gevonden met een herkenbare SKU voor deze batch.
+              Zet de SKU (via de 🔖 SKU-tab in de extensie) in de titel of beschrijving van je
+              listing, en open even de 🏪 Listings-tab in de extensie — dan verschijnen ze hier.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {listings.map((l) => (
+                <a key={l.id} href={l.url || `https://www.vinted.be/items/${l.id}`} target="_blank" rel="noreferrer"
+                  style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 10px', borderRadius: 10, border: '1px solid var(--border)', textDecoration: 'none', color: 'inherit' }}>
+                  {l.photo_url ? (
+                    <img src={l.photo_url} alt="" style={{ width: 44, height: 44, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }} />
+                  ) : (
+                    <div style={{ width: 44, height: 44, borderRadius: 8, background: 'var(--bg-2)', flexShrink: 0 }} />
+                  )}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{l.title || '—'}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{l.sku_ref || 'geen SKU'}</div>
+                  </div>
+                  {l.price != null && <div style={{ fontSize: 13, fontWeight: 600, flexShrink: 0 }}>{formatCurrency(l.price)}</div>}
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-secondary" onClick={onClose}>Sluiten</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 async function compressPhoto(file) {
   return new Promise((resolve) => {
     const reader = new FileReader()
@@ -96,6 +144,26 @@ export default function Inventory({ data, updateData }) {
   const [saleBatch, setSaleBatch] = useState(null)
   const [liveBatch, setLiveBatch] = useState(null)
   const [confirmDelete, setConfirmDelete] = useState(null)
+  const [activeListings, setActiveListings] = useState([])
+  const [liveListingsBatch, setLiveListingsBatch] = useState(null)
+
+  // Actieve Vinted-listings (door de extensie gesynct, zie active_listings/
+  // api/sync-listings.js) — voor de klikbare "Live"-badge hieronder.
+  useEffect(() => {
+    supabase.from('active_listings').select('id,title,photo_url,price,sku_ref,url').then(({ data, error }) => {
+      if (error) { console.warn('[Vault] actieve listings ophalen mislukt:', error.message); return }
+      setActiveListings(data || [])
+    })
+  }, [])
+
+  const listingsByBatchId = useMemo(() => {
+    const map = {}
+    activeListings.forEach((l) => {
+      const batch = findBatchForSku(batches, l.sku_ref)
+      if (batch) (map[batch.id] ||= []).push(l)
+    })
+    return map
+  }, [activeListings, batches])
 
   const [skuSearch, setSkuSearch] = useState('')
   const [skuStatus, setSkuStatus] = useState('all')
@@ -390,6 +458,14 @@ export default function Inventory({ data, updateData }) {
                           {remaining} voorraad
                           {liveCount > 0 && <span style={{ color: 'var(--blue)' }}> · {liveCount} live</span>}
                           <span> · {sold} verkocht</span>
+                          {' · '}
+                          <span
+                            onClick={(e) => { e.stopPropagation(); setLiveListingsBatch(b) }}
+                            style={{ color: 'var(--blue)', textDecoration: 'underline', cursor: 'pointer' }}
+                            title="Bekijk de echte actieve listings op Vinted voor deze batch"
+                          >
+                            {(listingsByBatchId[b.id]?.length || 0)} live op Vinted
+                          </span>
                         </span>
                         <span>{pct.toFixed(0)}% resterend</span>
                       </div>
@@ -573,6 +649,14 @@ export default function Inventory({ data, updateData }) {
           remaining={getRemainingQty(liveBatch, sales)}
           onClose={() => setLiveBatch(null)}
           onSave={handleSetLive}
+        />
+      )}
+
+      {liveListingsBatch && (
+        <LiveListingsModal
+          batch={liveListingsBatch}
+          listings={listingsByBatchId[liveListingsBatch.id] || []}
+          onClose={() => setLiveListingsBatch(null)}
         />
       )}
 

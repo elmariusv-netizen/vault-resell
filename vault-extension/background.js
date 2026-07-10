@@ -577,7 +577,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     fetchNextSku(message.vintedUserId).then(sendResponse);
     return true;
   }
+  // Actieve listings doorsturen voor de klikbare "Live"-badge op Voorraad
+  // (Inventory.jsx) — zie api/sync-listings.js.
+  if (message.type === 'SYNC_LISTINGS') {
+    syncListings(message.vintedUserId, message.listings).then(sendResponse);
+    return true;
+  }
 });
+
+async function syncListings(vintedUserId, listings) {
+  if (!vintedUserId) return { success: false, error: 'no_vinted_user_id' };
+  try {
+    const res = await fetch('https://vault-resell.vercel.app/api/sync-listings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vinted_user_id: vintedUserId, listings: listings || [] }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) return { success: false, error: body.error || `HTTP ${res.status}` };
+    return { success: true, count: body.count };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+}
 
 async function fetchNextSku(vintedUserId) {
   if (!vintedUserId) return { success: false, error: 'no_vinted_user_id' };

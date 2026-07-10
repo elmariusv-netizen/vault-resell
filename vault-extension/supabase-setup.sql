@@ -364,3 +364,32 @@ REVOKE UPDATE (is_super_admin) ON user_settings FROM authenticated;
 -- Eenmalig: geef je eigen account super-admin (zelfde UUID-waarschuwing als
 -- hierboven).
 -- UPDATE user_settings SET is_admin = true, is_super_admin = true WHERE user_id = '<JOUW_UUID>';
+
+-- ══════════════════════════════════════════════════════════════════
+-- ACTIEVE VINTED-LISTINGS (klikbare "Live"-badge op Voorraad/Inventory.jsx)
+-- Gevuld door de extensie (api/sync-listings.js, service-role, zelfde
+-- patroon als save-vinted-cookie.js) — de extensie scraped haar eigen
+-- actieve listings (getListings() in content.js) en herkent er een SKU in
+-- via dezelfde extractSkuCandidate()-logica als bij SKU-detectie voor
+-- verkopen. RLS laat enkel de eigenaar zelf lezen (authenticated); enkel de
+-- service-role (bypast RLS) schrijft, dus geen anon/authenticated write-
+-- policy nodig.
+CREATE TABLE IF NOT EXISTS active_listings (
+  id         BIGINT PRIMARY KEY,
+  owner_id   UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  title      TEXT,
+  photo_url  TEXT,
+  price      NUMERIC,
+  sku_ref    TEXT,
+  url        TEXT,
+  synced_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE active_listings ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "user leest eigen actieve listings"
+  ON active_listings FOR SELECT TO authenticated
+  USING (auth.uid() = owner_id);
+
+CREATE INDEX IF NOT EXISTS idx_active_listings_owner ON active_listings(owner_id);
+CREATE INDEX IF NOT EXISTS idx_active_listings_sku ON active_listings(sku_ref);

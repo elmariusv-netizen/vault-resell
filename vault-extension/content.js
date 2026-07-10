@@ -538,6 +538,26 @@
     return `${m[1].toUpperCase()}${m[2].padStart(3, '0')}`;
   }
 
+  // Stuurt de huidige actieve listings (met sku_ref alvast client-side
+  // gedetecteerd via extractSkuCandidate, zelfde regex als bij verkopen) door
+  // naar api/sync-listings.js — voedt de klikbare "Live"-badge op Voorraad/
+  // Inventory.jsx. Best-effort: nooit de aanroepende flow (Listings-tab
+  // openen, of de periodieke LIVE_SYNC) laten falen op een sync-probleem hier.
+  async function pushListingsToBackend(items) {
+    try {
+      const vintedUserId = await getVintedUserId();
+      if (!vintedUserId) return;
+      const listings = items.map((o) => ({
+        id: o.itemId, title: o.title, photo: o.photo, price: o.price,
+        url: o.url, sku: extractSkuCandidate(o.title),
+      }));
+      const res = await sendMsg({ type: 'SYNC_LISTINGS', vintedUserId, listings });
+      if (!res?.success) console.warn('[Vault] listings-sync mislukt:', res?.error);
+    } catch (e) {
+      console.warn('[Vault] listings-sync exception:', e.message);
+    }
+  }
+
   // Detecteert een kandidaat-SKU voor een order, op basis van de
   // SKU-detectie-instelling (zie getSkuDetectionMode hierboven). Haalt de
   // beschrijving enkel op als de instelling dat vereist (en enkel als de
@@ -1418,6 +1438,7 @@
 
   async function tabZoekertjes(content, footer) {
     const items = await getListings();
+    pushListingsToBackend(items).catch(() => {});
     content.innerHTML = '';
     if (!items.length) { content.appendChild(emptyState('🏪', 'Geen actieve listings', 'Geen actieve advertenties gevonden.')); return; }
 
@@ -2123,7 +2144,10 @@
           // getListings()/cacheItemPhotos hierboven. Best-effort: als dit
           // faalt (bv. geen wardrobe-toegang), mag de rest van de sync
           // gewoon doorgaan met wat al in de cache zit.
-          try { await getListings() } catch (e) { console.warn('[Vault] LIVE_SYNC getListings skip:', e.message) }
+          try {
+            const listItems = await getListings();
+            pushListingsToBackend(listItems).catch(() => {});
+          } catch (e) { console.warn('[Vault] LIVE_SYNC getListings skip:', e.message) }
           const orders = await getSold(true)
           const active = orders.filter(o => !isCancelled(o))
           await enrichOrders(active)
