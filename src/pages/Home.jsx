@@ -617,7 +617,7 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
         {/* Heatmap */}
         <div style={{ ...cardStyle, marginBottom: 12 }}>
           <div style={labelStyle}>Beste verkoopuren</div>
-          <HeatmapGrid sales={sales} />
+          <HeatmapGrid sales={filteredSales} />
         </div>
 
         {/* Recent sales */}
