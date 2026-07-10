@@ -1631,6 +1631,23 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
     // en de bestaande sales-entry bijwerken zodat COGS/profit meteen kloppen.
     toReconcile.forEach(resolveBatch)
 
+    // Achteraf-herkoppeling — niet beperkt tot toReconcile (registered_in_
+    // vault=false): een sales-entry kan ook blijvend op batchId:null blijven
+    // staan als de gekoppelde vinted_orders-rij PAS NA de auto-registratie
+    // alsnog een sku_ref/batch_id kreeg (bv. de eerder kapotte SKU-detectie in
+    // de extensie — zie detectSkuForOrder — of een latere handmatige koppeling
+    // rechtstreeks op de order). Zo'n order komt nooit meer in toRegister/
+    // toReconcile terecht zodra registered_in_vault=true, dus zonder deze
+    // aparte pas bleef die sales-entry voorgoed buiten "X verkocht" voor de
+    // juiste batch tellen — dit was de structurele oorzaak van een te lage
+    // verkocht-telling naast het al gefixte geval in resolveBatch hierboven.
+    const vtById = new Map(vtOrders.map(o => [o.id, o]))
+    sales.forEach(s => {
+      if (s.batchId || !s.vintedOrderId) return
+      const order = vtById.get(s.vintedOrderId)
+      if (order) resolveBatch(order)
+    })
+
     const idsToFlag = [...toRegister, ...toReconcile].map(o => o.id)
     const updates = {}
     if (newSales.length || Object.keys(vtOrderPatches).length) {
