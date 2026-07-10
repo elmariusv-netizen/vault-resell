@@ -800,13 +800,39 @@
   }
 
   // ── Supabase sync ──────────────────────────────────────────────────────────
+  // Na het herladen van de extensie (chrome://extensions) blijft een reeds
+  // geopende tab de OUDE content-script-instantie draaien — Chrome injecteert
+  // 'm niet automatisch opnieuw, enkel een paginaverversing doet dat. Elke
+  // chrome.runtime-aanroep vanuit die oude instantie faalt dan gegarandeerd
+  // met "Extension context invalidated" (soms zichtbaar als de rauwere
+  // "chrome-extension://invalid/... net::ERR_FAILED"-netwerkfout) — dat kan
+  // deze instantie niet herstellen. contextInvalidated zorgt dat we dat 1x
+  // loggen en daarna alle volgende pogingen (elke 4 min via de cookie-
+  // upload-timer, elke paneelactie, …) meteen stil laten falen i.p.v. steeds
+  // opnieuw dezelfde kansloze aanroep + waarschuwing te herhalen.
+  let contextInvalidated = false;
   function sendMsg(msg, ms = 10000) {
+    if (contextInvalidated) return Promise.resolve({ success: false, contextInvalid: true });
     return Promise.race([
       new Promise(res => {
-        chrome.runtime.sendMessage(msg, r => {
-          if (chrome.runtime.lastError) res({ success: false });
-          else res(r || { success: false });
-        });
+        try {
+          chrome.runtime.sendMessage(msg, r => {
+            const err = chrome.runtime.lastError;
+            if (err) {
+              if (/context invalidated/i.test(err.message || '') && !contextInvalidated) {
+                contextInvalidated = true;
+                console.warn('[Vault] extensie herladen gedetecteerd — ververs deze pagina om de sync te herstellen.');
+              }
+              res({ success: false });
+            } else res(r || { success: false });
+          });
+        } catch (e) {
+          if (/context invalidated/i.test(e.message || '') && !contextInvalidated) {
+            contextInvalidated = true;
+            console.warn('[Vault] extensie herladen gedetecteerd — ververs deze pagina om de sync te herstellen.');
+          }
+          res({ success: false });
+        }
       }),
       new Promise(res => setTimeout(() => res({ success: false, timeout: true }), ms)),
     ]);
