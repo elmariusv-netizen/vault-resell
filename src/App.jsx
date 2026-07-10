@@ -18,6 +18,7 @@ import AuthLinkError from './pages/AuthLinkError'
 import { loadCloudData, saveCloudData } from './utils/cloudStorage'
 import { SEED_DATA } from './data/seedData'
 import { getRemainingQty } from './utils/skuUtils'
+import { useVintedOrdersSync } from './hooks/useVintedOrdersSync'
 import { supabase, getCachedSupabaseUser } from './utils/supabase'
 import { readWhopCache, writeWhopCache, fetchWhopStatus } from './utils/whopAccess'
 
@@ -436,6 +437,12 @@ export default function App() {
     setData(fresh)
   }, [activeUserId])
 
+  // App-breed (i.p.v. gescopet aan de Verkopen-pagina) — zie hook-comment:
+  // zonder dit bleef een verse Vinted-verkoop onzichtbaar op het Dashboard
+  // totdat de gebruiker toevallig ook de Verkopen-pagina bezocht, want Home
+  // leest uitsluitend data.sales, nooit vinted_orders rechtstreeks.
+  const { vtOrders, setVtOrders, vtLoading, vtError } = useVintedOrdersSync(data, updateData)
+
   if (!authChecked) {
     return (
       <div className="loading">
@@ -528,7 +535,7 @@ export default function App() {
           {page === 'home'      && <Home {...props} theme={theme} activeUserId={activeUserId} />}
           {page === 'inventory' && <Inventory {...props} />}
           {page === 'new'       && <NewSKU {...props} />}
-          {page === 'verkopen'  && <Verkopen data={data} onDeleteSale={handleDeleteSale} onUpdateSale={handleUpdateSale} updateData={updateData} vintedCookie={vintedCookie} dayFilter={pendingDayFilter} onConsumeDayFilter={() => setPendingDayFilter(null)} />}
+          {page === 'verkopen'  && <Verkopen data={data} onDeleteSale={handleDeleteSale} onUpdateSale={handleUpdateSale} updateData={updateData} vintedCookie={vintedCookie} dayFilter={pendingDayFilter} onConsumeDayFilter={() => setPendingDayFilter(null)} vtOrders={vtOrders} setVtOrders={setVtOrders} vtLoading={vtLoading} vtError={vtError} />}
           {page === 'aankopen'  && <Aankopen data={data} updateData={updateData} purchaseMethod={userSettings.purchaseMethod} />}
           {page === 'kosten'    && <Kosten activeUserId={activeUserId} />}
           {page === 'stats'     && <Stats data={data} theme={theme} />}
