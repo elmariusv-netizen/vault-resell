@@ -1870,9 +1870,20 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
         const vtOrder = sale.vintedOrderId ? vtOrders.find(o => o.id === sale.vintedOrderId) : null
         const sku = sale.sku || vtOrder?.sku_ref
           || (batch ? formatSkuRange(batch.supplierPrefix, batch.startNum, batch.endNum) : '?')
+        // Eén badge per SKU, elk met de kleur van ZIJN EIGEN leverancier —
+        // sku kan een comma-lijst zijn bij een bundelverkoop met items uit
+        // verschillende batches/leveranciers (zie handleBulkSkuConfirm/
+        // vtOrder.sku_ref hierboven). Voorheen kregen alle gesplitste badges
+        // dezelfde kleur (die van sale.batchId, dus 1 leverancier) — nu wordt
+        // per SKU de eigen batch/leverancier opgezocht via findBatchForSku.
+        const skuBadges = sku.split(',').map((sk) => sk.trim()).filter(Boolean).map((sk) => {
+          const skBatch = findBatchForSku(batches, sk)
+          const skSup = skBatch ? suppliers.find((s) => s.prefix === skBatch.supplierPrefix) : null
+          return { sku: sk, color: skSup?.color || sup?.color || '#666' }
+        })
         const photo = sale.photo || batch?.photos?.[0] || batch?.photo || null
         const platformDisplay = normalizePlatform(sale.platform)
-        return { ...sale, batch, sup, profit, sku, photo, platformDisplay }
+        return { ...sale, batch, sup, profit, sku, skuBadges, photo, platformDisplay }
       })
   }, [sales, batches, suppliers, vtOrders])
 
@@ -2144,16 +2155,15 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
                           />
                         )}
                         <div>
-                          {/* s.sku kan een comma-lijst zijn voor bundels die via
-                              vtOrder.sku_ref terugvallen (zie enriched hierboven,
-                              handleBulkSkuConfirm zet dit als CSV bij meerdere
-                              leveranciers/batches in 1 order) — 1 badge per SKU
-                              i.p.v. de hele lijst in 1 badge proppen. */}
-                          {s.sku.split(',').map((sk) => sk.trim()).filter(Boolean).map((sk) => (
+                          {/* skuBadges: 1 badge per SKU, elk in de kleur van
+                              ZIJN EIGEN leverancier (zie enriched hierboven) —
+                              nodig bij een bundelverkoop met items uit
+                              verschillende batches/leveranciers in 1 order. */}
+                          {s.skuBadges.map(({ sku: sk, color }) => (
                             <span
                               key={sk}
                               className="sku-tag"
-                              style={{ background: (s.sup?.color || '#666') + '14', color: s.sup?.color || '#666', marginRight: 4 }}
+                              style={{ background: color + '14', color, marginRight: 4 }}
                             >
                               {sk}
                             </span>
@@ -2235,8 +2245,8 @@ export default function Verkopen({ data, onDeleteSale, onUpdateSale, updateData,
                   )}
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                      {s.sku.split(',').map((sk) => sk.trim()).filter(Boolean).map((sk) => (
-                        <span key={sk} className="sku-tag" style={{ background: (s.sup?.color || '#666') + '14', color: s.sup?.color || '#666' }}>
+                      {s.skuBadges.map(({ sku: sk, color }) => (
+                        <span key={sk} className="sku-tag" style={{ background: color + '14', color }}>
                           {sk}
                         </span>
                       ))}
