@@ -355,17 +355,31 @@ export function skuOptionsForSlot(slotKey, slotSkus, freeSkus) {
 // aanpak als Verkopen.jsx's eigen, losse merk/maat/kleur-detectie voor de
 // meta-regel onder een order — hier een eigen kopie omdat Verkopen.jsx zijn
 // lijsten module-lokaal houdt).
+//
+// 'shirt'/'t-shirt'/'tshirt' staan bewust NIET in deze lijst maar in de
+// aparte GENERIC_SHIRT_MAP hieronder — titels vermelden "shirt" vaak als
+// generieke/SEO-vertaling náást een specifiekere term ("polo shirt", "hemd
+// shirt chemise"), dus zou 'shirt' anders altijd winnen van 'polo'/'hemd' en
+// alles onder "T-shirts" laten vallen (bevestigd: dit was precies de bug
+// achter een foutieve "T-shirts"-top-categorie terwijl de meeste verkopen
+// polo's/overhemden waren). 'hemd'/'chemise' zijn toegevoegd — ontbraken
+// eerder volledig, enkel 'overhemd' werd herkend.
 const CATEGORIES_MAP = [
-  ['t-shirt', 'T-shirts'], ['tshirt', 'T-shirts'], ['shirt', 'T-shirts'],
-  ['polo', "Polo's"], ['trui', 'Truien'], ['sweater', 'Truien'],
-  ['hoodie', 'Hoodies'], ['vest', 'Vesten'], ['jas', 'Jassen'],
-  ['jacket', 'Jassen'], ['coat', 'Jassen'], ['jeans', 'Jeans'],
-  ['broek', 'Broeken'], ['pants', 'Broeken'], ['short', 'Shorts'],
+  ['polo', "Polo's"], ['hoodie', 'Hoodies'],
+  ['sweater', 'Truien'], ['trui', 'Truien'],
+  ['overhemd', 'Overhemden'], ['hemd', 'Overhemden'], ['chemise', 'Overhemden'],
+  ['vest', 'Vesten'],
+  ['jacket', 'Jassen'], ['coat', 'Jassen'], ['jas', 'Jassen'],
+  ['jeans', 'Jeans'], ['broek', 'Broeken'], ['pants', 'Broeken'], ['short', 'Shorts'],
   ['jurk', 'Jurken'], ['dress', 'Jurken'], ['rok', 'Rokken'],
-  ['overhemd', 'Overhemden'], ['blouse', 'Blouses'], ['sneakers', 'Schoenen'],
-  ['schoenen', 'Schoenen'], ['boots', 'Schoenen'], ['pet', 'Petten'],
-  ['muts', 'Mutsen'], ['sjaal', 'Sjaals'], ['tas', 'Tassen'], ['riem', 'Riemen'],
+  ['blouse', 'Blouses'],
+  ['sneakers', 'Schoenen'], ['schoenen', 'Schoenen'], ['boots', 'Schoenen'],
+  ['pet', 'Petten'], ['muts', 'Mutsen'], ['sjaal', 'Sjaals'],
+  ['tas', 'Tassen'], ['riem', 'Riemen'],
 ]
+// Generieke restcategorie — enkel gebruikt als niets uit CATEGORIES_MAP
+// ergens in de titel voorkomt (zie detectTitleMeta hieronder).
+const GENERIC_SHIRT_MAP = [['t-shirt', 'T-shirts'], ['tshirt', 'T-shirts'], ['shirt', 'T-shirts']]
 const TITLE_COLORS_MAP = [
   ['zwart','Zwart'], ['black','Zwart'], ['wit','Wit'], ['white','Wit'],
   ['blauw','Blauw'], ['blue','Blauw'], ['navy','Blauw'], ['marineblauw','Blauw'],
@@ -381,17 +395,34 @@ const TITLE_SIZES = ['xxxl','xxl','xl','xs','xxs','3xl','2xl','one size',
   '50','48','46','44','42','40','38','36','34','32','30',
   '27','28','29','31','33','s','m','l']
 
+// Geeft het label terug van de match die het EERST in de titel zelf
+// voorkomt (kleinste string-index), i.p.v. de eerste match volgens de vaste
+// volgorde van de keyword-lijst — een titel als "roze wit gestreept" moet
+// "Roze" opleveren (eerst genoemd = hoofdkleur), niet "Wit" enkel omdat
+// 'wit' toevallig eerder in TITLE_COLORS_MAP staat dan 'roze'.
+function firstMatchByPosition(t, map) {
+  let best = null, bestIdx = Infinity
+  for (const [kw, label] of map) {
+    const idx = t.indexOf(kw)
+    if (idx !== -1 && idx < bestIdx) { bestIdx = idx; best = label }
+  }
+  return best
+}
+
 // Herleidt categorie/kleur/maat uit een vrije producttitel via keyword-
-// matching (case-insensitive, eerste match wint). Maat gebruikt een
-// woordgrens-regex (i.p.v. .includes()) zodat bv. de maat "s" niet
-// per ongeluk binnenin een ander woord matcht.
+// matching (case-insensitive). Categorie valt pas op de generieke
+// GENERIC_SHIRT_MAP terug als niets uit CATEGORIES_MAP matcht. Maat
+// gebruikt een woordgrens-regex (i.p.v. .includes()) zodat bv. de maat "s"
+// niet per ongeluk binnenin een ander woord matcht, en kiest — net als
+// categorie/kleur — de maat die het eerst in de titel voorkomt.
 export function detectTitleMeta(title) {
   const t = (title || '').toLowerCase()
-  let category = '', color = '', size = ''
-  for (const [kw, label] of CATEGORIES_MAP) if (t.includes(kw)) { category = label; break }
-  for (const [kw, label] of TITLE_COLORS_MAP) if (t.includes(kw)) { color = label; break }
+  const category = firstMatchByPosition(t, CATEGORIES_MAP) || firstMatchByPosition(t, GENERIC_SHIRT_MAP) || ''
+  const color = firstMatchByPosition(t, TITLE_COLORS_MAP) || ''
+  let size = '', sizeIdx = Infinity
   for (const s of TITLE_SIZES) {
-    if (new RegExp(`(?:^|\\s|maat\\s*)${s}(?:\\s|$|/)`, 'i').test(t)) { size = s.toUpperCase(); break }
+    const m = t.match(new RegExp(`(?:^|\\s|maat\\s*)(${s})(?:\\s|$|/)`, 'i'))
+    if (m && m.index < sizeIdx) { sizeIdx = m.index; size = s.toUpperCase() }
   }
   return { category, color, size }
 }
