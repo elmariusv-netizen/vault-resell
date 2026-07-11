@@ -8,7 +8,7 @@ import DateRangeFilter, { getDateBounds, filterByRange } from '../components/Dat
 import {
   formatCurrency, formatDate, formatSkuRange,
   getRemainingQty, calcSaleProfit, normalizePlatform,
-  classifyOrderStage, isLabelReady,
+  classifyOrderStage, isLabelReady, SHIPPED_STAGES,
 } from '../utils/skuUtils'
 import { supabase } from '../utils/supabase'
 
@@ -370,7 +370,12 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
     const toShip = activeSaleOrders.filter(({ stage }) => stage === 'to_ship').length
     const onTheWay = activeSaleOrders.filter(({ stage }) => stage === 'in_transit').length
     const atPickupPoint = activeSaleOrders.filter(({ stage }) => stage === 'at_pickup_point').length
-    const labelsReady = vtOrders.filter(isLabelReady).length
+    // Zelfde uitsluiting als Labels.jsx (SHIPPED_STAGES): een label dat al
+    // verzonden/afgeleverd is heeft zijn nut al gehad en hoort niet meer mee
+    // te tellen als "klaar om te printen" — zonder dit telde deze tegel ook
+    // labels van allang afgehandelde orders mee (14 i.p.v. de 3 die ook echt
+    // op de Labels-pagina staan).
+    const labelsReady = vtOrders.filter(o => isLabelReady(o) && !SHIPPED_STAGES.has(classifyOrderStage(o))).length
 
     const totalItems = batches.reduce((s, b) => s + getRemainingQty(b, sales), 0)
     return { totalRevenue, totalProfit, totalOrders, avgOrder, toShip, onTheWay, atPickupPoint, labelsReady, totalItems }

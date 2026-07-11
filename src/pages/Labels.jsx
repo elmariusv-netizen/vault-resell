@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { PDFDocument } from 'pdf-lib'
 import { supabase } from '../utils/supabase'
-import { genId, isLabelReady, classifyOrderStage } from '../utils/skuUtils'
+import { genId, isLabelReady, classifyOrderStage, SHIPPED_STAGES } from '../utils/skuUtils'
 
 const OUT_W = 288
 const OUT_H = 432
@@ -353,10 +353,6 @@ function ManualLabelModal({ onClose, onAdd }) {
     </div>
   )
 }
-
-// Fases (classifyOrderStage, skuUtils) waarin het pakket al verzonden is —
-// het label heeft dan zijn nut al gehad, zie fetchOrders hieronder.
-const SHIPPED_STAGES = new Set(['in_transit', 'at_pickup_point', 'finished'])
 
 // ── Hoofdcomponent ────────────────────────────────────────────────────────────
 export default function Labels({ vintedCookie }) {
