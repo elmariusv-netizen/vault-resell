@@ -325,13 +325,20 @@ export function getBatchUnitCost(batch) {
 // vrij is en niet al door een EERDER slot geclaimd werd binnen dezelfde
 // actie, anders de eerste nog niet-geclaimde vrije SKU. Voorkomt dat
 // dezelfde SKU tweemaal in 1 actie terechtkomt.
+//
+// freeSkus mag een vaste array zijn (elk slot dezelfde pool — bv. SkuPickerModal,
+// altijd 1 batch) OF een functie (slotKey) => string[] die per slot een EIGEN
+// pool teruggeeft (bv. BulkSkuModal se multi-leverancier-modus, waar elk item
+// in een bundel-verkoop uit een andere batch/leverancier mag komen).
 export function assignSlotSkus(slotKeys, freeSkus, overrides = {}) {
+  const freeSkusFor = typeof freeSkus === 'function' ? freeSkus : () => freeSkus
   const slotSkus = {}
   const claimed = new Set()
   for (const key of slotKeys) {
+    const free = freeSkusFor(key)
     let sku = overrides[key]
-    if (!sku || !freeSkus.includes(sku) || claimed.has(sku)) {
-      sku = freeSkus.find(s => !claimed.has(s)) || ''
+    if (!sku || !free.includes(sku) || claimed.has(sku)) {
+      sku = free.find(s => !claimed.has(s)) || ''
     }
     slotSkus[key] = sku
     if (sku) claimed.add(sku)
@@ -339,14 +346,16 @@ export function assignSlotSkus(slotKeys, freeSkus, overrides = {}) {
   return slotSkus
 }
 
-// Dropdown-opties voor 1 slot: alle vrije SKU's, min de SKU's die door
-// ANDERE slots in dezelfde actie al gekozen zijn (de eigen huidige keuze
-// blijft wel altijd zichtbaar in zijn eigen dropdown).
+// Dropdown-opties voor 1 slot: alle vrije SKU's (uit de eigen pool van dit
+// slot — zie freeSkus-uitleg hierboven), min de SKU's die door ANDERE slots
+// in dezelfde actie al gekozen zijn (de eigen huidige keuze blijft wel altijd
+// zichtbaar in zijn eigen dropdown).
 export function skuOptionsForSlot(slotKey, slotSkus, freeSkus) {
+  const free = (typeof freeSkus === 'function' ? freeSkus(slotKey) : freeSkus)
   const claimedByOthers = new Set(
     Object.entries(slotSkus).filter(([k]) => k !== slotKey).map(([, v]) => v)
   )
-  return freeSkus.filter(s => s === slotSkus[slotKey] || !claimedByOthers.has(s))
+  return free.filter(s => s === slotSkus[slotKey] || !claimedByOthers.has(s))
 }
 
 // ── Titel-keyword-matching — voor Stats.jsx's beste-categorie/kleur/maat-

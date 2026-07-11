@@ -603,8 +603,14 @@ function getBundleItemCount(order) {
 // (meerdere artikelen in 1 verkoop) krijgen per artikel een eigen SKU-veld
 // i.p.v. te worden behandeld als 1 los item met de volledige bundelprijs.
 function BulkSkuModal({ batches, allOrders, orders, onClose, onConfirm }) {
-  const [selectedBatch, setSelectedBatch] = useState(null) // batch waaruit deze bulk-koppeling SKU's trekt
+  const [selectedBatch, setSelectedBatch] = useState(null) // standaard-batch, gekozen in stap 1
   const [overrides, setOverrides]   = useState({}) // slotKey -> handmatig gekozen SKU (uit de dropdown)
+  // slotBatchOverrides: slotKey -> batch.id — laat een INDIVIDUEEL item in de
+  // bundel uit een ANDERE leverancier/batch komen dan de standaard-batch uit
+  // stap 1 (bv. een bundelverkoop met items uit zowel IMV als RIA). Zonder
+  // override valt een slot terug op selectedBatch — dat blijft dus het
+  // snelle pad voor de meest voorkomende situatie (1 leverancier per bundel).
+  const [slotBatchOverrides, setSlotBatchOverrides] = useState({})
   const [manualCounts, setManualCounts] = useState({}) // orderId -> handmatig aantal artikelen (niet-bundle orders)
   const [saving, setSaving]         = useState(false)
 
@@ -660,11 +666,25 @@ function BulkSkuModal({ batches, allOrders, orders, onClose, onConfirm }) {
     }
   }
 
+  // Welke batch hoort bij dit slot — de override (indien gezet, zie
+  // slotBatchOverrides) of anders de standaard-batch uit stap 1. Zo kan elk
+  // item in de bundel uit een andere leverancier komen.
+  const batchForSlot = (slotKey) => {
+    const overrideId = slotBatchOverrides[slotKey]
+    return (overrideId && batches.find(b => b.id === overrideId)) || selectedBatch
+  }
+  const freeSkusForSlot = (slotKey) => {
+    const b = batchForSlot(slotKey)
+    return b ? getFreeSkusForBatch(b, usedSkus) : []
+  }
+
   // Slot → SKU-toewijzing en dropdown-opties: gedeelde logica met
   // SkuPickerModal se "meerdere artikelen"-modus (zie assignSlotSkus/
-  // skuOptionsForSlot in skuUtils.js).
-  const slotSkus = assignSlotSkus(slots.map(s => s.slotKey), freeSkus, overrides)
-  const optionsFor = (slot) => skuOptionsForSlot(slot.slotKey, slotSkus, freeSkus)
+  // skuOptionsForSlot in skuUtils.js) — freeSkusForSlot geeft PER SLOT een
+  // eigen pool terug (i.p.v. 1 gedeelde lijst), zodat elk item zijn eigen
+  // batch/leverancier kan hebben.
+  const slotSkus = assignSlotSkus(slots.map(s => s.slotKey), freeSkusForSlot, overrides)
+  const optionsFor = (slot) => skuOptionsForSlot(slot.slotKey, slotSkus, freeSkusForSlot)
 
   const handleConfirm = async () => {
     if (!selectedBatch || saving) return
@@ -673,7 +693,7 @@ function BulkSkuModal({ batches, allOrders, orders, onClose, onConfirm }) {
       const orderSlots = slots.filter(s => s.order.id === order.id)
       const items = orderSlots.map(slot => {
         const sku = slotSkus[slot.slotKey]
-        return { sku, batch: sku ? selectedBatch : null }
+        return { sku, batch: sku ? batchForSlot(slot.slotKey) : null }
       })
       return { orderId: order.id, items }
     })
@@ -683,17 +703,43 @@ function BulkSkuModal({ batches, allOrders, orders, onClose, onConfirm }) {
   }
 
   const selectStyle = { width: 96, flexShrink: 0, fontFamily: 'monospace', fontSize: 12, fontWeight: 700, padding: '5px 4px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', textAlign: 'center', outline: 'none' }
+  const batchSelectStyle = { width: 88, flexShrink: 0, fontFamily: 'monospace', fontSize: 11, fontWeight: 600, padding: '5px 2px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-2)', textAlign: 'center', outline: 'none' }
+
+  // Leverancier/batch-keuze per slot — laat een individueel item in de bundel
+  // uit een ANDERE batch komen dan de standaard uit stap 1 (zie
+  // slotBatchOverrides hierboven). Wisselen van batch maakt de oude SKU-keuze
+  // voor dit slot ongeldig, dus die override wordt meteen gewist zodat
+  // assignSlotSkus automatisch een vrije SKU uit de nieuwe batch toewijst.
+  const batchSelect = (slot) => (
+    <select
+      value={batchForSlot(slot.slotKey)?.id || ''}
+      onChange={e => {
+        const batchId = e.target.value
+        setSlotBatchOverrides(prev => ({ ...prev, [slot.slotKey]: batchId }))
+        setOverrides(prev => { const next = { ...prev }; delete next[slot.slotKey]; return next })
+      }}
+      title="Leverancier/batch voor dit item"
+      style={batchSelectStyle}
+    >
+      {batches.map(b => (
+        <option key={b.id} value={b.id}>{formatSkuRange(b.supplierPrefix, b.startNum, b.endNum)}</option>
+      ))}
+    </select>
+  )
 
   const skuSelect = (slot) => (
-    <select
-      value={slotSkus[slot.slotKey] || ''}
-      onChange={e => setOverrides(prev => ({ ...prev, [slot.slotKey]: e.target.value }))}
-      disabled={!freeSkus.length}
-      style={selectStyle}
-    >
-      {!slotSkus[slot.slotKey] && <option value="">Geen vrije SKU</option>}
-      {optionsFor(slot).map(sku => <option key={sku} value={sku}>{sku}</option>)}
-    </select>
+    <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+      {batchSelect(slot)}
+      <select
+        value={slotSkus[slot.slotKey] || ''}
+        onChange={e => setOverrides(prev => ({ ...prev, [slot.slotKey]: e.target.value }))}
+        disabled={!freeSkusForSlot(slot.slotKey).length}
+        style={selectStyle}
+      >
+        {!slotSkus[slot.slotKey] && <option value="">Geen vrije SKU</option>}
+        {optionsFor(slot).map(sku => <option key={sku} value={sku}>{sku}</option>)}
+      </select>
+    </div>
   )
 
   // Stap 1: batch kiezen — hergebruikt exact SkuPickerModal se batch-lijst
@@ -750,6 +796,9 @@ function BulkSkuModal({ batches, allOrders, orders, onClose, onConfirm }) {
               {slots.length > freeSkus.length ? '⚠ ' : ''}
               {freeSkus.length} vrije SKU{freeSkus.length === 1 ? '' : "'s"} in deze batch
               {slots.length > freeSkus.length && ` — je vraagt er ${slots.length}, kies eventueel een andere batch voor de rest`}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 3 }}>
+              Elk item hieronder heeft een eigen leverancier-dropdown — handig bij een bundel met artikelen uit meerdere leveranciers.
             </div>
           </div>
 
