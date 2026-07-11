@@ -116,6 +116,14 @@ export function isLabelReady(order) {
   return !!(order?.label_available && order?.label_pdf_url)
 }
 
+// Fases (classifyOrderStage hieronder) waarin het pakket al verzonden is —
+// het label heeft dan zijn nut al gehad. Gedeeld tussen Labels.jsx (welke
+// orders nog in "Beschikbare labels" staan) en Home.jsx ("Labels klaar"-
+// tegel) — voorheen had Home.jsx geen stage-filter en telde dus ook labels
+// mee van allang verzonden/afgeleverde orders, wat de tegel structureel te
+// hoog liet uitkomen t.o.v. de Labels-pagina zelf.
+export const SHIPPED_STAGES = new Set(['in_transit', 'at_pickup_point', 'finished'])
+
 export const COUNTRY_FLAGS = { BE:'🇧🇪',NL:'🇳🇱',FR:'🇫🇷',DE:'🇩🇪',ES:'🇪🇸',IT:'🇮🇹',PL:'🇵🇱',CZ:'🇨🇿',PT:'🇵🇹',SE:'🇸🇪',FI:'🇫🇮',LT:'🇱🇹',LV:'🇱🇻',EE:'🇪🇪' }
 
 // ── Status-classificatie — enige bron van waarheid voor "is deze order al
@@ -162,6 +170,19 @@ export function isInTransitStatus(status) {
 //                                             afhaalpunt), dat vóelt voor de
 //                                             gebruiker niet meer als
 //                                             "onderweg".
+//   transaction_status=230, shipment_status=400 → voltooid behandeld als
+//                                             "finished" — Vinted toont dan al
+//                                             "Bestelling afgeleverd!" (live
+//                                             bevestigd, zie order IMV1/
+//                                             20566906326), maar is_completed
+//                                             blijft false tot Vinted de
+//                                             transactie zelf afrondt/uitbetaalt.
+//                                             Zonder deze tak viel zo'n al
+//                                             afgeleverde order terug op
+//                                             "te verzenden" — de verkoper
+//                                             hoeft hier geen actie meer op te
+//                                             ondernemen, dus telt niet meer
+//                                             mee als openstaand.
 //   transaction_status=230, overige/onbekende shipment_status (bv. 230 zelf)
 //                                           → te verzenden (label staat klaar,
 //                                             maar is nog niet als "verzonden"
@@ -182,6 +203,7 @@ export function classifyOrderStage(order) {
     if (numericStatus === 230) {
       if (shipmentStatus === 310) return 'at_pickup_point'
       if (shipmentStatus === 300) return 'in_transit'
+      if (shipmentStatus === 400) return 'finished'
       return 'to_ship'
     }
     if (numericStatus === 430) return 'paused'
