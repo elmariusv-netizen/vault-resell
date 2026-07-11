@@ -383,24 +383,38 @@ export default function App() {
     document.documentElement.setAttribute('data-theme', next)
   }, [theme])
 
+  // Bug (bevestigd live, 2026-07-11): "let next; setData(prev => {next=...;
+  // return next}); saveCloudData(next)" leest `next` AL op de regel na
+  // setData() — maar React voert de updater-callback niet per se synchroon
+  // uit vóór die volgende regel. Vanuit een browser-event (bv. een klik)
+  // "voelt" dit meestal synchroon (React flusht discrete events eerder), maar
+  // vanuit een useEffect (bv. de auto-registratie in useVintedOrdersSync) was
+  // `next` op dat moment nog gewoon `undefined` — saveCloudData schreef dan
+  // een payload zonder de nieuwe sales-entries weg (of PostgREST liet de
+  // bestaande payload-kolom onaangeroerd bij een onvolledige upsert-body),
+  // terwijl de LOKALE state wél al correct bijgewerkt leek. Hierdoor bleven
+  // auto-geregistreerde verkopen soms alsnog onzichtbaar in de cloud, ook na
+  // de zelfherstel-fix in useVintedOrdersSync. saveCloudData() nu binnen de
+  // updater zelf aanroepen — React garandeert dat DIE functie de juiste,
+  // actuele prev/next krijgt, ongeacht de aanroep-context (event of effect).
   const updateData = useCallback((updates) => {
-    let next
-    setData((prev) => { next = { ...prev, ...updates }; return next })
-    saveCloudData(activeUserId, next).catch(err => { if (isAuthError(err)) forceSignOut() })
+    setData((prev) => {
+      const next = { ...prev, ...updates }
+      saveCloudData(activeUserId, next).catch(err => { if (isAuthError(err)) forceSignOut() })
+      return next
+    })
   }, [activeUserId, forceSignOut])
 
   const handleUpdateSale = useCallback((updatedSale) => {
-    let next
     setData((prev) => {
       if (!prev) return prev
-      next = { ...prev, sales: prev.sales.map((s) => s.id === updatedSale.id ? updatedSale : s) }
+      const next = { ...prev, sales: prev.sales.map((s) => s.id === updatedSale.id ? updatedSale : s) }
+      saveCloudData(activeUserId, next).catch(err => { if (isAuthError(err)) forceSignOut() })
       return next
     })
-    if (next) saveCloudData(activeUserId, next).catch(err => { if (isAuthError(err)) forceSignOut() })
   }, [activeUserId, forceSignOut])
 
   const handleDeleteSale = useCallback((saleId) => {
-    let next
     setData((prev) => {
       if (!prev) return prev
       const sale = prev.sales.find((s) => s.id === saleId)
@@ -414,10 +428,10 @@ export default function App() {
             : b
         )
       }
-      next = { ...prev, sales: nextSales, batches: nextBatches }
+      const next = { ...prev, sales: nextSales, batches: nextBatches }
+      saveCloudData(activeUserId, next).catch(err => { if (isAuthError(err)) forceSignOut() })
       return next
     })
-    if (next) saveCloudData(activeUserId, next).catch(err => { if (isAuthError(err)) forceSignOut() })
   }, [activeUserId, forceSignOut])
 
   const handleExport = useCallback(() => {
