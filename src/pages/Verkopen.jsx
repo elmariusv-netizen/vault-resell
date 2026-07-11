@@ -2207,23 +2207,14 @@ export default function Verkopen({
         </div>
       ) : (
         <>
-          {filteredVinted.length > 0 && (
-            <div style={{ marginBottom: 28 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>Vinted verkopen</h2>
-                <span style={{ fontSize: 12, color: 'var(--text-3)', background: 'var(--bg-2)', padding: '1px 8px', borderRadius: 20 }}>
-                  {filteredVinted.length}
-                </span>
-              </div>
-              {renderSalesGroup(filteredVinted)}
-            </div>
-          )}
-
           {/* Aparte, duidelijk gelabelde sectie voor niet-Vinted (handmatige)
-              verkopen — voorheen tussen de Vinted-verkopen verstopt in 1
-              gemengde tabel, nu altijd zichtbaar als eigen blok, ook als leeg
-              (zodat gebruikers weten waar ze terechtkunnen). */}
-          <div>
+              verkopen — staat bewust VOOR "Vinted verkopen": bij tientallen
+              Vinted-orders stond dit blok voorheen na de volledige Vinted-
+              tabel, honderden pixels verderop onderaan de pagina, waardoor
+              het in de praktijk onvindbaar leek ("niet zichtbaar" gemeld).
+              Altijd zichtbaar, ook leeg, zodat gebruikers weten waar ze
+              terechtkunnen. */}
+          <div style={{ marginBottom: 28 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
               <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>🧾 Andere verkopen</h2>
               <span style={{ fontSize: 12, color: 'var(--text-3)', background: 'var(--bg-2)', padding: '1px 8px', borderRadius: 20 }}>
@@ -2236,6 +2227,18 @@ export default function Verkopen({
               </div>
             ) : renderSalesGroup(filteredOther)}
           </div>
+
+          {filteredVinted.length > 0 && (
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>Vinted verkopen</h2>
+                <span style={{ fontSize: 12, color: 'var(--text-3)', background: 'var(--bg-2)', padding: '1px 8px', borderRadius: 20 }}>
+                  {filteredVinted.length}
+                </span>
+              </div>
+              {renderSalesGroup(filteredVinted)}
+            </div>
+          )}
         </>
       )}
 
