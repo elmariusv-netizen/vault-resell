@@ -1812,6 +1812,188 @@ export default function Verkopen({
     count: acc.count + (s.quantity || 1),
   }), { revenue: 0, profit: 0, count: 0 }), [filtered])
 
+  // Losse blokken i.p.v. 1 gemengde lijst: handmatige (niet-Vinted) verkopen
+  // liepen voorheen visueel onopvallend tussen de Vinted-verkopen in dezelfde
+  // tabel, waardoor ze moeilijk terug te vinden waren naast de "Vinted
+  // Orders"-sectie hierboven. filteredVinted/filteredOther splitsen dezelfde
+  // (al gefilterde) lijst puur voor weergave — totals hierboven blijft over
+  // alle platforms samen tellen.
+  const filteredVinted = useMemo(() => filtered.filter(s => s.platformDisplay === 'Vinted'), [filtered])
+  const filteredOther = useMemo(() => filtered.filter(s => s.platformDisplay !== 'Vinted'), [filtered])
+
+  const renderSalesGroup = (list) => (
+    <>
+      {/* Desktop table */}
+      <div className="sales-table-wrap table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Datum</th>
+              <th>SKU / Product</th>
+              <th>Platform</th>
+              <th>Prijs</th>
+              <th>Winst</th>
+              <th>Verzonden</th>
+              <th style={{ width: 80 }} />
+            </tr>
+          </thead>
+          <tbody>
+            {list.map((s) => (
+              <tr key={s.id} style={{ cursor: 'pointer' }} onClick={() => setEditSale(s)}>
+                <td style={{ whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>
+                  {formatDateLong(s.date)}
+                </td>
+                <td>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {s.photo && (
+                      <img
+                        src={s.photo} alt=""
+                        style={{ width: 30, height: 30, borderRadius: 6, objectFit: 'cover', flexShrink: 0, border: '1px solid var(--border)' }}
+                      />
+                    )}
+                    <div>
+                      {/* skuBadges: 1 badge per SKU, elk in de kleur van
+                          ZIJN EIGEN leverancier (zie enriched hierboven) —
+                          nodig bij een bundelverkoop met items uit
+                          verschillende batches/leveranciers in 1 order. */}
+                      {s.skuBadges.map(({ sku: sk, color }) => (
+                        <span
+                          key={sk}
+                          className="sku-tag"
+                          style={{ background: color + '14', color, marginRight: 4 }}
+                        >
+                          {sk}
+                        </span>
+                      ))}
+                      {s.quantity > 1 && (
+                        <span style={{ marginLeft: 4, fontSize: 11, color: 'var(--text-3)' }}>×{s.quantity}</span>
+                      )}
+                      {s.isFree && (
+                        <span style={{ marginLeft: 5, fontSize: 10, color: 'var(--green)', fontWeight: 700 }}>GRATIS</span>
+                      )}
+                      {(s.batch?.name || s.batch?.brand) && (
+                        <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
+                          {s.batch.brand || s.batch.name}
+                        </div>
+                      )}
+                      {s.buyer && (
+                        <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{s.buyer}</div>
+                      )}
+                    </div>
+                  </div>
+                </td>
+                <td>
+                  <span style={{ fontSize: 12, color: 'var(--text-2)' }}>{short(s.platformDisplay)}</span>
+                </td>
+                <td style={{ fontWeight: 600 }}>
+                  {s.isFree
+                    ? <span style={{ color: 'var(--text-3)', fontSize: 12 }}>Gratis</span>
+                    : formatCurrency((s.salePrice || 0) * (s.quantity || 1))}
+                </td>
+                <td>
+                  {s.profit ? (
+                    <span style={{ fontWeight: 600, color: s.profit.profit >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                      {s.profit.profit >= 0 ? '+' : ''}{formatCurrency(s.profit.profit)}
+                    </span>
+                  ) : '—'}
+                </td>
+                <td>
+                  {s.shipped
+                    ? <span style={{ fontSize: 11, color: 'var(--blue)', fontWeight: 600 }}>✓ {s.shippedDate ? formatDateLong(s.shippedDate) : 'ja'}</span>
+                    : <span style={{ fontSize: 11, color: 'var(--text-3)' }}>—</span>}
+                </td>
+                <td style={{ padding: '6px 10px' }} onClick={(e) => e.stopPropagation()}>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    <button
+                      className="btn btn-ghost btn-sm btn-icon"
+                      onClick={() => setEditSale(s)}
+                      title="Bewerk verkoop"
+                      style={{ fontSize: 13 }}
+                    >
+                      ✏️
+                    </button>
+                    <button
+                      className="btn btn-danger btn-sm btn-icon"
+                      onClick={() => setConfirmDeleteId(s.id)}
+                      title="Verwijder verkoop"
+                      style={{ fontSize: 13 }}
+                    >
+                      🗑
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Mobile cards */}
+      <div className="sales-cards-mobile">
+        {list.map((s) => (
+          <div key={s.id} className="sale-card-mobile" style={{ cursor: 'pointer' }} onClick={() => setEditSale(s)}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+              {s.photo ? (
+                <img src={s.photo} alt="" style={{ width: 42, height: 42, borderRadius: 8, objectFit: 'cover', flexShrink: 0, border: '1px solid var(--border)' }} />
+              ) : (
+                <div style={{ width: 42, height: 42, borderRadius: 8, background: (s.sup?.color || '#666') + '14', border: `1px solid ${(s.sup?.color || '#666')}25`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 16 }}>
+                  🏷
+                </div>
+              )}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  {s.skuBadges.map(({ sku: sk, color }) => (
+                    <span key={sk} className="sku-tag" style={{ background: color + '14', color }}>
+                      {sk}
+                    </span>
+                  ))}
+                  {s.quantity > 1 && <span style={{ fontSize: 11, color: 'var(--text-3)' }}>×{s.quantity}</span>}
+                  <span style={{ fontSize: 11, background: 'var(--bg-2)', padding: '2px 6px', borderRadius: 5, color: 'var(--text-2)' }}>
+                    {short(s.platformDisplay)}
+                  </span>
+                  {s.isFree && <span style={{ fontSize: 10, color: 'var(--green)', fontWeight: 700 }}>GRATIS</span>}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 3 }}>
+                  {formatDateLong(s.date)}
+                  {s.buyer && ` · ${s.buyer}`}
+                  {s.shipped && <span style={{ color: 'var(--blue)', marginLeft: 6 }}>✓ verzonden</span>}
+                </div>
+              </div>
+              <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                {s.isFree ? (
+                  <div style={{ fontSize: 12, color: 'var(--text-3)' }}>Gratis</div>
+                ) : (
+                  <div style={{ fontSize: 14, fontWeight: 700 }}>{formatCurrency((s.salePrice || 0) * (s.quantity || 1))}</div>
+                )}
+                {s.profit && (
+                  <div style={{ fontSize: 11, color: s.profit.profit >= 0 ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>
+                    {s.profit.profit >= 0 ? '+' : ''}{formatCurrency(s.profit.profit)}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 10 }} onClick={(e) => e.stopPropagation()}>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => setEditSale(s)}
+                style={{ fontSize: 11 }}
+              >
+                ✏️ Bewerk
+              </button>
+              <button
+                className="btn btn-danger btn-sm"
+                onClick={() => setConfirmDeleteId(s.id)}
+                style={{ fontSize: 11 }}
+              >
+                🗑 Verwijder
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </>
+  )
+
   return (
     <div className="page">
       <div className="page-header">
@@ -2025,173 +2207,34 @@ export default function Verkopen({
         </div>
       ) : (
         <>
-          {/* Desktop table */}
-          <div className="sales-table-wrap table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Datum</th>
-                  <th>SKU / Product</th>
-                  <th>Platform</th>
-                  <th>Prijs</th>
-                  <th>Winst</th>
-                  <th>Verzonden</th>
-                  <th style={{ width: 80 }} />
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((s) => (
-                  <tr key={s.id} style={{ cursor: 'pointer' }} onClick={() => setEditSale(s)}>
-                    <td style={{ whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-2)' }}>
-                      {formatDateLong(s.date)}
-                    </td>
-                    <td>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        {s.photo && (
-                          <img
-                            src={s.photo} alt=""
-                            style={{ width: 30, height: 30, borderRadius: 6, objectFit: 'cover', flexShrink: 0, border: '1px solid var(--border)' }}
-                          />
-                        )}
-                        <div>
-                          {/* skuBadges: 1 badge per SKU, elk in de kleur van
-                              ZIJN EIGEN leverancier (zie enriched hierboven) —
-                              nodig bij een bundelverkoop met items uit
-                              verschillende batches/leveranciers in 1 order. */}
-                          {s.skuBadges.map(({ sku: sk, color }) => (
-                            <span
-                              key={sk}
-                              className="sku-tag"
-                              style={{ background: color + '14', color, marginRight: 4 }}
-                            >
-                              {sk}
-                            </span>
-                          ))}
-                          {s.quantity > 1 && (
-                            <span style={{ marginLeft: 4, fontSize: 11, color: 'var(--text-3)' }}>×{s.quantity}</span>
-                          )}
-                          {s.isFree && (
-                            <span style={{ marginLeft: 5, fontSize: 10, color: 'var(--green)', fontWeight: 700 }}>GRATIS</span>
-                          )}
-                          {(s.batch?.name || s.batch?.brand) && (
-                            <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
-                              {s.batch.brand || s.batch.name}
-                            </div>
-                          )}
-                          {s.buyer && (
-                            <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{s.buyer}</div>
-                          )}
-                        </div>
-                      </div>
-                    </td>
-                    <td>
-                      <span style={{ fontSize: 12, color: 'var(--text-2)' }}>{short(s.platformDisplay)}</span>
-                    </td>
-                    <td style={{ fontWeight: 600 }}>
-                      {s.isFree
-                        ? <span style={{ color: 'var(--text-3)', fontSize: 12 }}>Gratis</span>
-                        : formatCurrency((s.salePrice || 0) * (s.quantity || 1))}
-                    </td>
-                    <td>
-                      {s.profit ? (
-                        <span style={{ fontWeight: 600, color: s.profit.profit >= 0 ? 'var(--green)' : 'var(--red)' }}>
-                          {s.profit.profit >= 0 ? '+' : ''}{formatCurrency(s.profit.profit)}
-                        </span>
-                      ) : '—'}
-                    </td>
-                    <td>
-                      {s.shipped
-                        ? <span style={{ fontSize: 11, color: 'var(--blue)', fontWeight: 600 }}>✓ {s.shippedDate ? formatDateLong(s.shippedDate) : 'ja'}</span>
-                        : <span style={{ fontSize: 11, color: 'var(--text-3)' }}>—</span>}
-                    </td>
-                    <td style={{ padding: '6px 10px' }} onClick={(e) => e.stopPropagation()}>
-                      <div style={{ display: 'flex', gap: 4 }}>
-                        <button
-                          className="btn btn-ghost btn-sm btn-icon"
-                          onClick={() => setEditSale(s)}
-                          title="Bewerk verkoop"
-                          style={{ fontSize: 13 }}
-                        >
-                          ✏️
-                        </button>
-                        <button
-                          className="btn btn-danger btn-sm btn-icon"
-                          onClick={() => setConfirmDeleteId(s.id)}
-                          title="Verwijder verkoop"
-                          style={{ fontSize: 13 }}
-                        >
-                          🗑
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Mobile cards */}
-          <div className="sales-cards-mobile">
-            {filtered.map((s) => (
-              <div key={s.id} className="sale-card-mobile" style={{ cursor: 'pointer' }} onClick={() => setEditSale(s)}>
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-                  {s.photo ? (
-                    <img src={s.photo} alt="" style={{ width: 42, height: 42, borderRadius: 8, objectFit: 'cover', flexShrink: 0, border: '1px solid var(--border)' }} />
-                  ) : (
-                    <div style={{ width: 42, height: 42, borderRadius: 8, background: (s.sup?.color || '#666') + '14', border: `1px solid ${(s.sup?.color || '#666')}25`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 16 }}>
-                      🏷
-                    </div>
-                  )}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                      {s.skuBadges.map(({ sku: sk, color }) => (
-                        <span key={sk} className="sku-tag" style={{ background: color + '14', color }}>
-                          {sk}
-                        </span>
-                      ))}
-                      {s.quantity > 1 && <span style={{ fontSize: 11, color: 'var(--text-3)' }}>×{s.quantity}</span>}
-                      <span style={{ fontSize: 11, background: 'var(--bg-2)', padding: '2px 6px', borderRadius: 5, color: 'var(--text-2)' }}>
-                        {short(s.platformDisplay)}
-                      </span>
-                      {s.isFree && <span style={{ fontSize: 10, color: 'var(--green)', fontWeight: 700 }}>GRATIS</span>}
-                    </div>
-                    <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 3 }}>
-                      {formatDateLong(s.date)}
-                      {s.buyer && ` · ${s.buyer}`}
-                      {s.shipped && <span style={{ color: 'var(--blue)', marginLeft: 6 }}>✓ verzonden</span>}
-                    </div>
-                  </div>
-                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                    {s.isFree ? (
-                      <div style={{ fontSize: 12, color: 'var(--text-3)' }}>Gratis</div>
-                    ) : (
-                      <div style={{ fontSize: 14, fontWeight: 700 }}>{formatCurrency((s.salePrice || 0) * (s.quantity || 1))}</div>
-                    )}
-                    {s.profit && (
-                      <div style={{ fontSize: 11, color: s.profit.profit >= 0 ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>
-                        {s.profit.profit >= 0 ? '+' : ''}{formatCurrency(s.profit.profit)}
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 10 }} onClick={(e) => e.stopPropagation()}>
-                  <button
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => setEditSale(s)}
-                    style={{ fontSize: 11 }}
-                  >
-                    ✏️ Bewerk
-                  </button>
-                  <button
-                    className="btn btn-danger btn-sm"
-                    onClick={() => setConfirmDeleteId(s.id)}
-                    style={{ fontSize: 11 }}
-                  >
-                    🗑 Verwijder
-                  </button>
-                </div>
+          {filteredVinted.length > 0 && (
+            <div style={{ marginBottom: 28 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>Vinted verkopen</h2>
+                <span style={{ fontSize: 12, color: 'var(--text-3)', background: 'var(--bg-2)', padding: '1px 8px', borderRadius: 20 }}>
+                  {filteredVinted.length}
+                </span>
               </div>
-            ))}
+              {renderSalesGroup(filteredVinted)}
+            </div>
+          )}
+
+          {/* Aparte, duidelijk gelabelde sectie voor niet-Vinted (handmatige)
+              verkopen — voorheen tussen de Vinted-verkopen verstopt in 1
+              gemengde tabel, nu altijd zichtbaar als eigen blok, ook als leeg
+              (zodat gebruikers weten waar ze terechtkunnen). */}
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>🧾 Andere verkopen</h2>
+              <span style={{ fontSize: 12, color: 'var(--text-3)', background: 'var(--bg-2)', padding: '1px 8px', borderRadius: 20 }}>
+                {filteredOther.length}
+              </span>
+            </div>
+            {filteredOther.length === 0 ? (
+              <div style={{ padding: 24, background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
+                Nog geen niet-Vinted verkopen geregistreerd. Gebruik "+ Verkoop registreren" op het dashboard en kies een ander platform.
+              </div>
+            ) : renderSalesGroup(filteredOther)}
           </div>
         </>
       )}
