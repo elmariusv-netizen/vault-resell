@@ -124,6 +124,19 @@ export function isLabelReady(order) {
 // hoog liet uitkomen t.o.v. de Labels-pagina zelf.
 export const SHIPPED_STAGES = new Set(['in_transit', 'at_pickup_point', 'finished'])
 
+// Groepeer-sleutel voor "1 bestelling" — bundel/meerdere-artikelen-orders
+// (BulkSkuModal in Verkopen.jsx) slaan elk item als een eigen sales-entry op
+// maar delen dezelfde vintedOrderId, dus die telt als 1 bestelling. Losse
+// sales zonder vintedOrderId (volledig handmatig geregistreerd) hebben geen
+// gedeelde order om op te groeperen en tellen elk als hun eigen bestelling.
+// Gedeeld tussen Home.jsx (Dashboard "Bestellingen") en Stats.jsx (Overzicht
+// "X bestellingen") — Stats.jsx telde voorheen gewoon paid.length (elke
+// sales-regel apart), waardoor een bundelverkoop van bv. 5 items als 5
+// "bestellingen" meetelde i.p.v. de 1 echte Vinted-order die het was.
+export function orderKey(sale) {
+  return sale.vintedOrderId || sale.id
+}
+
 export const COUNTRY_FLAGS = { BE:'🇧🇪',NL:'🇳🇱',FR:'🇫🇷',DE:'🇩🇪',ES:'🇪🇸',IT:'🇮🇹',PL:'🇵🇱',CZ:'🇨🇿',PT:'🇵🇹',SE:'🇸🇪',FI:'🇫🇮',LT:'🇱🇹',LV:'🇱🇻',EE:'🇪🇪' }
 
 // ── Status-classificatie — enige bron van waarheid voor "is deze order al

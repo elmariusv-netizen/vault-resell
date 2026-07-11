@@ -8,7 +8,7 @@ import DateRangeFilter, { getDateBounds, filterByRange } from '../components/Dat
 import {
   formatCurrency, formatDate, formatSkuRange,
   getRemainingQty, calcSaleProfit, normalizePlatform,
-  classifyOrderStage, isLabelReady, SHIPPED_STAGES,
+  classifyOrderStage, isLabelReady, SHIPPED_STAGES, orderKey,
 } from '../utils/skuUtils'
 import { supabase } from '../utils/supabase'
 
@@ -36,15 +36,6 @@ const D = {
 // (bv. `kleur + '22'`) — dat werkt niet met een `var(--x)`-string, dus deze
 // ene plek blijft bewust een echte hex-waarde i.p.v. D.blue.
 const ACCENT_HEX = '#2563eb'
-
-// Groepeer-sleutel voor "1 bestelling" — bundel/meerdere-artikelen-orders
-// (BulkSkuModal in Verkopen.jsx) slaan elk item als een eigen sales-entry op
-// maar delen dezelfde vintedOrderId, dus die telt als 1 bestelling. Losse
-// sales zonder vintedOrderId (volledig handmatig geregistreerd) hebben geen
-// gedeelde order om op te groeperen en tellen elk als hun eigen bestelling.
-function orderKey(sale) {
-  return sale.vintedOrderId || sale.id
-}
 
 // date.toISOString() converteert naar UTC — in een tijdzone vóór op UTC
 // (bv. CEST, UTC+2) levert lokale middernacht dan de VORIGE kalenderdag op,

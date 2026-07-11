@@ -7,7 +7,7 @@ import DateRangeFilter, { getDateBounds, filterByRange } from '../components/Dat
 import {
   formatCurrency, formatSkuRange, calcSaleProfit,
   getRemainingQty, getSupplierColor, normalizePlatform,
-  fetchBusinessCosts, sumCosts, getBatchUnitCost, detectTitleMeta,
+  fetchBusinessCosts, sumCosts, getBatchUnitCost, detectTitleMeta, orderKey,
 } from '../utils/skuUtils'
 import { supabase } from '../utils/supabase'
 
@@ -87,8 +87,13 @@ export default function Stats({ data, theme }) {
     const totalStock = batches.reduce((s, b) => s + getRemainingQty(b, sales), 0)
     const margin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0
     const avgProfit = totalSold > 0 ? totalProfit / totalSold : 0
-    const avgSale = paid.length > 0 ? totalRevenue / paid.length : 0
-    return { totalRevenue, totalSold, totalProfit, totalCosts, totalInvested, totalStock, margin, avgProfit, avgSale, orders: paid.length }
+    // Aantal DISTINCTE bestellingen, niet aantal sales-regels — zelfde
+    // orderKey()-groepering als Home.jsx's Dashboard, anders telt een
+    // bundelverkoop (meerdere sales-regels, 1 Vinted-order) hier als
+    // meerdere "bestellingen" i.p.v. 1.
+    const orders = new Set(paid.map(orderKey)).size
+    const avgSale = orders > 0 ? totalRevenue / orders : 0
+    return { totalRevenue, totalSold, totalProfit, totalCosts, totalInvested, totalStock, margin, avgProfit, avgSale, orders }
   }, [filteredSales, filteredCosts, batches, sales])
 
   // Trend-vergelijking — vergelijkt de huidige periode met de onmiddellijk
