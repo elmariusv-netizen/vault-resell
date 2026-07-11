@@ -87,8 +87,20 @@ export function useVintedOrdersSync(data, updateData) {
       !/geannuleerd|cancel/i.test(o.status || '') &&
       (o.order_direction === 'sale' || !o.order_direction)
 
+    // LET OP: baseert zich bewust NIET (meer) op !o.registered_in_vault —
+    // enkel op "bestaat er al een data.sales-entry voor deze order". Bug
+    // (bevestigd live, 2026-07-11): de updateData(...)-call hieronder en de
+    // registered_in_vault:true-write naar Supabase zijn 2 losse, niet-
+    // atomaire operaties (zie ook handleSaleModalSave in Verkopen.jsx, zelfde
+    // patroon) — als de sales-array-write faalt/wordt ingehaald door een
+    // andere gelijktijdige updateData()-call terwijl de vlag-write wél
+    // slaagt, blijft een order permanent "registered_in_vault=true" zonder
+    // ooit een sales-entry te krijgen. Met de oude `!o.registered_in_vault`-
+    // voorwaarde werd zo'n order NOOIT meer opnieuw opgepikt (voor altijd
+    // onzichtbaar in omzet/telling) — nu wordt elke order zonder sales-entry
+    // altijd opnieuw geregistreerd, ongeacht de vlag.
     const toRegister = vtOrders.filter(o =>
-      !o.registered_in_vault && !registeredOrderIds.has(o.id) && eligible(o)
+      !registeredOrderIds.has(o.id) && eligible(o)
     )
     // Zelfherstel: order heeft al een data.sales-entry (bv. via "+ Empl.",
     // of een eerdere auto-registratie waarvan de Supabase-update werd
