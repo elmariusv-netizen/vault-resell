@@ -4,6 +4,12 @@ import {
 } from '../utils/skuUtils'
 import EditSaleModal from '../components/EditSaleModal'
 import SaleModal from '../components/SaleModal'
+import { supabase } from '../utils/supabase'
+
+// Zelfde publieke 'invoices'-bucket als Kosten.jsx se factuur-archief —
+// sale.attachmentPath (gezet via EditSaleModal) is een pad in de
+// 'sales/'-submap daarvan.
+const attachmentUrl = (path) => supabase.storage.from('invoices').getPublicUrl(path).data.publicUrl
 
 const SHORT = { 'Medeverkoper/Groothandel': 'B2B', 'Privé persoon': 'Privé' }
 const short = (p) => SHORT[p] || p
@@ -252,6 +258,17 @@ export default function AndereVerkopen({ data, updateData, onDeleteSale, onUpdat
                     </td>
                     <td style={{ padding: '6px 10px' }} onClick={(e) => e.stopPropagation()}>
                       <div style={{ display: 'flex', gap: 4 }}>
+                        {s.attachmentPath && (
+                          <a
+                            href={attachmentUrl(s.attachmentPath)}
+                            target="_blank" rel="noopener noreferrer"
+                            className="btn btn-ghost btn-sm btn-icon"
+                            title="Bekijk bewijsstuk"
+                            style={{ fontSize: 13 }}
+                          >
+                            📎
+                          </a>
+                        )}
                         <button
                           className="btn btn-ghost btn-sm btn-icon"
                           onClick={() => setEditSale(s)}
@@ -321,6 +338,16 @@ export default function AndereVerkopen({ data, updateData, onDeleteSale, onUpdat
                   </div>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 10 }} onClick={(e) => e.stopPropagation()}>
+                  {s.attachmentPath && (
+                    <a
+                      href={attachmentUrl(s.attachmentPath)}
+                      target="_blank" rel="noopener noreferrer"
+                      className="btn btn-ghost btn-sm"
+                      style={{ fontSize: 11 }}
+                    >
+                      📎 Bewijsstuk
+                    </a>
+                  )}
                   <button
                     className="btn btn-ghost btn-sm"
                     onClick={() => setEditSale(s)}

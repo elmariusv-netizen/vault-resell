@@ -68,13 +68,19 @@ INSERT INTO storage.buckets (id, name, public)
 -- Voer dit uit als de tabel leeg blijft na sync:
 ALTER TABLE vinted_orders ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY IF NOT EXISTS "anon kan lezen"
+-- "CREATE POLICY IF NOT EXISTS" bestaat niet in PostgreSQL — DROP + CREATE
+-- is het correcte, herhaalbare patroon (idempotent, net als de policy's
+-- eigen bedoeling hieronder).
+DROP POLICY IF EXISTS "anon kan lezen" ON vinted_orders;
+CREATE POLICY "anon kan lezen"
   ON vinted_orders FOR SELECT TO anon USING (true);
 
-CREATE POLICY IF NOT EXISTS "anon kan upserten"
+DROP POLICY IF EXISTS "anon kan upserten" ON vinted_orders;
+CREATE POLICY "anon kan upserten"
   ON vinted_orders FOR INSERT TO anon WITH CHECK (true);
 
-CREATE POLICY IF NOT EXISTS "anon kan updaten"
+DROP POLICY IF EXISTS "anon kan updaten" ON vinted_orders;
+CREATE POLICY "anon kan updaten"
   ON vinted_orders FOR UPDATE TO anon USING (true) WITH CHECK (true);
 
 -- Auto-sync vlag (webapp → extensie)
@@ -304,12 +310,40 @@ CREATE POLICY "user beheert eigen kosten" ON business_costs FOR ALL TO authentic
 -- 'invoices'-bucket hieronder) — laat 1 kost verwijzen naar 1 factuurbestand.
 ALTER TABLE business_costs ADD COLUMN IF NOT EXISTS invoice_path TEXT;
 
--- Storage bucket voor geüploade facturen/bonnen (PDF/afbeeldingen),
--- zelfde opzet als de bestaande 'labels'/'order-photos'-buckets (public,
--- geen aparte object-RLS — het pad zelf is al niet te raden).
+-- Storage bucket voor geüploade facturen/bonnen (PDF/afbeeldingen), en sinds
+-- de "bewijsstuk"-upload op Andere verkopen (EditSaleModal.jsx) ook voor
+-- betaalbewijzen/verzendbonnen per verkoop (eigen 'sales/'-submap van
+-- dezelfde bucket).
 INSERT INTO storage.buckets (id, name, public)
   VALUES ('invoices', 'invoices', true)
   ON CONFLICT DO NOTHING;
+
+-- LET OP — de eerdere aanname "geen aparte object-RLS nodig, het pad is al
+-- onraadbaar" klopte NIET voor schrijven/lezen-via-de-tabel: storage.objects
+-- heeft RLS standaard AAN zonder policies. Zonder INSERT-policy weigerde
+-- Postgres élke upload ("new row violates row-level security policy", live
+-- bevestigd 2026-07-12 via de exacte supabase-js .upload()-call die zowel
+-- Kosten.jsx als EditSaleModal.jsx gebruiken). De 'public'-vlag op de bucket
+-- bypasst RLS enkel voor de directe object-GET (getPublicUrl), NIET voor
+-- schrijven, en ook NIET voor storage.list() — die laatste doet intern een
+-- SELECT op storage.objects en gaf zonder eigen SELECT-policy stilzwijgend
+-- 0 resultaten terug (geen foutmelding!) ondanks geslaagde uploads, waardoor
+-- Kosten.jsx se "Facturen-archief" leeg leek te blijven. "CREATE POLICY IF
+-- NOT EXISTS" bestaat niet in PostgreSQL — DROP + CREATE hieronder.
+DROP POLICY IF EXISTS "authenticated kan invoices lijst zien" ON storage.objects;
+CREATE POLICY "authenticated kan invoices lijst zien"
+  ON storage.objects FOR SELECT TO authenticated
+  USING (bucket_id = 'invoices');
+
+DROP POLICY IF EXISTS "authenticated kan uploaden naar invoices" ON storage.objects;
+CREATE POLICY "authenticated kan uploaden naar invoices"
+  ON storage.objects FOR INSERT TO authenticated
+  WITH CHECK (bucket_id = 'invoices');
+
+DROP POLICY IF EXISTS "authenticated kan invoices verwijderen" ON storage.objects;
+CREATE POLICY "authenticated kan invoices verwijderen"
+  ON storage.objects FOR DELETE TO authenticated
+  USING (bucket_id = 'invoices');
 
 -- ══════════════════════════════════════════════════════════════════
 -- WHOP.COM ABONNEMENT-GATING (Upgrade.jsx, AdminUsers.jsx, api/whop-status.js)

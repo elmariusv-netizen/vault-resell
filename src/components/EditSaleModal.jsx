@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import Modal from './Modal'
 import { formatSkuRange, formatCurrency, calcSaleProfit, getRemainingQty, getBatchUnitCost } from '../utils/skuUtils'
+import { supabase } from '../utils/supabase'
 
 const PLATFORM_PRESETS = ['Vinted', 'WhatsApp', 'Instagram', 'Lokaal']
 
@@ -33,6 +34,15 @@ export default function EditSaleModal({ data, sale, onClose, onSave }) {
   const [shippedDate,  setShippedDate]  = useState(sale.shippedDate || date || '')
   const [links,        setLinks]        = useState(sale.links || [])
   const [isFree,       setIsFree]       = useState(sale.isFree || false)
+  // Betaalbewijs/verzendbon — zelfde Storage-aanpak als de factuur-upload op
+  // Kosten.jsx (publieke bucket, onraadbaar random pad, geen aparte object-
+  // RLS), maar in een 'sales/'-submap van diezelfde 'invoices'-bucket i.p.v.
+  // een nieuwe bucket — geen extra Supabase-setup nodig, het pad zelf is al
+  // niet te raden. Enkel het pad wordt op de sale zelf opgeslagen (data.sales
+  // is een JSON-array, geen losse tabel zoals business_costs, dus geen losse
+  // link-stap nodig).
+  const [attachmentPath, setAttachmentPath] = useState(sale.attachmentPath || null)
+  const [attachmentUploading, setAttachmentUploading] = useState(false)
 
   const batch     = batches.find((b) => b.id === batchId)
   const remaining = batch ? getRemainingQty(batch, sales.filter((s) => s.id !== sale.id)) : 0
@@ -45,6 +55,21 @@ export default function EditSaleModal({ data, sale, onClose, onSave }) {
     : null
 
   const effectivePlatform = platformChoice === 'Ander' ? (customPlatform.trim() || 'Ander') : platformChoice
+
+  const handleUploadAttachment = async (file) => {
+    if (!file) return
+    setAttachmentUploading(true)
+    const ext = file.name.split('.').pop()
+    const path = `sales/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+    const { error } = await supabase.storage.from('invoices').upload(path, file)
+    if (error) { alert(`Upload mislukt: ${error.message}`); setAttachmentUploading(false); return }
+    setAttachmentPath(path)
+    setAttachmentUploading(false)
+  }
+
+  const attachmentUrl = attachmentPath
+    ? supabase.storage.from('invoices').getPublicUrl(attachmentPath).data.publicUrl
+    : null
 
   const handleSave = () => {
     onSave({
@@ -62,6 +87,7 @@ export default function EditSaleModal({ data, sale, onClose, onSave }) {
       shippedDate:  shipped ? shippedDate : null,
       links:        links.filter((l) => l.trim()),
       isFree,
+      attachmentPath,
     })
     onClose()
   }
@@ -193,6 +219,34 @@ export default function EditSaleModal({ data, sale, onClose, onSave }) {
               onChange={(v) => setLinks((l) => l.map((x, idx) => idx === i ? v : x))}
               onRemove={() => setLinks((l) => l.filter((_, idx) => idx !== i))} />
           ))}
+        </div>
+
+        <div className="form-group">
+          <label>Bewijsstuk (betaalbewijs / verzendbon)</label>
+          {attachmentPath ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <a href={attachmentUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm">
+                📎 Bekijk bestand
+              </a>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAttachmentPath(null)}>
+                × Verwijder koppeling
+              </button>
+            </div>
+          ) : (
+            <label
+              className="btn btn-secondary btn-sm"
+              style={{ cursor: attachmentUploading ? 'default' : 'pointer', opacity: attachmentUploading ? 0.7 : 1, alignSelf: 'flex-start', display: 'inline-flex', width: 'fit-content' }}
+            >
+              {attachmentUploading ? 'Bezig…' : '⬆ Bestand uploaden'}
+              <input
+                type="file"
+                accept="application/pdf,image/*"
+                style={{ display: 'none' }}
+                disabled={attachmentUploading}
+                onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; handleUploadAttachment(f) }}
+              />
+            </label>
+          )}
         </div>
       </div>
     </Modal>
