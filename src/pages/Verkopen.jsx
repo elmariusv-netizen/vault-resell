@@ -32,21 +32,6 @@ function parseVintedDate(str) {
   return new Date().toISOString().split('T')[0]
 }
 
-function rowToOrder(row) {
-  return {
-    id:            row.id,
-    transactionId: row.transaction_id || row.id,
-    title:         row.title || 'Onbekend item',
-    price:         row.price || 0,
-    date:          row.synced_at?.split('T')[0] || new Date().toISOString().split('T')[0],
-    buyer:         row.buyer || '',
-    country:       row.country || '',
-    url:           row.item_url || '',
-    labelUrl:      row.label_url || '',
-    syncedAt:      row.synced_at,
-  }
-}
-
 // fetchAllVintedOrders is verhuisd naar src/hooks/useVintedOrdersSync.js
 // (samen met de vtOrders-fetch en auto-registratie, nu app-breed via App.jsx
 // i.p.v. gescopet aan deze pagina).
@@ -99,30 +84,6 @@ function suggestSku(title, description) {
   return ''
 }
 
-
-// ── Inline bewerkbaar veld ─────────────────────────────────────────────────
-function InlineInput({ value, onSave, placeholder, prefix = '', width = 90, type = 'text' }) {
-  const [val, setVal] = useState(value ?? '')
-  useEffect(() => setVal(value ?? ''), [value])
-  const save = () => { if (String(val) !== String(value ?? '')) onSave(val) }
-  return (
-    <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
-      {prefix && (
-        <span style={{ position: 'absolute', left: 7, fontSize: 11, color: 'var(--text-3)', pointerEvents: 'none', userSelect: 'none' }}>
-          {prefix}
-        </span>
-      )}
-      <input
-        type={type} value={val}
-        onChange={e => setVal(e.target.value)}
-        onBlur={save}
-        onKeyDown={e => e.key === 'Enter' && e.target.blur()}
-        placeholder={placeholder}
-        style={{ width, fontSize: 12, padding: `4px 8px 4px ${prefix ? 18 : 8}px`, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', outline: 'none', fontFamily: 'inherit' }}
-      />
-    </div>
-  )
-}
 
 // ── Foto popup met meerdere foto's + navigatie ─────────────────────────────
 function PhotoPopup({ urls, onClose }) {
@@ -1049,9 +1010,6 @@ function VintedOrderRow({ order, onSave, onSaveFields, onBulkConfirm, onDismiss,
   const profit   = order.cost_price != null ? price - cogs : null
   const roi      = (profit != null && cogs > 0) ? (profit / cogs) * 100 : null
   const buyer    = order.buyer_name || order.buyer || ''
-  const itemUrl  = order.conversation_id
-    ? `https://www.vinted.be/inbox/${order.conversation_id}`
-    : order.item_url || null
   const suggested = !order.sku_ref ? suggestSku(order.title, order.description) : ''
   const hasSkuLink = !!(order.sku_ref || order.cost_price != null || order.batch_id)
   // sku_ref staat er (bv. automatisch gedetecteerd door de extensie bij

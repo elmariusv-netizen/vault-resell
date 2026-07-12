@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react'
-import { genId, formatSku, formatSkuRange } from '../utils/skuUtils'
+import { formatSku, formatSkuRange } from '../utils/skuUtils'
 
 async function compressPhoto(file) {
   return new Promise((resolve) => {

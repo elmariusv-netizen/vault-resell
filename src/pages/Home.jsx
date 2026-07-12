@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react'
 import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar,
-  XAxis, YAxis, Tooltip, CartesianGrid, LineChart, Line,
+  XAxis, YAxis, Tooltip, CartesianGrid,
 } from 'recharts'
 import SaleModal from '../components/SaleModal'
 import DateRangeFilter, { getDateBounds, filterByRange } from '../components/DateRangeFilter'

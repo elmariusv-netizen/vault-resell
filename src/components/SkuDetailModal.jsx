@@ -1,6 +1,17 @@
 import Modal from './Modal'
 import { formatCurrency, formatDate, formatSkuRange, calcSaleProfit, getBatchUnitCost } from '../utils/skuUtils'
 
+const Stat = ({ label, value, color }) => (
+  <div style={{ background: 'var(--bg-2)', borderRadius: 10, padding: '14px 16px' }}>
+    <div style={{ fontSize: 11, color: 'var(--text-3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 6 }}>
+      {label}
+    </div>
+    <div style={{ fontSize: 20, fontWeight: 800, color: color || 'var(--text)' }}>
+      {value}
+    </div>
+  </div>
+)
+
 export default function SkuDetailModal({ batch, sales, suppliers, onClose }) {
   if (!batch) return null
 
@@ -18,17 +29,6 @@ export default function SkuDetailModal({ batch, sales, suppliers, onClose }) {
   const totalProfit = profits.reduce((n, p) => n + (p?.profit || 0), 0)
 
   const sku = formatSkuRange(batch.supplierPrefix, batch.startNum, batch.endNum)
-
-  const Stat = ({ label, value, color }) => (
-    <div style={{ background: 'var(--bg-2)', borderRadius: 10, padding: '14px 16px' }}>
-      <div style={{ fontSize: 11, color: 'var(--text-3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 6 }}>
-        {label}
-      </div>
-      <div style={{ fontSize: 20, fontWeight: 800, color: color || 'var(--text)' }}>
-        {value}
-      </div>
-    </div>
-  )
 
   return (
     <Modal title={`SKU Detail — ${sku}`} onClose={onClose}>

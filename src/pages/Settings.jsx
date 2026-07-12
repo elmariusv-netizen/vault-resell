@@ -15,15 +15,6 @@ function Kbd({ children }) {
   )
 }
 
-function Mono({ children }) {
-  return (
-    <code style={{
-      fontFamily: 'monospace', fontSize: 12, padding: '1px 6px', borderRadius: 4,
-      background: 'rgba(79,70,229,0.1)', color: '#818cf8',
-    }}>{children}</code>
-  )
-}
-
 // ── Vinted-sessiecookie — de extensie leest 'm zelf uit op vinted.be en
 // uploadt 'm automatisch (zie uploadVintedCookie() in content.js/
 // background.js + api/save-vinted-cookie.js), bevestigd werkend. Dit is dus
