@@ -4,7 +4,7 @@ import {
   formatDateLong, formatDateTimeLong, formatSkuRange,
   genId, isLabelReady, getStatusBadge, getUsedSkus, getFreeSkusForBatch,
   getBatchUnitCost, assignSlotSkus, skuOptionsForSlot, MANUAL_STATUSES, getManualStatus, getEffectiveStatusBadge,
-  classifyOrderStage,
+  classifyOrderStage, findBatchForSku,
 } from '../utils/skuUtils'
 import SaleModal from '../components/SaleModal'
 import SkuPickerModal from '../components/SkuPickerModal'
@@ -1034,7 +1034,7 @@ function SkeletonOrderCard() {
 }
 
 // ── Order rij (Vinteer-stijl) ──────────────────────────────────────────────
-function VintedOrderRow({ order, onSave, onSaveFields, onBulkConfirm, onDismiss, onPhotoClick, onRegister, onDetail, onUnlinkSku, batches, allOrders, checked, onCheck }) {
+function VintedOrderRow({ order, onSave, onSaveFields, onBulkConfirm, onDismiss, onPhotoClick, onRegister, onDetail, onUnlinkSku, batches, suppliers, allOrders, checked, onCheck }) {
   const [skuPickerOpen,  setSkuPickerOpen]  = useState(false)
   const [hoverPos,       setHoverPos]       = useState(null)
   const [cogsEditing,    setCogsEditing]    = useState(false)
@@ -1060,6 +1060,18 @@ function VintedOrderRow({ order, onSave, onSaveFields, onBulkConfirm, onDismiss,
   // verdwijnen, zodat de gebruiker het via dezelfde "SKU koppelen"-knop kan
   // corrigeren.
   const skuUnresolved = !!(order.sku_ref && !order.sku_ref.includes(',') && !order.batch_id)
+  // Bundel met meerdere SKU's (bv. cross-leverancier via BulkSkuModal) —
+  // sku_ref is dan een kommagescheiden lijst. Toon per SKU een eigen badge
+  // (kleur van de bijhorende leverancier), i.p.v. 1 badge met alle SKU's als
+  // platte tekst, zodat meteen zichtbaar is uit hoeveel leveranciers/batches
+  // de bundel bestaat (zelfde patroon als AndereVerkopen.jsx se skuBadges).
+  const multiSkuBadges = order.sku_ref && order.sku_ref.includes(',')
+    ? order.sku_ref.split(',').map(sk => sk.trim()).filter(Boolean).map(sk => {
+        const skBatch = findBatchForSku(batches, sk)
+        const skSup = skBatch ? suppliers?.find(s => s.prefix === skBatch.supplierPrefix) : null
+        return { sku: sk, color: skSup?.color || '#818cf8' }
+      })
+    : null
 
   const photoUrls = (() => { try { return JSON.parse(order.photo_urls || '[]') } catch { return [] } })()
   const allPhotos = photoUrls.length ? photoUrls : (order.photo_url ? [order.photo_url] : [])
@@ -1242,7 +1254,24 @@ function VintedOrderRow({ order, onSave, onSaveFields, onBulkConfirm, onDismiss,
                   💶 Uitbetaald op {formatDateLong(order.payout_date)}
                 </span>
               )}
-              {skuUnresolved
+              {multiSkuBadges
+                ? (
+                    <span
+                      onClick={() => setSkuPickerOpen(true)}
+                      style={{ display: 'inline-flex', gap: 4, cursor: 'pointer' }}
+                      title="SKU-koppeling bewerken"
+                    >
+                      {multiSkuBadges.map(({ sku: sk, color }) => (
+                        <span
+                          key={sk}
+                          style={{ fontSize: 11, padding: '2px 8px', borderRadius: 5, fontWeight: 600, border: `1px solid ${color}33`, background: color + '14', color }}
+                        >
+                          🏷 {sk}
+                        </span>
+                      ))}
+                    </span>
+                  )
+                : skuUnresolved
                 ? miniBtn(
                     () => setSkuPickerOpen(true),
                     `⚠ ${order.sku_ref} niet gevonden`,
@@ -1517,7 +1546,7 @@ export default function Verkopen({
   data, updateData, vintedCookie,
   vtOrders, setVtOrders, vtLoading, vtError,
 }) {
-  const { batches, sales } = data
+  const { batches, sales, suppliers } = data
 
   const [stageFilter, setStageFilter] = useState('all')
 
@@ -1875,6 +1904,7 @@ export default function Verkopen({
                     onRegister={() => openSaleModal(order)}
                     onUnlinkSku={unlinkSku}
                     batches={batches}
+                    suppliers={suppliers}
                     allOrders={vtOrders}
                     checked={selectedIds.has(order.id)}
                     onCheck={on => toggleId(order.id, on)}
