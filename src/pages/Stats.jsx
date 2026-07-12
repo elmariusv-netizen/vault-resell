@@ -226,13 +226,19 @@ export default function Stats({ data, theme }) {
     }))
   }, [filteredSales, batches])
 
-  // Omzet/winst per merk (batch.brand) — merkloze batches vallen onder
-  // "Onbekend" i.p.v. stilzwijgend weg te vallen.
+  // Omzet/winst per merk — herleid uit de titel van de gekoppelde
+  // Vinted-order (orderTitles hierboven, zelfde aanpak als de categorie/
+  // kleur-detectie via detectTitleMeta()) i.p.v. batch.brand: dat is een
+  // vrij, handmatig tekstveld dat lang niet elke batch heeft, waardoor dit
+  // tabblad voorheen grotendeels onder "Onbekend" viel. Valt terug op
+  // batch.brand als de titel geen herkenbaar merk oplevert (bv. handmatige
+  // verkoop zonder gekoppelde Vinted-order), en pas dan op "Onbekend".
   const perBrand = useMemo(() => {
     const map = {}
     filteredSales.forEach((s) => {
       const b = batches.find((x) => x.id === s.batchId)
-      const brand = b?.brand?.trim() || 'Onbekend'
+      const title = (s.vintedOrderId && orderTitles[s.vintedOrderId]) || ''
+      const brand = detectTitleMeta(title).brand || b?.brand?.trim() || 'Onbekend'
       if (!map[brand]) map[brand] = { revenue: 0, profit: 0, sold: 0 }
       map[brand].revenue += (s.salePrice || 0) * (s.quantity || 1)
       map[brand].profit += b ? calcSaleProfit(s, b).profit : 0
@@ -241,37 +247,35 @@ export default function Stats({ data, theme }) {
     return Object.entries(map)
       .map(([brand, v]) => ({ brand, ...v, margin: v.revenue > 0 ? (v.profit / v.revenue) * 100 : 0 }))
       .sort((a, b) => b.revenue - a.revenue)
-  }, [filteredSales, batches])
+  }, [filteredSales, batches, orderTitles])
 
-  // Beste categorie/kleur/maat — herleid uit de titel van de gekoppelde
-  // Vinted-order (orderTitles hierboven) via detectTitleMeta() (skuUtils.js).
+  // Beste categorie — herleid uit de titel van de gekoppelde Vinted-order
+  // (orderTitles hierboven) via detectTitleMeta() (skuUtils.js), gerankt op
+  // GEMIDDELDE WINST PER STUK (niet totale categorie-winst of aantal
+  // verkocht) — zo kan een categorie met 2 dure, hoge-marge items winnen
+  // van een categorie met 20 goedkope items en een lage marge per stuk.
   // Categorie geeft voorrang aan de titel-keyword-match (specifieker, bv.
   // "T-shirts"/"Truien") en valt pas terug op de eigen batch.category (vaak
   // een grove, generieke waarde als "Kleding") als de titel geen keyword
   // opleverde. Sales zonder titel (handmatige verkoop, geen gekoppelde
-  // Vinted-order) EN zonder batch.category vallen onder "Onbekend", dezelfde
-  // aanpak als perBrand hierboven.
+  // Vinted-order) EN zonder batch.category vallen onder "Onbekend".
   const titleMetaStats = useMemo(() => {
-    const byCategory = {}, byColor = {}, bySize = {}
-    const bump = (map, key, sale) => {
-      const k = key || 'Onbekend'
-      if (!map[k]) map[k] = { revenue: 0, sold: 0 }
-      map[k].revenue += (sale.salePrice || 0) * (sale.quantity || 1)
-      map[k].sold += sale.quantity || 1
-    }
+    const byCategory = {}
     filteredSales.forEach((s) => {
       const b = batches.find((x) => x.id === s.batchId)
       const title = (s.vintedOrderId && orderTitles[s.vintedOrderId]) || ''
       const meta = detectTitleMeta(title)
-      bump(byCategory, meta.category || b?.category?.trim(), s)
-      bump(byColor, meta.color, s)
-      bump(bySize, meta.size, s)
+      const key = meta.category || b?.category?.trim() || 'Onbekend'
+      if (!byCategory[key]) byCategory[key] = { revenue: 0, profit: 0, sold: 0 }
+      byCategory[key].revenue += (s.salePrice || 0) * (s.quantity || 1)
+      byCategory[key].profit += b ? calcSaleProfit(s, b).profit : 0
+      byCategory[key].sold += s.quantity || 1
     })
-    const topOf = (map) => Object.entries(map)
-      .map(([name, v]) => ({ name, ...v }))
+    const topCategory = Object.entries(byCategory)
+      .map(([name, v]) => ({ name, ...v, avgProfitPerItem: v.sold > 0 ? v.profit / v.sold : 0 }))
       .filter((e) => e.name !== 'Onbekend')
-      .sort((a, b) => b.sold - a.sold)[0] || null
-    return { topCategory: topOf(byCategory), topColor: topOf(byColor), topSize: topOf(bySize) }
+      .sort((a, b) => b.avgProfitPerItem - a.avgProfitPerItem)[0] || null
+    return { topCategory }
   }, [filteredSales, batches, orderTitles])
 
   const TABS = [
@@ -328,7 +332,6 @@ export default function Stats({ data, theme }) {
           { label: 'Netto winst', value: formatCurrency(overview.totalProfit), sub: overview.totalCosts > 0 ? `Marge ${overview.margin.toFixed(1)}% · -${formatCurrency(overview.totalCosts)} kosten` : `Marge ${overview.margin.toFixed(1)}%`, accent: '#22c55e', green: overview.totalProfit >= 0, trendPct: trend?.profitChange },
           { label: 'Geïnvesteerd', value: formatCurrency(overview.totalInvested), sub: `${overview.totalStock} in voorraad`, accent: '#888' },
           { label: 'Gem. winst/stuk', value: formatCurrency(overview.avgProfit), sub: `${overview.totalSold} stuks verkocht`, accent: '#3ecfff', green: overview.avgProfit >= 0 },
-          { label: 'Gem. verkooptijd', value: sellTimeStats.avgDays != null ? `${sellTimeStats.avgDays.toFixed(0)} dagen` : '—', sub: 'inkoop tot verkoop', accent: '#f59e0b' },
         ].map((c) => (
           <div className="stat-card" key={c.label}>
             <div className="s-accent" style={{ background: c.accent }} />
@@ -346,21 +349,18 @@ export default function Stats({ data, theme }) {
         ))}
       </div>
 
-      {/* Beste categorie/kleur/maat — herleid uit producttitels, zie titleMetaStats */}
-      {(titleMetaStats.topCategory || titleMetaStats.topColor || titleMetaStats.topSize) && (
+      {/* Beste categorie — herleid uit producttitels, gerankt op gemiddelde
+          winst per stuk, zie titleMetaStats */}
+      {titleMetaStats.topCategory && (
         <div className="stats-grid" style={{ marginBottom: 20 }}>
-          {[
-            { label: 'Beste categorie', top: titleMetaStats.topCategory, accent: '#a78bfa' },
-            { label: 'Beste kleur', top: titleMetaStats.topColor, accent: '#f472b6' },
-            { label: 'Beste maat', top: titleMetaStats.topSize, accent: '#60a5fa' },
-          ].map((c) => (
-            <div className="stat-card" key={c.label}>
-              <div className="s-accent" style={{ background: c.accent }} />
-              <div className="s-label">{c.label}</div>
-              <div className="s-value" style={{ fontSize: '1.3rem' }}>{c.top ? c.top.name : '—'}</div>
-              <div className="s-sub">{c.top ? `${c.top.sold} verkocht · ${formatCurrency(c.top.revenue)}` : 'Nog geen data'}</div>
+          <div className="stat-card">
+            <div className="s-accent" style={{ background: '#a78bfa' }} />
+            <div className="s-label">Beste categorie</div>
+            <div className="s-value" style={{ fontSize: '1.3rem' }}>{titleMetaStats.topCategory.name}</div>
+            <div className="s-sub">
+              {formatCurrency(titleMetaStats.topCategory.avgProfitPerItem)} gem. winst/stuk · {titleMetaStats.topCategory.sold} verkocht
             </div>
-          ))}
+          </div>
         </div>
       )}
 

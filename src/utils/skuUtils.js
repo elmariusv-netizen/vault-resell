@@ -439,6 +439,30 @@ const TITLE_SIZES = ['xxxl','xxl','xl','xs','xxs','3xl','2xl','one size',
   '50','48','46','44','42','40','38','36','34','32','30',
   '27','28','29','31','33','s','m','l']
 
+// Voor Stats.jsx se "Merk"-tabblad — batch.brand is een vrij, handmatig
+// tekstveld dat lang niet elke batch heeft (zie NewSKU.jsx), waardoor dat
+// tabblad voorheen grotendeels "Onbekend" toonde. Titel-keyword-matching
+// (zelfde aanpak als categorie/kleur hierboven) werkt wél voor elk artikel
+// met een gekoppelde Vinted-ordertitel, ongeacht of het merk-veld ooit
+// ingevuld werd. Bewust een EIGEN lijst i.p.v. Verkopen.jsx se BRANDS_MAP
+// (die dient een ander doel — SKU-prefix-suggestie — en mist bv. "Stone
+// Island", een van de meest voorkomende merken in de echte verkoopdata).
+const TITLE_BRANDS_MAP = [
+  ['ralph lauren','Ralph Lauren'], ['stone island','Stone Island'],
+  ['nike','Nike'], ['adidas','Adidas'], ['zara','Zara'], ['h&m','H&M'],
+  ['puma','Puma'], ['gucci','Gucci'], ['tommy hilfiger','Tommy Hilfiger'],
+  ['calvin klein','Calvin Klein'], ["levi's","Levi's"], ['levis',"Levi's"],
+  ['guess','Guess'], ['under armour','Under Armour'], ['new balance','New Balance'],
+  ['lacoste','Lacoste'], ['diesel','Diesel'], ['versace','Versace'],
+  ['armani','Armani'], ['gap','Gap'], ['mango','Mango'], ['primark','Primark'],
+  ['vero moda','Vero Moda'], ['jack & jones','Jack & Jones'],
+  ['scotch & soda','Scotch & Soda'], ['weekday','Weekday'], ['bershka','Bershka'],
+  ['pull & bear','Pull & Bear'], ['massimo dutti','Massimo Dutti'],
+  ['moncler','Moncler'], ['cp company','C.P. Company'], ['barbour','Barbour'],
+  ['carhartt','Carhartt'], ['champion','Champion'], ['north face','The North Face'],
+  ['patagonia','Patagonia'], ['fred perry','Fred Perry'],
+]
+
 // Geeft het label terug van de match die het EERST in de titel zelf
 // voorkomt (kleinste string-index), i.p.v. de eerste match volgens de vaste
 // volgorde van de keyword-lijst — een titel als "roze wit gestreept" moet
@@ -453,22 +477,23 @@ function firstMatchByPosition(t, map) {
   return best
 }
 
-// Herleidt categorie/kleur/maat uit een vrije producttitel via keyword-
+// Herleidt categorie/kleur/merk/maat uit een vrije producttitel via keyword-
 // matching (case-insensitive). Categorie valt pas op de generieke
 // GENERIC_SHIRT_MAP terug als niets uit CATEGORIES_MAP matcht. Maat
 // gebruikt een woordgrens-regex (i.p.v. .includes()) zodat bv. de maat "s"
 // niet per ongeluk binnenin een ander woord matcht, en kiest — net als
-// categorie/kleur — de maat die het eerst in de titel voorkomt.
+// categorie/kleur/merk — de maat die het eerst in de titel voorkomt.
 export function detectTitleMeta(title) {
   const t = (title || '').toLowerCase()
   const category = firstMatchByPosition(t, CATEGORIES_MAP) || firstMatchByPosition(t, GENERIC_SHIRT_MAP) || ''
   const color = firstMatchByPosition(t, TITLE_COLORS_MAP) || ''
+  const brand = firstMatchByPosition(t, TITLE_BRANDS_MAP) || ''
   let size = '', sizeIdx = Infinity
   for (const s of TITLE_SIZES) {
     const m = t.match(new RegExp(`(?:^|\\s|maat\\s*)(${s})(?:\\s|$|/)`, 'i'))
     if (m && m.index < sizeIdx) { sizeIdx = m.index; size = s.toUpperCase() }
   }
-  return { category, color, size }
+  return { category, color, size, brand }
 }
 
 // ── Bedrijfskosten — gedeeld tussen Kosten.jsx (totaal bovenaan) en
