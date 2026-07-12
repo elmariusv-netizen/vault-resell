@@ -4,6 +4,7 @@ import {
 } from '../utils/skuUtils'
 import EditSaleModal from '../components/EditSaleModal'
 import SaleModal from '../components/SaleModal'
+import DateRangeFilter, { getDateBounds, filterByRange } from '../components/DateRangeFilter'
 import { supabase } from '../utils/supabase'
 
 // Zelfde publieke 'invoices'-bucket als Kosten.jsx se factuur-archief —
@@ -24,7 +25,12 @@ export default function AndereVerkopen({ data, updateData, onDeleteSale, onUpdat
 
   const [search, setSearch] = useState('')
   const [filterPlatform, setFilterPlatform] = useState('all')
-  const [filterMonth, setFilterMonth] = useState('all')
+  // Zelfde periode-filter als Home.jsx (Vandaag/Deze week/Deze maand/Alle
+  // tijd/Aangepast) i.p.v. de vorige "Alle maanden"-dropdown — consistente
+  // UX tussen de 2 pagina's, en de totalen hieronder bewegen automatisch mee.
+  const [range, setRange] = useState('all')
+  const [customFrom, setCustomFrom] = useState('')
+  const [customTo, setCustomTo] = useState('')
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
   const [editSale, setEditSale] = useState(null)
   const [showSale, setShowSale] = useState(false)
@@ -64,10 +70,7 @@ export default function AndereVerkopen({ data, updateData, onDeleteSale, onUpdat
     return [...set].sort()
   }, [otherSales])
 
-  const months = useMemo(() => {
-    const set = new Set(otherSales.map((s) => s.date?.substring(0, 7)).filter(Boolean))
-    return [...set].sort().reverse()
-  }, [otherSales])
+  const bounds = useMemo(() => getDateBounds(range, customFrom, customTo), [range, customFrom, customTo])
 
   const enriched = useMemo(() => {
     return [...otherSales]
@@ -89,9 +92,9 @@ export default function AndereVerkopen({ data, updateData, onDeleteSale, onUpdat
   }, [otherSales, batches, suppliers])
 
   const filtered = useMemo(() => {
-    return enriched.filter((s) => {
+    const byRange = filterByRange(enriched, range, bounds)
+    return byRange.filter((s) => {
       if (filterPlatform !== 'all' && s.platformDisplay !== filterPlatform) return false
-      if (filterMonth !== 'all' && !s.date?.startsWith(filterMonth)) return false
       if (dayFilterActive && s.date !== dayFilterActive) return false
       if (search) {
         const q = search.toLowerCase()
@@ -106,7 +109,7 @@ export default function AndereVerkopen({ data, updateData, onDeleteSale, onUpdat
       }
       return true
     })
-  }, [enriched, filterPlatform, filterMonth, dayFilterActive, search])
+  }, [enriched, filterPlatform, range, bounds, dayFilterActive, search])
 
   const totals = useMemo(() => filtered.reduce((acc, s) => ({
     revenue: acc.revenue + (s.isFree ? 0 : (s.salePrice || 0) * (s.quantity || 1)),
@@ -135,10 +138,11 @@ export default function AndereVerkopen({ data, updateData, onDeleteSale, onUpdat
           <option value="all">Alle platforms</option>
           {platforms.map((p) => <option key={p} value={p}>{p}</option>)}
         </select>
-        <select className="filter-select" value={filterMonth} onChange={(e) => setFilterMonth(e.target.value)}>
-          <option value="all">Alle maanden</option>
-          {months.map((m) => <option key={m} value={m}>{m}</option>)}
-        </select>
+        <DateRangeFilter
+          value={range} onChange={setRange}
+          customFrom={customFrom} customTo={customTo}
+          onCustom={(k, v) => k === 'from' ? setCustomFrom(v) : setCustomTo(v)}
+        />
         {dayFilterActive && (
           <span className="filter-chip active" style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'default' }}>
             📅 {formatDateLong(dayFilterActive)}
