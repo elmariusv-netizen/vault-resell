@@ -7,6 +7,7 @@ import Stats from './pages/Stats'
 import Settings from './pages/Settings'
 import Labels from './pages/Labels'
 import Verkopen from './pages/Verkopen'
+import AndereVerkopen from './pages/AndereVerkopen'
 import Aankopen from './pages/Aankopen'
 import Kosten from './pages/Kosten'
 import Auth from './pages/Auth'
@@ -549,7 +550,8 @@ export default function App() {
           {page === 'home'      && <Home {...props} theme={theme} activeUserId={activeUserId} />}
           {page === 'inventory' && <Inventory {...props} />}
           {page === 'new'       && <NewSKU {...props} />}
-          {page === 'verkopen'  && <Verkopen data={data} onDeleteSale={handleDeleteSale} onUpdateSale={handleUpdateSale} updateData={updateData} vintedCookie={vintedCookie} dayFilter={pendingDayFilter} onConsumeDayFilter={() => setPendingDayFilter(null)} vtOrders={vtOrders} setVtOrders={setVtOrders} vtLoading={vtLoading} vtError={vtError} />}
+          {page === 'verkopen'  && <Verkopen data={data} updateData={updateData} vintedCookie={vintedCookie} vtOrders={vtOrders} setVtOrders={setVtOrders} vtLoading={vtLoading} vtError={vtError} />}
+          {page === 'andere-verkopen' && <AndereVerkopen data={data} onDeleteSale={handleDeleteSale} onUpdateSale={handleUpdateSale} dayFilter={pendingDayFilter} onConsumeDayFilter={() => setPendingDayFilter(null)} />}
           {page === 'aankopen'  && <Aankopen data={data} updateData={updateData} purchaseMethod={userSettings.purchaseMethod} />}
           {page === 'kosten'    && <Kosten activeUserId={activeUserId} />}
           {page === 'stats'     && <Stats data={data} theme={theme} />}

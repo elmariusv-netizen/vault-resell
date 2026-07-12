@@ -374,14 +374,16 @@ export default function Home({ data, updateData, onNavigate, onDeleteSale, activ
 
   const chartData = useMemo(() => buildChartData(filteredSales, range, bounds), [filteredSales, range, bounds])
 
-  // Klik op een dag-staaf in "Aantal verkopen per dag" → naar Verkopen met
-  // een filter op precies die dag. Alleen dag-buckets dragen een `date`-veld
-  // (zie buildChartData) — maand-buckets ('all'-bereik) hebben dat niet, dus
-  // die klik is dan bewust een no-op.
+  // Klik op een dag-staaf in "Aantal verkopen per dag" → naar Andere
+  // verkopen met een filter op precies die dag. Alleen dag-buckets dragen
+  // een `date`-veld (zie buildChartData) — maand-buckets ('all'-bereik)
+  // hebben dat niet, dus die klik is dan bewust een no-op. Vinted-verkopen
+  // van die dag blijven vindbaar op de "Vinted verkopen"-kaartenlijst (die
+  // geen datum-filter kent, maar wél op datum gesorteerd is).
   const handleDayBarClick = (barData) => {
     const date = barData?.payload?.date ?? barData?.date
     if (!date) return
-    onNavigate('verkopen', { day: date })
+    onNavigate('andere-verkopen', { day: date })
   }
 
   // Bundel-orders (BulkSkuModal in Verkopen.jsx) slaan elk item als een eigen
