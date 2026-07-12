@@ -220,12 +220,16 @@ export default function Inventory({ data, updateData }) {
     setConfirmDelete(null)
   }
 
-  const handleSaveSale = (sale) => {
-    const updates = { sales: [...sales, sale] }
-    if (sale.fromLive) {
-      updates.batches = batches.map((b) =>
-        b.id === sale.batchId ? { ...b, liveCount: Math.max(0, (b.liveCount || 0) - (sale.quantity || 1)) } : b
-      )
+  // newSales is een array (1 item voor een gewone verkoop, meerdere voor een
+  // bundel met meerdere batches/leveranciers — zie SaleModal.jsx).
+  const handleSaveSale = (newSales) => {
+    const updates = { sales: [...sales, ...newSales] }
+    const liveSales = newSales.filter((s) => s.fromLive)
+    if (liveSales.length) {
+      updates.batches = batches.map((b) => {
+        const dec = liveSales.filter((s) => s.batchId === b.id).reduce((sum, s) => sum + (s.quantity || 1), 0)
+        return dec ? { ...b, liveCount: Math.max(0, (b.liveCount || 0) - dec) } : b
+      })
     }
     updateData(updates)
   }

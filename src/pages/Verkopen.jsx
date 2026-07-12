@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import {
   formatDateLong, formatDateTimeLong, formatSkuRange,
-  genId, formatSku, isLabelReady, getStatusBadge, getUsedSkus, getFreeSkusForBatch,
+  genId, isLabelReady, getStatusBadge, getUsedSkus, getFreeSkusForBatch,
   getBatchUnitCost, assignSlotSkus, skuOptionsForSlot, MANUAL_STATUSES, getManualStatus, getEffectiveStatusBadge,
   classifyOrderStage,
 } from '../utils/skuUtils'
