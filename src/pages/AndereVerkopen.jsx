@@ -3,6 +3,7 @@ import {
   formatCurrency, formatDateLong, formatSkuRange, calcSaleProfit, normalizePlatform, findBatchForSku,
 } from '../utils/skuUtils'
 import EditSaleModal from '../components/EditSaleModal'
+import SaleModal from '../components/SaleModal'
 
 const SHORT = { 'Medeverkoper/Groothandel': 'B2B', 'Privé persoon': 'Privé' }
 const short = (p) => SHORT[p] || p
@@ -12,7 +13,7 @@ const short = (p) => SHORT[p] || p
 // de "Vinted Orders"-kaartenlijst daar (voor Vinted-verkopen) en stond er
 // bovendien altijd bovenop. Nu een eigen pagina, exclusief voor platforms
 // buiten Vinted, met dezelfde rijen-lijststijl.
-export default function AndereVerkopen({ data, onDeleteSale, onUpdateSale, dayFilter, onConsumeDayFilter }) {
+export default function AndereVerkopen({ data, updateData, onDeleteSale, onUpdateSale, dayFilter, onConsumeDayFilter }) {
   const { batches, sales, suppliers } = data
 
   const [search, setSearch] = useState('')
@@ -20,12 +21,28 @@ export default function AndereVerkopen({ data, onDeleteSale, onUpdateSale, dayFi
   const [filterMonth, setFilterMonth] = useState('all')
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
   const [editSale, setEditSale] = useState(null)
+  const [showSale, setShowSale] = useState(false)
   const [dayFilterActive, setDayFilterActive] = useState(null)
   useEffect(() => {
     if (!dayFilter) return
     setDayFilterActive(dayFilter)
     onConsumeDayFilter?.()
   }, [dayFilter, onConsumeDayFilter])
+
+  // newSales is een array (1 item voor een gewone verkoop, meerdere voor een
+  // bundel met meerdere batches/leveranciers — zie SaleModal.jsx). Zelfde
+  // patroon als Home.jsx/Verkopen.jsx se eigen SaleModal-afhandeling.
+  const handleSaveSale = (newSales) => {
+    const updates = { sales: [...sales, ...newSales] }
+    const liveSales = newSales.filter((s) => s.fromLive)
+    if (liveSales.length) {
+      updates.batches = batches.map((b) => {
+        const dec = liveSales.filter((s) => s.batchId === b.id).reduce((sum, s) => sum + (s.quantity || 1), 0)
+        return dec ? { ...b, liveCount: Math.max(0, (b.liveCount || 0) - dec) } : b
+      })
+    }
+    updateData(updates)
+  }
 
   const otherSales = useMemo(
     () => sales.filter((s) => normalizePlatform(s.platform) !== 'Vinted'),
@@ -98,6 +115,7 @@ export default function AndereVerkopen({ data, onDeleteSale, onUpdateSale, dayFi
           <h1>Andere verkopen</h1>
           <div className="page-subtitle">{otherSales.length} niet-Vinted verkopen geregistreerd</div>
         </div>
+        <button className="btn btn-primary" onClick={() => setShowSale(true)}>+ Verkoop registreren</button>
       </div>
 
       <div className="filters">
@@ -322,6 +340,10 @@ export default function AndereVerkopen({ data, onDeleteSale, onUpdateSale, dayFi
             ))}
           </div>
         </>
+      )}
+
+      {showSale && (
+        <SaleModal data={data} onClose={() => setShowSale(false)} onSave={handleSaveSale} />
       )}
 
       {editSale && (

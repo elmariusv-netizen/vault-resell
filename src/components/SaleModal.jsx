@@ -1,6 +1,6 @@
-import { useState, useMemo, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Modal from './Modal'
-import { genId, formatSkuRange, calcSaleProfit, formatCurrency, getRemainingQty, getBatchUnitCost } from '../utils/skuUtils'
+import { genId, formatSkuRange, formatCurrency, getRemainingQty, getBatchUnitCost } from '../utils/skuUtils'
 
 const PLATFORMS = ['Vinted', 'WhatsApp', 'Instagram', 'Lokaal', 'Ander']
 
@@ -46,13 +46,21 @@ function LinkRow({ value, onChange, onRemove }) {
   )
 }
 
+// Elk item-rij = 1 batch/SKU + het aantal stuks dat daaruit verkocht wordt.
+// Meerdere rijen (verschillende batches/leveranciers) vormen samen 1
+// verkoop-registratie — zelfde patroon als een Vinted-bundelorder
+// (handleBulkSkuConfirm in Verkopen.jsx): bij het opslaan wordt dit 1
+// sales-entry PER rij, allemaal met dezelfde gedeelde vintedOrderId zodat ze
+// als 1 "bestelling" tellen (zie orderKey() in skuUtils.js) en elk hun eigen
+// SKU/leverancier-badge tonen — geen aparte, nieuwe datamodellering nodig.
+let rowSeq = 0
+const newRow = (batchId) => ({ key: `row-${++rowSeq}`, batchId, quantity: 1 })
+
 export default function SaleModal({ data, onClose, onSave, defaultBatchId, prefill = null }) {
   const { batches, sales } = data
   const photoRef = useRef()
 
-  const [batchId, setBatchId] = useState(defaultBatchId || (batches[0]?.id ?? ''))
-  const [type, setType] = useState('individual')
-  const [qty, setQty] = useState(1)
+  const [items, setItems] = useState(() => [newRow(defaultBatchId || (batches[0]?.id ?? ''))])
   const [price, setPrice] = useState(prefill?.price != null ? String(prefill.price) : '')
   const [platform, setPlatform] = useState('Vinted')
   const [customPlatform, setCustomPlatform] = useState('')
@@ -69,34 +77,53 @@ export default function SaleModal({ data, onClose, onSave, defaultBatchId, prefi
   const [isFree, setIsFree] = useState(false)
   const [saleTime, setSaleTime] = useState('')
 
-  const batch = batches.find((b) => b.id === batchId)
-  const remaining = batch ? getRemainingQty(batch, sales) : 0
-  const liveCount = batch?.liveCount || 0
+  const isBundle = items.length > 1
 
-  const unitCostPrice = batch ? (parseFloat(batch.costPrice) || 0) : 0
-  // importTax is een TOTAAL bedrag voor de hele batch, geen bedrag per stuk
-  // — zie getBatchUnitCost() in skuUtils.js.
-  const unitImportTax = batch ? (parseFloat(batch.importTax) || 0) / (batch.quantity || 1) : 0
-  const unitCost = batch ? getBatchUnitCost(batch) : 0
+  // Per rij: eigen batch + resterend voorraad, waarbij de hoeveelheid die
+  // ANDERE rijen in dit concept-formulier al opeisen van diezelfde batch
+  // ook meetelt — anders zou je bv. 2 losse rijen uit dezelfde batch van elk
+  // "volledige voorraad resterend" kunnen laten zien terwijl ze samen te veel
+  // opeisen.
+  const rows = items.map((it) => {
+    const batch = batches.find((b) => b.id === it.batchId)
+    const claimedByOthers = items
+      .filter((o) => o !== it && o.batchId === it.batchId)
+      .reduce((sum, o) => sum + (parseInt(o.quantity) || 0), 0)
+    const remaining = batch ? Math.max(0, getRemainingQty(batch, sales) - claimedByOthers) : 0
+    const unitCost = batch ? getBatchUnitCost(batch) : 0
+    return { ...it, batch, remaining, unitCost, quantity: parseInt(it.quantity) || 0 }
+  })
 
-  useEffect(() => { setFromLive(false) }, [batchId])
+  const firstBatch = rows[0]?.batch || null
+  const liveCount = !isBundle ? (firstBatch?.liveCount || 0) : 0
+
+  useEffect(() => { setFromLive(false) }, [items[0]?.batchId])
   useEffect(() => { if (isFree) setPrice('0') }, [isFree])
 
-  const effectiveQty = type === 'bulk' ? parseInt(qty) || 1 : 1
+  const setRow = (key, patch) => setItems((prev) => prev.map((it) => it.key === key ? { ...it, ...patch } : it))
+  const addRow = () => {
+    const used = new Set(items.map((it) => it.batchId))
+    const nextBatch = batches.find((b) => !used.has(b.id)) || batches[0]
+    setItems((prev) => [...prev, newRow(nextBatch?.id ?? '')])
+  }
+  const removeRow = (key) => setItems((prev) => prev.length > 1 ? prev.filter((it) => it.key !== key) : prev)
+
+  const totalQty = rows.reduce((sum, r) => sum + r.quantity, 0)
   const effectiveShipping = parseFloat(shippingCost) || 0
-  const salePrice = parseFloat(price) || 0
-
-  const profitPerUnit = salePrice - unitCost - (effectiveQty > 0 ? effectiveShipping / effectiveQty : 0)
-  const totalRevenue = salePrice * effectiveQty
-  const totalCost = unitCost * effectiveQty
+  const priceInput = parseFloat(price) || 0
+  // Bij 1 rij is het ingevoerde bedrag de prijs PER STUK (ongewijzigd gedrag
+  // t.o.v. voorheen). Bij meerdere rijen/batches is dat niet zinvol (items uit
+  // verschillende batches hebben geen "gedeelde" stukprijs) — daar is het
+  // ingevoerde bedrag de TOTALE verkoopprijs, gelijk verdeeld per stuk, exact
+  // zoals een Vinted-bundelorder haar totale orderprijs verdeelt over de
+  // gekoppelde items (zie perItemPrice in handleBulkSkuConfirm).
+  const totalRevenue = isBundle ? priceInput : priceInput * totalQty
+  const perUnitPrice = totalQty > 0 ? totalRevenue / totalQty : 0
+  const totalCost = rows.reduce((sum, r) => sum + r.unitCost * r.quantity, 0)
   const totalProfit = totalRevenue - totalCost - effectiveShipping
+  const profitPerUnit = totalQty > 0 ? (totalProfit / totalQty) : 0
 
-  const profit = batch && !isFree ? calcSaleProfit(
-    { quantity: effectiveQty, salePrice, shippingCost: effectiveShipping, fees: 0 },
-    batch
-  ) : null
-
-  const liveExceeded = fromLive && effectiveQty > liveCount
+  const liveExceeded = !isBundle && fromLive && totalQty > liveCount
 
   const handlePhoto = async (e) => {
     const file = e.target.files[0]
@@ -118,28 +145,36 @@ export default function SaleModal({ data, onClose, onSave, defaultBatchId, prefi
   const effectivePlatform = platform === 'Ander' ? (customPlatform.trim() || 'Ander') : platform
 
   const handleSave = () => {
-    if (!batch || (!price && !isFree)) return
-    const sale = {
+    if (!canSave) return
+    // Gedeelde groeperingssleutel voor een bundel — zelfde veld/mechanisme
+    // als een Vinted-bundelorder (orderKey() in skuUtils.js telt sales met
+    // dezelfde vintedOrderId als 1 "bestelling"); bij 1 rij blijft dit
+    // ongezet, exact het oude gedrag.
+    const groupId = isBundle ? genId() : null
+    const shippingPerRow = effectiveShipping / rows.length
+    const notes = [saleNotes.trim(), isBundle ? '(bundel-item)' : ''].filter(Boolean).join(' ')
+    const salesToSave = rows.map((r) => ({
       id: genId(),
-      batchId,
-      type,
-      quantity: effectiveQty,
-      salePrice: isFree ? 0 : parseFloat(price),
+      ...(groupId ? { vintedOrderId: groupId } : {}),
+      batchId: r.batchId,
+      type: r.quantity > 1 ? 'bulk' : 'individual',
+      quantity: r.quantity,
+      salePrice: isFree ? 0 : perUnitPrice,
       platform: effectivePlatform,
       buyer,
       fees: 0,
-      shippingCost: effectiveShipping,
-      notes: saleNotes.trim(),
+      shippingCost: shippingPerRow,
+      notes,
       date,
-      fromLive,
+      fromLive: !isBundle && fromLive,
       photo: photo || null,
       links: links.filter((l) => l.trim()),
       shipped,
       shippedDate: shipped ? shippedDate : null,
       isFree,
       saleTime: saleTime || null,
-    }
-    onSave(sale)
+    }))
+    onSave(salesToSave)
     onClose()
   }
 
@@ -149,9 +184,10 @@ export default function SaleModal({ data, onClose, onSave, defaultBatchId, prefi
     return `${range}${name ? ` — ${name}` : ''}`
   }
 
+  const rowsValid = rows.length > 0 && rows.every((r) => r.batch && r.quantity >= 1 && r.quantity <= r.remaining)
   const canSave = isFree
-    ? (batch && effectiveQty <= remaining && !liveExceeded)
-    : (price && batch && effectiveQty <= remaining && !liveExceeded)
+    ? (rowsValid && !liveExceeded)
+    : (priceInput > 0 && rowsValid && !liveExceeded)
 
   return (
     <Modal
@@ -182,38 +218,67 @@ export default function SaleModal({ data, onClose, onSave, defaultBatchId, prefi
         </div>
 
         <div className="form-group">
-          <label>SKU / Batch</label>
-          <select value={batchId} onChange={(e) => setBatchId(e.target.value)}>
-            {batches.map((b) => (
-              <option key={b.id} value={b.id}>{batchLabel(b)}</option>
-            ))}
-          </select>
-          {batch && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 16px', marginTop: 4 }}>
-              <span style={{ fontSize: 12, color: 'var(--text-2)' }}>
-                Resterend: <strong>{remaining}</strong> stuks
-                {liveCount > 0 && <span style={{ color: 'var(--blue)' }}> · {liveCount} live</span>}
-              </span>
-              {unitCost > 0 ? (
-                <span style={{ fontSize: 12, color: 'var(--text-2)' }}>
-                  Inkoop/stuk:{' '}
-                  <strong style={{ color: 'var(--text)' }}>{formatCurrency(unitCostPrice)}</strong>
-                  {unitImportTax > 0 && (
-                    <> + <strong style={{ color: 'var(--text)' }}>{formatCurrency(unitImportTax)}</strong> tax</>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <label style={{ margin: 0 }}>SKU / Batch{isBundle ? ` (${items.length} items)` : ''}</label>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={addRow} style={{ fontSize: 12 }}>
+              + Batch toevoegen
+            </button>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 6 }}>
+            {rows.map((r) => (
+              <div key={r.key} style={{ padding: isBundle ? 10 : 0, background: isBundle ? 'var(--bg-2)' : 'transparent', borderRadius: isBundle ? 10 : 0, border: isBundle ? '1px solid var(--border)' : 'none' }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                  <select
+                    value={r.batchId}
+                    onChange={(e) => setRow(r.key, { batchId: e.target.value })}
+                    style={{ flex: 1 }}
+                  >
+                    {batches.map((b) => (
+                      <option key={b.id} value={b.id}>{batchLabel(b)}</option>
+                    ))}
+                  </select>
+                  <input
+                    type="number"
+                    min="1"
+                    max={r.remaining}
+                    value={r.quantity}
+                    onChange={(e) => setRow(r.key, { quantity: e.target.value })}
+                    title="Aantal stuks uit deze batch"
+                    style={{ width: 64, flexShrink: 0 }}
+                  />
+                  {items.length > 1 && (
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm btn-icon"
+                      onClick={() => removeRow(r.key)}
+                      title="Verwijder deze batch"
+                      style={{ flexShrink: 0, fontSize: 16 }}
+                    >
+                      ×
+                    </button>
                   )}
-                  {' = '}
-                  <strong style={{ color: 'var(--text)' }}>{formatCurrency(unitCost)}</strong>
-                </span>
-              ) : (
-                <span style={{ fontSize: 12, color: 'var(--yellow)' }}>
-                  ⚠ Geen inkoopprijs ingesteld
-                </span>
-              )}
-            </div>
-          )}
+                </div>
+                {r.batch && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 16px', marginTop: 4 }}>
+                    <span style={{ fontSize: 12, color: r.quantity > r.remaining ? 'var(--red)' : 'var(--text-2)' }}>
+                      Resterend: <strong>{r.remaining}</strong> stuks
+                      {!isBundle && liveCount > 0 && <span style={{ color: 'var(--blue)' }}> · {liveCount} live</span>}
+                    </span>
+                    {r.unitCost > 0 ? (
+                      <span style={{ fontSize: 12, color: 'var(--text-2)' }}>
+                        Inkoop/stuk: <strong style={{ color: 'var(--text)' }}>{formatCurrency(r.unitCost)}</strong>
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: 12, color: 'var(--yellow)' }}>⚠ Geen inkoopprijs ingesteld</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
 
-        {liveCount > 0 && (
+        {!isBundle && liveCount > 0 && (
           <div className="form-group">
             <label>Herkomst</label>
             <div className="toggle-group">
@@ -230,37 +295,9 @@ export default function SaleModal({ data, onClose, onSave, defaultBatchId, prefi
           </div>
         )}
 
-        <div className="form-group">
-          <label>Type</label>
-          <div className="toggle-group">
-            <button className={`toggle-btn${type === 'individual' ? ' active' : ''}`} onClick={() => setType('individual')}>
-              Individueel
-            </button>
-            <button className={`toggle-btn${type === 'bulk' ? ' active' : ''}`} onClick={() => setType('bulk')}>
-              Bulk
-            </button>
-          </div>
-        </div>
-
-        {type === 'bulk' && (
-          <div className="form-group">
-            <label>Aantal stuks</label>
-            <input
-              type="number"
-              min="1"
-              max={remaining}
-              value={qty}
-              onChange={(e) => setQty(e.target.value)}
-            />
-            {effectiveQty > remaining && (
-              <span style={{ fontSize: 12, color: 'var(--red)' }}>Meer dan resterend!</span>
-            )}
-          </div>
-        )}
-
         <div className="form-row">
           <div className="form-group">
-            <label>Verkoopprijs per stuk (€)</label>
+            <label>{isBundle ? 'Totale verkoopprijs (€)' : 'Verkoopprijs per stuk (€)'}</label>
             <input
               type="number"
               step="0.01"
@@ -435,21 +472,16 @@ export default function SaleModal({ data, onClose, onSave, defaultBatchId, prefi
               Gratis weggegeven — geen winstberekening
             </div>
           </div>
-        ) : price && batch && (
+        ) : price && rows.some((r) => r.batch) && (
           <div className="profit-preview">
             <div className="profit-row">
-              <span>Verkoopprijs{effectiveQty > 1 ? ` (${effectiveQty}×)` : ''}</span>
+              <span>{isBundle ? 'Totale verkoopprijs' : 'Verkoopprijs'}{totalQty > 1 ? ` (${totalQty}×)` : ''}</span>
               <span>{formatCurrency(totalRevenue)}</span>
             </div>
             <div className="profit-row">
               <span>
-                Inkoopprijs/stuk{effectiveQty > 1 ? ` × ${effectiveQty}` : ''}
-                {unitCostPrice > 0 && unitImportTax > 0 && (
-                  <span style={{ fontSize: 11, color: 'var(--text-3)', marginLeft: 4 }}>
-                    ({formatCurrency(unitCostPrice)} + {formatCurrency(unitImportTax)} tax)
-                  </span>
-                )}
-                {unitCost === 0 && (
+                Inkoopprijs{isBundle ? ` (${items.length} batches, ${totalQty} stuks)` : totalQty > 1 ? ` × ${totalQty}` : ''}
+                {totalCost === 0 && (
                   <span style={{ fontSize: 11, color: 'var(--yellow)', marginLeft: 4 }}>niet ingesteld</span>
                 )}
               </span>
@@ -462,14 +494,14 @@ export default function SaleModal({ data, onClose, onSave, defaultBatchId, prefi
               </div>
             )}
             <div className="profit-row total">
-              <span>Netto winst{effectiveQty > 1 ? ` (${effectiveQty} stuks)` : ''}</span>
+              <span>Netto winst{totalQty > 1 ? ` (${totalQty} stuks)` : ''}</span>
               <span className={totalProfit >= 0 ? 'val-green' : 'val-red'}>
                 {formatCurrency(totalProfit)}
               </span>
             </div>
-            {effectiveQty > 1 && (
+            {totalQty > 1 && (
               <div className="profit-row" style={{ opacity: 0.7 }}>
-                <span>Winst per stuk</span>
+                <span>Winst per stuk (gemiddeld)</span>
                 <span className={profitPerUnit >= 0 ? 'val-green' : 'val-red'}>
                   {formatCurrency(profitPerUnit)}
                 </span>

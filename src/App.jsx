@@ -551,7 +551,7 @@ export default function App() {
           {page === 'inventory' && <Inventory {...props} />}
           {page === 'new'       && <NewSKU {...props} />}
           {page === 'verkopen'  && <Verkopen data={data} updateData={updateData} vintedCookie={vintedCookie} vtOrders={vtOrders} setVtOrders={setVtOrders} vtLoading={vtLoading} vtError={vtError} />}
-          {page === 'andere-verkopen' && <AndereVerkopen data={data} onDeleteSale={handleDeleteSale} onUpdateSale={handleUpdateSale} dayFilter={pendingDayFilter} onConsumeDayFilter={() => setPendingDayFilter(null)} />}
+          {page === 'andere-verkopen' && <AndereVerkopen data={data} updateData={updateData} onDeleteSale={handleDeleteSale} onUpdateSale={handleUpdateSale} dayFilter={pendingDayFilter} onConsumeDayFilter={() => setPendingDayFilter(null)} />}
           {page === 'aankopen'  && <Aankopen data={data} updateData={updateData} purchaseMethod={userSettings.purchaseMethod} />}
           {page === 'kosten'    && <Kosten activeUserId={activeUserId} />}
           {page === 'stats'     && <Stats data={data} theme={theme} />}
