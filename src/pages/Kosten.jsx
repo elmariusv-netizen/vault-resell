@@ -14,18 +14,23 @@ const CATEGORY_COLORS = {
 
 // Sentinel-waarde voor "Anders, namelijk..." in de categorie-dropdown — geen
 // echte categorienaam, enkel om te weten wanneer het tekstinvoerveld getoond
-// moet worden (zie showCustomInput in NewCostModal hieronder).
+// moet worden (zie showCustomInput in CostModal hieronder).
 const CUSTOM_CATEGORY_OPTION = '__custom__'
 
 // existingCategories: unieke category-waarden uit de al bestaande
 // business_costs-records van de gebruiker (zie Kosten() hieronder) — laat
 // eerder zelf getypte categorieën hergebruiken i.p.v. steeds opnieuw typen.
-function NewCostModal({ onClose, onSave, existingCategories }) {
-  const [description, setDescription] = useState('')
-  const [amount, setAmount] = useState('')
-  const [costDate, setCostDate] = useState(new Date().toISOString().split('T')[0])
-  const [category, setCategory] = useState(COST_CATEGORIES[0])
-  const [customCategory, setCustomCategory] = useState('')
+// cost (optioneel): bewerkt een bestaande kost i.p.v. een nieuwe aan te
+// maken — zelfde formulier, enkel de initiële waarden/titel/knoptekst en de
+// onSave-callback verschillen (zie Kosten() hieronder).
+function CostModal({ cost, onClose, onSave, existingCategories }) {
+  const isEdit = !!cost
+  const initialIsCustomCategory = cost?.category && !COST_CATEGORIES.includes(cost.category)
+  const [description, setDescription] = useState(cost?.description || '')
+  const [amount, setAmount] = useState(cost ? String(cost.amount) : '')
+  const [costDate, setCostDate] = useState(cost?.cost_date || new Date().toISOString().split('T')[0])
+  const [category, setCategory] = useState(initialIsCustomCategory ? CUSTOM_CATEGORY_OPTION : (cost?.category || COST_CATEGORIES[0]))
+  const [customCategory, setCustomCategory] = useState(initialIsCustomCategory ? cost.category : '')
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
@@ -64,7 +69,7 @@ function NewCostModal({ onClose, onSave, existingCategories }) {
     <div className="modal-overlay" onMouseDown={e => e.target === e.currentTarget && onClose()}>
       <div className="modal" style={{ maxWidth: 400 }}>
         <div className="modal-header">
-          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Nieuwe kost toevoegen</h2>
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>{isEdit ? 'Kost bewerken' : 'Nieuwe kost toevoegen'}</h2>
           <button className="modal-close" onClick={onClose}>×</button>
         </div>
 
@@ -130,7 +135,7 @@ function NewCostModal({ onClose, onSave, existingCategories }) {
             className="btn btn-primary"
             style={{ width: '100%', marginTop: 4, opacity: !canSave || saving ? 0.6 : 1 }}
           >
-            {saving ? 'Bezig…' : '✓ Kost toevoegen'}
+            {saving ? 'Bezig…' : isEdit ? '✓ Wijzigingen opslaan' : '✓ Kost toevoegen'}
           </button>
         </div>
       </div>
@@ -138,7 +143,7 @@ function NewCostModal({ onClose, onSave, existingCategories }) {
   )
 }
 
-function CostRow({ cost, onDelete, invoiceUrl }) {
+function CostRow({ cost, onEdit, onDelete, invoiceUrl }) {
   const color = CATEGORY_COLORS[cost.category] || CATEGORY_COLORS.Overig
   return (
     <div style={{
@@ -166,6 +171,12 @@ function CostRow({ cost, onDelete, invoiceUrl }) {
       <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)', flexShrink: 0 }}>
         {formatCurrency(cost.amount)}
       </div>
+      <button
+        onClick={() => onEdit(cost)}
+        title="Bewerk"
+        className="btn btn-ghost btn-sm btn-icon"
+        style={{ flexShrink: 0, fontSize: 13 }}
+      >✏️</button>
       <button
         onClick={() => onDelete(cost)}
         title="Verwijder"
@@ -213,6 +224,7 @@ export default function Kosten({ activeUserId }) {
   const [costs, setCosts] = useState([])
   const [loading, setLoading] = useState(true)
   const [modalOpen, setModalOpen] = useState(false)
+  const [editCost, setEditCost] = useState(null)
   const [invoices, setInvoices] = useState([])
   const [invoicesLoading, setInvoicesLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
@@ -249,6 +261,13 @@ export default function Kosten({ activeUserId }) {
     const { data: inserted, error } = await supabase.from('business_costs').insert(row).select().single()
     if (error) { alert(`Opslaan mislukt: ${error.message}`); return }
     setCosts(prev => [inserted, ...prev])
+  }
+
+  const handleUpdate = async (costId, { description, amount, cost_date, category }) => {
+    const patch = { description, amount, cost_date, category }
+    const { data: updated, error } = await supabase.from('business_costs').update(patch).eq('id', costId).select().single()
+    if (error) { alert(`Opslaan mislukt: ${error.message}`); return }
+    setCosts(prev => prev.map(c => c.id === costId ? updated : c))
   }
 
   const handleDelete = async (cost) => {
@@ -320,6 +339,7 @@ export default function Kosten({ activeUserId }) {
             <CostRow
               key={cost.id}
               cost={cost}
+              onEdit={setEditCost}
               onDelete={handleDelete}
               invoiceUrl={cost.invoice_path ? invoicePublicUrl(cost.invoice_path) : null}
             />
@@ -369,7 +389,16 @@ export default function Kosten({ activeUserId }) {
       )}
 
       {modalOpen && (
-        <NewCostModal onClose={() => setModalOpen(false)} onSave={handleSave} existingCategories={existingCategories} />
+        <CostModal onClose={() => setModalOpen(false)} onSave={handleSave} existingCategories={existingCategories} />
+      )}
+
+      {editCost && (
+        <CostModal
+          cost={editCost}
+          onClose={() => setEditCost(null)}
+          onSave={(data) => handleUpdate(editCost.id, data)}
+          existingCategories={existingCategories}
+        />
       )}
     </div>
   )
