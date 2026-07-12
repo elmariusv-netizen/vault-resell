@@ -2033,6 +2033,62 @@ export default function Verkopen({
         </span>
       </div>
 
+      {/* Totalen + "Andere verkopen"/"Vinted verkopen"-overzicht staan bewust
+          VOOR de "Vinted Orders"-lijst hieronder: die kaartenlijst kan bij
+          tientallen orders 10.000+ px hoog worden, waardoor dit overzicht
+          er anders ver onderaan de pagina — in de praktijk onvindbaar —
+          achteraan zou hangen. */}
+      {filtered.length > 0 && (
+        <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+          {[
+            { label: 'Omzet', value: formatCurrency(totals.revenue), color: 'var(--text)' },
+            { label: 'Winst', value: formatCurrency(totals.profit), color: totals.profit >= 0 ? 'var(--green)' : 'var(--red)' },
+            { label: 'Items verkocht', value: totals.count, color: 'var(--blue)' },
+          ].map((s) => (
+            <div key={s.label} className="card-sm" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{s.label}</span>
+              <span style={{ fontWeight: 700, color: s.color }}>{s.value}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {filtered.length === 0 ? (
+        <div className="empty-state">
+          <div className="empty-icon">💰</div>
+          <h3>Geen verkopen gevonden</h3>
+          <p>Pas de filters aan of registreer een verkoop via het dashboard.</p>
+        </div>
+      ) : (
+        <>
+          <div style={{ marginBottom: 28 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>🧾 Andere verkopen</h2>
+              <span style={{ fontSize: 12, color: 'var(--text-3)', background: 'var(--bg-2)', padding: '1px 8px', borderRadius: 20 }}>
+                {filteredOther.length}
+              </span>
+            </div>
+            {filteredOther.length === 0 ? (
+              <div style={{ padding: 24, background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
+                Nog geen niet-Vinted verkopen geregistreerd. Gebruik "+ Verkoop registreren" op het dashboard en kies een ander platform.
+              </div>
+            ) : renderSalesGroup(filteredOther)}
+          </div>
+
+          {filteredVinted.length > 0 && (
+            <div style={{ marginBottom: 28 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>Vinted verkopen</h2>
+                <span style={{ fontSize: 12, color: 'var(--text-3)', background: 'var(--bg-2)', padding: '1px 8px', borderRadius: 20 }}>
+                  {filteredVinted.length}
+                </span>
+              </div>
+              {renderSalesGroup(filteredVinted)}
+            </div>
+          )}
+        </>
+      )}
+
       {/* ── Vinted Orders ── */}
       {(() => {
         const allVisibleVtOrders = vtOrders.filter(o =>
@@ -2183,64 +2239,6 @@ export default function Verkopen({
           </div>
         )
       })()}
-
-      {filtered.length > 0 && (
-        <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
-          {[
-            { label: 'Omzet', value: formatCurrency(totals.revenue), color: 'var(--text)' },
-            { label: 'Winst', value: formatCurrency(totals.profit), color: totals.profit >= 0 ? 'var(--green)' : 'var(--red)' },
-            { label: 'Items verkocht', value: totals.count, color: 'var(--blue)' },
-          ].map((s) => (
-            <div key={s.label} className="card-sm" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{s.label}</span>
-              <span style={{ fontWeight: 700, color: s.color }}>{s.value}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {filtered.length === 0 ? (
-        <div className="empty-state">
-          <div className="empty-icon">💰</div>
-          <h3>Geen verkopen gevonden</h3>
-          <p>Pas de filters aan of registreer een verkoop via het dashboard.</p>
-        </div>
-      ) : (
-        <>
-          {/* Aparte, duidelijk gelabelde sectie voor niet-Vinted (handmatige)
-              verkopen — staat bewust VOOR "Vinted verkopen": bij tientallen
-              Vinted-orders stond dit blok voorheen na de volledige Vinted-
-              tabel, honderden pixels verderop onderaan de pagina, waardoor
-              het in de praktijk onvindbaar leek ("niet zichtbaar" gemeld).
-              Altijd zichtbaar, ook leeg, zodat gebruikers weten waar ze
-              terechtkunnen. */}
-          <div style={{ marginBottom: 28 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-              <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>🧾 Andere verkopen</h2>
-              <span style={{ fontSize: 12, color: 'var(--text-3)', background: 'var(--bg-2)', padding: '1px 8px', borderRadius: 20 }}>
-                {filteredOther.length}
-              </span>
-            </div>
-            {filteredOther.length === 0 ? (
-              <div style={{ padding: 24, background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 12, textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
-                Nog geen niet-Vinted verkopen geregistreerd. Gebruik "+ Verkoop registreren" op het dashboard en kies een ander platform.
-              </div>
-            ) : renderSalesGroup(filteredOther)}
-          </div>
-
-          {filteredVinted.length > 0 && (
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>Vinted verkopen</h2>
-                <span style={{ fontSize: 12, color: 'var(--text-3)', background: 'var(--bg-2)', padding: '1px 8px', borderRadius: 20 }}>
-                  {filteredVinted.length}
-                </span>
-              </div>
-              {renderSalesGroup(filteredVinted)}
-            </div>
-          )}
-        </>
-      )}
 
       {addOrderOpen && (
         <AddOrderModal onClose={() => setAddOrderOpen(false)} onSave={addVintedOrder} />
