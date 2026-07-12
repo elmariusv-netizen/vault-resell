@@ -132,9 +132,16 @@ const STATUS_CLASS = { voorraad: 'badge-green', live: 'badge-blue', verkocht: 'b
 // op Vinted"-link (matcht actieve listings via SKU-in-titel, zie
 // active_listings/api/sync-listings.js) is onbruikbaar zolang er geen SKU's
 // in Vinted-titels/beschrijvingen gezet worden. Zet terug op true zodra dat
-// wél consequent gebeurt — de handmatige "Live"-knop/teller hieronder is een
-// apart, onafhankelijk systeem en blijft gewoon actief.
+// wél consequent gebeurt.
 const SHOW_LIVE_SYNC = false
+
+// Ook de HANDMATIGE "Live"-knop/teller (LiveModal, onafhankelijk van
+// SKU-detectie) tijdelijk verborgen op verzoek van de gebruiker — bestaande
+// liveCount-waarden en de status-classificatie (voorraad/live/verkocht) in
+// SKU Overzicht blijven intact, enkel de knop om NIEUWE items live te zetten
+// en de "· N live"-teller in de Batches-weergave zijn weg. Zet terug op true
+// om opnieuw items live te kunnen zetten.
+const SHOW_LIVE_MANUAL = false
 
 export default function Inventory({ data, updateData }) {
   const { batches, sales, suppliers } = data
@@ -453,15 +460,17 @@ export default function Inventory({ data, updateData }) {
                         </div>
 
                         <div className="batch-card-actions">
-                          <button
-                            className="btn btn-sm"
-                            style={{ background: 'var(--blue-dim)', color: 'var(--blue)', border: '1px solid rgba(37,99,235,0.2)' }}
-                            onClick={() => setLiveBatch(b)}
-                            disabled={remaining === 0}
-                            title="Live zetten op Vinted"
-                          >
-                            Live
-                          </button>
+                          {SHOW_LIVE_MANUAL && (
+                            <button
+                              className="btn btn-sm"
+                              style={{ background: 'var(--blue-dim)', color: 'var(--blue)', border: '1px solid rgba(37,99,235,0.2)' }}
+                              onClick={() => setLiveBatch(b)}
+                              disabled={remaining === 0}
+                              title="Live zetten op Vinted"
+                            >
+                              Live
+                            </button>
+                          )}
                           <button className="btn btn-primary btn-sm" onClick={() => setSaleBatch(b)} disabled={remaining === 0}>
                             Verkoop
                           </button>
@@ -487,7 +496,7 @@ export default function Inventory({ data, updateData }) {
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-3)', marginBottom: 6, flexWrap: 'wrap', gap: 4 }}>
                         <span>
                           {remaining} voorraad
-                          {liveCount > 0 && <span style={{ color: 'var(--blue)' }}> · {liveCount} live</span>}
+                          {SHOW_LIVE_MANUAL && liveCount > 0 && <span style={{ color: 'var(--blue)' }}> · {liveCount} live</span>}
                           <span> · {sold} verkocht</span>
                           {SHOW_LIVE_SYNC && (
                             <>
@@ -682,7 +691,7 @@ export default function Inventory({ data, updateData }) {
         />
       )}
 
-      {liveBatch && (
+      {SHOW_LIVE_MANUAL && liveBatch && (
         <LiveModal
           batch={liveBatch}
           remaining={getRemainingQty(liveBatch, sales)}
