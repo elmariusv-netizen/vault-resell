@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../utils/supabase'
-import { formatCurrency, formatDate, genId, fetchBusinessCosts, sumCosts } from '../utils/skuUtils'
+import { formatCurrency, formatDate, fetchBusinessCosts, sumCosts } from '../utils/skuUtils'
 
 export const COST_CATEGORIES = ['Verzendmateriaal', 'Software/Abonnementen', 'Uitrusting', 'Marketing', 'Overig']
 
@@ -236,11 +236,19 @@ export default function Kosten({ activeUserId }) {
   const total = sumCosts(costs)
   const existingCategories = [...new Set(costs.map(c => c.category).filter(Boolean))]
 
+  // Geen client-side id meegeven — business_costs.id is een UUID-kolom met
+  // DEFAULT gen_random_uuid() (zie supabase-setup.sql); skuUtils.js se genId()
+  // (tijd+random in base36, bv. "mrhqesmk-1oyo4") is géén geldige UUID en
+  // werd door Postgres terecht geweigerd. .select().single() haalt de échte,
+  // server-gegenereerde rij (met zijn echte id) terug, zodat de lokale
+  // state's cost.id daarna klopt voor handleDelete/factuur-koppeling
+  // hieronder — een lokaal verzonnen id zou daar juist weer stilletjes fout
+  // gaan.
   const handleSave = async ({ description, amount, cost_date, category }) => {
-    const row = { id: genId(), owner_id: activeUserId, description, amount, cost_date, category }
-    const { error } = await supabase.from('business_costs').insert(row)
+    const row = { owner_id: activeUserId, description, amount, cost_date, category }
+    const { data: inserted, error } = await supabase.from('business_costs').insert(row).select().single()
     if (error) { alert(`Opslaan mislukt: ${error.message}`); return }
-    setCosts(prev => [row, ...prev])
+    setCosts(prev => [inserted, ...prev])
   }
 
   const handleDelete = async (cost) => {
