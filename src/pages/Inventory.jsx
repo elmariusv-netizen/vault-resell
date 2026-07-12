@@ -128,6 +128,14 @@ async function compressPhoto(file) {
 const STATUS_LABEL = { voorraad: 'In voorraad', live: 'Live', verkocht: 'Verkocht' }
 const STATUS_CLASS = { voorraad: 'badge-green', live: 'badge-blue', verkocht: 'badge-gray' }
 
+// Tijdelijk uitgeschakeld op verzoek van de gebruiker: de auto-sync "N live
+// op Vinted"-link (matcht actieve listings via SKU-in-titel, zie
+// active_listings/api/sync-listings.js) is onbruikbaar zolang er geen SKU's
+// in Vinted-titels/beschrijvingen gezet worden. Zet terug op true zodra dat
+// wél consequent gebeurt — de handmatige "Live"-knop/teller hieronder is een
+// apart, onafhankelijk systeem en blijft gewoon actief.
+const SHOW_LIVE_SYNC = false
+
 export default function Inventory({ data, updateData }) {
   const { batches, sales, suppliers } = data
   const skuPhotos = data.skuPhotos || {}
@@ -139,6 +147,7 @@ export default function Inventory({ data, updateData }) {
   const [search, setSearch] = useState('')
   const [filterSupplier, setFilterSupplier] = useState('all')
   const [filterCategory, setFilterCategory] = useState('all')
+  const [filterMonth, setFilterMonth] = useState('all')
 
   const [editBatch, setEditBatch] = useState(null)
   const [saleBatch, setSaleBatch] = useState(null)
@@ -148,8 +157,10 @@ export default function Inventory({ data, updateData }) {
   const [liveListingsBatch, setLiveListingsBatch] = useState(null)
 
   // Actieve Vinted-listings (door de extensie gesynct, zie active_listings/
-  // api/sync-listings.js) — voor de klikbare "Live"-badge hieronder.
+  // api/sync-listings.js) — voor de klikbare "Live"-badge hieronder. Enkel
+  // ophalen als SHOW_LIVE_SYNC aanstaat, anders onnodige call.
   useEffect(() => {
+    if (!SHOW_LIVE_SYNC) return
     supabase.from('active_listings').select('id,title,photo_url,price,sku_ref,url').then(({ data, error }) => {
       if (error) { console.warn('[Vault] actieve listings ophalen mislukt:', error.message); return }
       setActiveListings(data || [])
@@ -199,10 +210,20 @@ export default function Inventory({ data, updateData }) {
     return ['all', ...cats]
   }, [batches])
 
+  // Zelfde patroon als AndereVerkopen.jsx se maand-filter, maar op
+  // b.purchaseDate (aankoopdatum van de batch) i.p.v. sale.date — voor
+  // Voorraad is "wanneer ingekocht" de relevante periode, niet "wanneer
+  // verkocht".
+  const months = useMemo(() => {
+    const set = new Set(batches.map((b) => b.purchaseDate?.substring(0, 7)).filter(Boolean))
+    return [...set].sort().reverse()
+  }, [batches])
+
   const filtered = useMemo(() => {
     return batches.filter((b) => {
       if (filterSupplier !== 'all' && b.supplierPrefix !== filterSupplier) return false
       if (filterCategory !== 'all' && b.category !== filterCategory) return false
+      if (filterMonth !== 'all' && b.purchaseDate?.substring(0, 7) !== filterMonth) return false
       if (search) {
         const q = search.toLowerCase()
         const sku = formatSkuRange(b.supplierPrefix, b.startNum, b.endNum).toLowerCase()
@@ -210,7 +231,7 @@ export default function Inventory({ data, updateData }) {
       }
       return true
     })
-  }, [batches, filterSupplier, filterCategory, search])
+  }, [batches, filterSupplier, filterCategory, filterMonth, search])
 
   const handleEditSave = (id, updates) =>
     updateData({ batches: batches.map((b) => (b.id === id ? { ...b, ...updates } : b)) })
@@ -268,6 +289,7 @@ export default function Inventory({ data, updateData }) {
           costPrice: getBatchUnitCost(b),
           status,
           photo: skuPhotos[code] || null,
+          purchaseMonth: b.purchaseDate?.substring(0, 7) || '',
         }
       })
     })
@@ -277,6 +299,7 @@ export default function Inventory({ data, updateData }) {
     return allSkuItems.filter((item) => {
       if (skuStatus !== 'all' && item.status !== skuStatus) return false
       if (skuSupplier !== 'all' && item.prefix !== skuSupplier) return false
+      if (filterMonth !== 'all' && item.purchaseMonth !== filterMonth) return false
       if (skuSearch) {
         const q = skuSearch.toLowerCase()
         return (
@@ -288,7 +311,7 @@ export default function Inventory({ data, updateData }) {
       }
       return true
     })
-  }, [allSkuItems, skuSearch, skuStatus, skuSupplier])
+  }, [allSkuItems, skuSearch, skuStatus, skuSupplier, filterMonth])
 
   const handleSkuPhotoClick = (code) => {
     setPendingSkuCode(code)
@@ -352,6 +375,10 @@ export default function Inventory({ data, updateData }) {
             </select>
             <select className="filter-select" value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)}>
               {categories.map((c) => <option key={c} value={c}>{c === 'all' ? 'Alle categorieën' : c}</option>)}
+            </select>
+            <select className="filter-select" value={filterMonth} onChange={(e) => setFilterMonth(e.target.value)}>
+              <option value="all">Alle maanden</option>
+              {months.map((m) => <option key={m} value={m}>{m}</option>)}
             </select>
           </div>
 
@@ -462,14 +489,18 @@ export default function Inventory({ data, updateData }) {
                           {remaining} voorraad
                           {liveCount > 0 && <span style={{ color: 'var(--blue)' }}> · {liveCount} live</span>}
                           <span> · {sold} verkocht</span>
-                          {' · '}
-                          <span
-                            onClick={(e) => { e.stopPropagation(); setLiveListingsBatch(b) }}
-                            style={{ color: 'var(--blue)', textDecoration: 'underline', cursor: 'pointer' }}
-                            title="Bekijk de echte actieve listings op Vinted voor deze batch"
-                          >
-                            {(listingsByBatchId[b.id]?.length || 0)} live op Vinted
-                          </span>
+                          {SHOW_LIVE_SYNC && (
+                            <>
+                              {' · '}
+                              <span
+                                onClick={(e) => { e.stopPropagation(); setLiveListingsBatch(b) }}
+                                style={{ color: 'var(--blue)', textDecoration: 'underline', cursor: 'pointer' }}
+                                title="Bekijk de echte actieve listings op Vinted voor deze batch"
+                              >
+                                {(listingsByBatchId[b.id]?.length || 0)} live op Vinted
+                              </span>
+                            </>
+                          )}
                         </span>
                         <span>{pct.toFixed(0)}% resterend</span>
                       </div>
@@ -504,6 +535,10 @@ export default function Inventory({ data, updateData }) {
             <select className="filter-select" value={skuSupplier} onChange={(e) => setSkuSupplier(e.target.value)}>
               <option value="all">Alle leveranciers</option>
               {suppliers.map((s) => <option key={s.id} value={s.prefix}>{s.prefix} — {s.name}</option>)}
+            </select>
+            <select className="filter-select" value={filterMonth} onChange={(e) => setFilterMonth(e.target.value)}>
+              <option value="all">Alle maanden</option>
+              {months.map((m) => <option key={m} value={m}>{m}</option>)}
             </select>
             {['all', 'voorraad', 'live', 'verkocht'].map((s) => (
               <button key={s} className={`filter-chip${skuStatus === s ? ' active' : ''}`}
@@ -656,7 +691,7 @@ export default function Inventory({ data, updateData }) {
         />
       )}
 
-      {liveListingsBatch && (
+      {SHOW_LIVE_SYNC && liveListingsBatch && (
         <LiveListingsModal
           batch={liveListingsBatch}
           listings={listingsByBatchId[liveListingsBatch.id] || []}
