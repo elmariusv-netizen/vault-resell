@@ -264,6 +264,24 @@ export default function Stats({ data, theme }) {
     return { topCategory }
   }, [filteredSales, batches, orderTitles])
 
+  // Vast "dit jaar op Vinted"-cijfer — bewust ONAFHANKELIJK van de
+  // periode-/platform-filters hierboven (die de rest van de pagina sturen),
+  // zodat dit altijd een stabiel referentiepunt blijft: hoeveel is er dit
+  // kalenderjaar via Vinted verkocht, los van niet-Vinted-platforms of een
+  // eventueel andere gekozen periode.
+  const vintedThisYear = useMemo(() => {
+    const year = new Date().getFullYear()
+    const yearSales = sales.filter((s) => {
+      if (!s.date) return false
+      return new Date(s.date).getFullYear() === year && normalizePlatform(s.platform) === 'Vinted'
+    })
+    const paid = yearSales.filter((s) => !s.isFree)
+    const revenue = paid.reduce((s, x) => s + (x.salePrice || 0) * (x.quantity || 1), 0)
+    const sold = yearSales.reduce((s, x) => s + (x.quantity || 1), 0)
+    const orders = new Set(paid.map(orderKey)).size
+    return { year, revenue, sold, orders }
+  }, [sales])
+
   const TABS = [
     { id: 'overview', label: 'Overzicht' },
     { id: 'supplier', label: 'Leveranciers' },
@@ -334,18 +352,30 @@ export default function Stats({ data, theme }) {
         ))}
       </div>
 
-      {/* Beste categorie — herleid uit producttitels, gerankt op gemiddelde
-          winst per stuk, zie titleMetaStats */}
-      {titleMetaStats.topCategory && (
+      {/* Beste categorie (herleid uit producttitels) + het vaste "dit jaar
+          op Vinted"-cijfer, los van de periode-/platform-filters hierboven */}
+      {(titleMetaStats.topCategory || vintedThisYear.sold > 0) && (
         <div className="stats-grid" style={{ marginBottom: 20 }}>
-          <div className="stat-card">
-            <div className="s-accent" style={{ background: '#a78bfa' }} />
-            <div className="s-label">Beste categorie</div>
-            <div className="s-value" style={{ fontSize: '1.3rem' }}>{titleMetaStats.topCategory.name}</div>
-            <div className="s-sub">
-              {formatCurrency(titleMetaStats.topCategory.avgProfitPerItem)} gem. winst/stuk · {titleMetaStats.topCategory.sold} verkocht
+          {titleMetaStats.topCategory && (
+            <div className="stat-card">
+              <div className="s-accent" style={{ background: '#a78bfa' }} />
+              <div className="s-label">Beste categorie</div>
+              <div className="s-value" style={{ fontSize: '1.3rem' }}>{titleMetaStats.topCategory.name}</div>
+              <div className="s-sub">
+                {formatCurrency(titleMetaStats.topCategory.avgProfitPerItem)} gem. winst/stuk · {titleMetaStats.topCategory.sold} verkocht
+              </div>
             </div>
-          </div>
+          )}
+          {vintedThisYear.sold > 0 && (
+            <div className="stat-card">
+              <div className="s-accent" style={{ background: '#09b1ba' }} />
+              <div className="s-label">Verkocht dit jaar op Vinted</div>
+              <div className="s-value" style={{ fontSize: '1.3rem' }}>{formatCurrency(vintedThisYear.revenue)}</div>
+              <div className="s-sub">
+                {vintedThisYear.sold} stuks · {vintedThisYear.orders} bestellingen in {vintedThisYear.year}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
