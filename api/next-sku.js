@@ -7,18 +7,42 @@
 // ingelogde Supabase-sessie, dus owner_id wordt hier server-side herleid uit
 // vinted_account_links i.p.v. door de client meegegeven te worden.
 //
-// formatSku()/getNextSkuNum() hier gedupliceerd i.p.v. geïmporteerd uit
-// src/utils/skuUtils.js — dat bestand is onderdeel van de webapp-bundel
-// (importeert supabase-client/JSX-buren), niet herbruikbaar in een losse
-// Vercel-functie zonder de hele build-keten mee te slepen voor 2 regels logica.
+// formatSku()/getFreeSkusForBatch()/getNextSkuNum() hier gedupliceerd i.p.v.
+// geïmporteerd uit src/utils/skuUtils.js — dat bestand is onderdeel van de
+// webapp-bundel (importeert supabase-client/JSX-buren), niet herbruikbaar in
+// een losse Vercel-functie zonder de hele build-keten mee te slepen.
 function formatSku(prefix, num) {
   return `${prefix}${num}`
 }
-function getNextSkuNum(batches, prefix) {
-  const maxEnd = batches
+// Was ooit gewoon maxEnd+1 (start van een NIEUWE, nog niet aangemaakte
+// batch) — maar dat sloeg een individueel SKU voor dat helemaal geen
+// bestaand voorraad-item is: als de gebruiker die tekst in een listing zet
+// en het item verkoopt, vindt findBatchForSku() (skuUtils.js) geen batch die
+// dat nummer bevat, dus blijft de verkoop voor altijd "SKU niet gevonden".
+// Correct is de eerste nog vrije (niet aan een vinted_order gekoppelde) SKU
+// binnen de BESTAANDE batches van die leverancier — dezelfde bron van
+// waarheid als getFreeSkusForBatch/getUsedSkus die de webapp zelf gebruikt
+// (SkuPickerModal/BulkSkuModal/AankoopSkuModal). Enkel als alle bestaande
+// batches van die leverancier volledig geclaimd zijn, valt dit terug op
+// maxEnd+1 (start van een hypothetische nieuwe batch).
+function getNextSkuNum(batches, prefix, usedSkus) {
+  const supplierBatches = batches
     .filter((b) => b.supplierPrefix === prefix)
-    .reduce((m, b) => Math.max(m, b.endNum || 0), 0)
+    .sort((a, b) => (a.startNum || 0) - (b.startNum || 0))
+  for (const b of supplierBatches) {
+    for (let n = b.startNum; n <= b.endNum; n++) {
+      if (!usedSkus.has(formatSku(prefix, n))) return n
+    }
+  }
+  const maxEnd = supplierBatches.reduce((m, b) => Math.max(m, b.endNum || 0), 0)
   return maxEnd + 1
+}
+// Zelfde normalisatie als skuUtils.js se normalizeSku(): SKU-tekst uit
+// vinted_orders.sku_ref kan hoofdletterongevoelig en met/zonder voorloopnullen
+// voorkomen ("ria056", "RIA56") — allebei moeten hetzelfde SKU claimen.
+function normalizeSku(text) {
+  const m = String(text).trim().match(/^([A-Za-z]{2,4})[\s-]?0*(\d+)$/)
+  return m ? `${m[1].toUpperCase()}${m[2]}` : String(text).trim().toUpperCase()
 }
 
 export default async function handler(req, res) {
@@ -54,20 +78,36 @@ export default async function handler(req, res) {
       return res.status(404).json({ error: 'geen Vault-koppeling voor dit Vinted-account' })
     }
 
-    const dataRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/user_data?owner_id=eq.${encodeURIComponent(link.owner_id)}&select=payload&limit=1`,
-      { headers: hdrs }
-    )
+    const [dataRes, ordersRes] = await Promise.all([
+      fetch(
+        `${SUPABASE_URL}/rest/v1/user_data?owner_id=eq.${encodeURIComponent(link.owner_id)}&select=payload&limit=1`,
+        { headers: hdrs }
+      ),
+      fetch(
+        `${SUPABASE_URL}/rest/v1/vinted_orders?owner_id=eq.${encodeURIComponent(link.owner_id)}&select=sku_ref&sku_ref=not.is.null`,
+        { headers: hdrs }
+      ),
+    ])
     if (!dataRes.ok) return res.status(500).json({ error: 'data ophalen mislukt' })
+    if (!ordersRes.ok) return res.status(500).json({ error: 'orders ophalen mislukt' })
     const [row] = await dataRes.json()
     const batches = row?.payload?.batches || []
     const suppliers = row?.payload?.suppliers || []
+
+    const orderRows = await ordersRes.json()
+    const usedSkus = new Set()
+    orderRows.forEach((o) => {
+      (o.sku_ref || '').split(',').forEach((s) => {
+        const t = normalizeSku(s)
+        if (t) usedSkus.add(t)
+      })
+    })
 
     const result = suppliers.map((s) => ({
       prefix: s.prefix,
       name: s.name,
       color: s.color,
-      nextSku: formatSku(s.prefix, getNextSkuNum(batches, s.prefix)),
+      nextSku: formatSku(s.prefix, getNextSkuNum(batches, s.prefix, usedSkus)),
     }))
 
     return res.status(200).json({ suppliers: result })
