@@ -5,8 +5,8 @@ import {
 } from 'recharts'
 import DateRangeFilter, { getDateBounds, filterByRange } from '../components/DateRangeFilter'
 import {
-  formatCurrency, formatSkuRange, calcSaleProfit,
-  getRemainingQty, getSupplierColor, normalizePlatform,
+  formatCurrency, calcSaleProfit,
+  getRemainingQty, normalizePlatform,
   fetchBusinessCosts, sumCosts, getBatchUnitCost, detectTitleMeta, orderKey,
 } from '../utils/skuUtils'
 import { supabase } from '../utils/supabase'
@@ -175,20 +175,6 @@ export default function Stats({ data, theme }) {
       .sort((a, b) => b.revenue - a.revenue)
   }, [suppliers, batches, filteredSales, sales, sellTimeStats])
 
-  const perBatch = useMemo(() => {
-    return batches
-      .map((b) => {
-        const bSales = filteredSales.filter((s) => s.batchId === b.id)
-        const sold = bSales.reduce((s, x) => s + (x.quantity || 1), 0)
-        const revenue = bSales.reduce((s, x) => s + (x.salePrice || 0) * (x.quantity || 1), 0)
-        const profit = bSales.reduce((s, sale) => s + calcSaleProfit(sale, b).profit, 0)
-        const remaining = getRemainingQty(b, sales)
-        const margin = revenue > 0 ? (profit / revenue) * 100 : 0
-        return { ...b, sold, revenue, profit, remaining, profitPerUnit: sold > 0 ? profit / sold : 0, margin }
-      })
-      .sort((a, b) => b.sold - a.sold)
-  }, [batches, filteredSales, sales])
-
   const perPlatform = useMemo(() => {
     const map = {}
     filteredSales.forEach((s) => {
@@ -282,7 +268,6 @@ export default function Stats({ data, theme }) {
     { id: 'overview', label: 'Overzicht' },
     { id: 'supplier', label: 'Leveranciers' },
     { id: 'brand', label: 'Merk' },
-    { id: 'sku', label: 'Best verkopende SKU\'s' },
     { id: 'platform', label: 'Platform' },
   ]
 
@@ -441,70 +426,6 @@ export default function Stats({ data, theme }) {
               ))}
             </div>
           )}
-        </div>
-      )}
-
-      {/* ── Best selling SKUs ── */}
-      {tab === 'sku' && (
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>SKU</th>
-                <th>Naam / Merk</th>
-                <th>Sup.</th>
-                <th>Verkocht</th>
-                <th>Omzet</th>
-                <th>Winst</th>
-                <th>Marge</th>
-                <th>Stock</th>
-              </tr>
-            </thead>
-            <tbody>
-              {perBatch.filter((b) => b.sold > 0).length === 0 ? (
-                <tr><td colSpan={9} style={{ textAlign: 'center', padding: 40, color: 'var(--text-3)' }}>Geen verkopen in deze periode</td></tr>
-              ) : (
-                perBatch.filter((b) => b.sold > 0).map((b, rank) => {
-                  const color = getSupplierColor(suppliers, b.supplierPrefix)
-                  return (
-                    <tr key={b.id}>
-                      <td style={{ color: 'var(--text-3)', fontWeight: 700, width: 32 }}>
-                        {rank === 0 ? '🥇' : rank === 1 ? '🥈' : rank === 2 ? '🥉' : rank + 1}
-                      </td>
-                      <td>
-                        <span className="sku-tag" style={{ background: color + '18', color }}>
-                          {formatSkuRange(b.supplierPrefix, b.startNum, b.endNum)}
-                        </span>
-                      </td>
-                      <td style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {b.brand || b.name || <span style={{ color: 'var(--text-3)' }}>—</span>}
-                      </td>
-                      <td>
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: color }} />
-                          <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{b.supplierPrefix}</span>
-                        </span>
-                      </td>
-                      <td style={{ fontWeight: 700 }}>{b.sold}</td>
-                      <td style={{ fontWeight: 500 }}>{formatCurrency(b.revenue)}</td>
-                      <td>
-                        <span style={{ color: b.profit >= 0 ? 'var(--green)' : 'var(--red)', fontWeight: 700 }}>
-                          {formatCurrency(b.profit)}
-                        </span>
-                      </td>
-                      <td>
-                        <span style={{ fontSize: 12, color: b.margin >= 20 ? 'var(--green)' : b.margin >= 0 ? 'var(--text-2)' : 'var(--red)', fontWeight: 600 }}>
-                          {b.sold > 0 ? `${b.margin.toFixed(1)}%` : '—'}
-                        </span>
-                      </td>
-                      <td style={{ color: 'var(--text-2)' }}>{b.remaining}</td>
-                    </tr>
-                  )
-                })
-              )}
-            </tbody>
-          </table>
         </div>
       )}
 
